@@ -52,15 +52,8 @@ public enum TerminalLauncher {
         }
     }
 
-    /// Single-quote a shell argument, escaping embedded single quotes.
-    public static func shellQuote(_ s: String) -> String {
-        if s.isEmpty { return "''" }
-        // Safe bareword: no quoting needed.
-        if s.allSatisfy({ $0.isLetter || $0.isNumber || "-_./@:".contains($0) }) {
-            return s
-        }
-        return "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
+    /// Single-quote a shell argument (delegates to the shared `shellQuote`).
+    public static func shellQuote(_ s: String) -> String { ShedKit.shellQuote(s) }
 
     private static func appleScriptEscape(_ s: String) -> String {
         s.replacingOccurrences(of: "\\", with: "\\\\")

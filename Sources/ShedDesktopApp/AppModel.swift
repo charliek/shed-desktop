@@ -24,6 +24,8 @@ final class AppModel: NSObject, UiBridge {
     private var clients: [String: ShedServerClient] = [:]
     private var defaultServerName: String?
     private var creates: [String: CreateProgress] = [:]
+    /// In-memory RC session table for test mode (no SSH); keyed by slug.
+    private var rcTable: [String: RcSession] = [:]
     private var pollTask: Task<Void, Never>?
     private var ipcServer: IPCServer?
 
@@ -65,6 +67,30 @@ final class AppModel: NSObject, UiBridge {
             guard let self else { return }
             do { _ = try self.startCreate(host: host, request: request) }
             catch { self.state.lastError = "create \(request.name): \(error)" }
+        }
+        state.onRcLaunch = { [weak self] host, shed, kind, name in
+            Task { [weak self] in
+                guard let self else { return }
+                do { _ = try await self.rcLaunch(host: host, shed: shed, kind: kind, displayName: name, workdir: nil) }
+                catch { self.state.lastError = "launch \(shed): \(error)" }
+            }
+        }
+        state.onRcKill = { [weak self] session in
+            Task { [weak self] in
+                guard let self else { return }
+                do { try await self.rcKill(host: session.host, shed: session.shed, slug: session.slug) }
+                catch { self.state.lastError = "kill \(session.slug): \(error)" }
+            }
+        }
+        state.onRcRefresh = { [weak self] in
+            Task { [weak self] in
+                guard let self else { return }
+                do { _ = try await self.rcList(host: nil, shed: nil) }
+                catch { self.state.lastError = "rc list: \(error)" }
+            }
+        }
+        state.onOpenURL = { url in
+            if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         }
     }
 
@@ -375,4 +401,122 @@ final class AppModel: NSObject, UiBridge {
     /// User-configurable terminal command template (`{cmd}` placeholder);
     /// nil = default to Terminal.app. Wired to preferences in M4.
     private var terminalTemplate: String? { nil }
+
+    // MARK: - UiBridge (M2: remote control)
+
+    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession {
+        let serverName = try resolveName(host)
+        let slug = RemoteControl.generateSlug()
+        let name = displayName ?? slug
+        let dir = workdir ?? RemoteControl.defaultWorkdir
+        // Reject control chars: a newline would break the tmux `-e` env
+        // injection and could forge a sentinel line in the list output.
+        guard isSafeRCValue(name), isSafeRCValue(dir) else {
+            throw IPCHandlerError.invalidParam("display name and workdir must not contain newlines or control characters")
+        }
+        var session = RcSession(
+            host: serverName, shed: shed, slug: slug,
+            tmuxSession: RemoteControl.tmuxName(slug: slug),
+            displayName: name, workdir: dir, kind: kind, state: .starting)
+
+        if ShedBackend.shared.testMode {
+            // No SSH under the harness — synthesize a ready session.
+            session.state = .ready
+            session.url = syntheticURL(kind: kind, slug: slug)
+        } else {
+            let h = try resolveHost(host)
+            let bootstrap = RemoteControl.bootstrapArgv(slug: slug, kind: kind, displayName: name, workdir: dir)
+            let res = try await ProcessRunner.run(
+                RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: bootstrap))
+            guard res.ok else {
+                throw IPCHandlerError.internalError("rc launch failed: \(res.stderr.isEmpty ? res.stdout : res.stderr)")
+            }
+            let cls = try await probeReal(h: h, shed: shed, slug: slug, kind: kind)
+            session.state = cls.state
+            session.url = cls.url
+        }
+        rcTable[slug] = session
+        publishRcSessions()
+        return session
+    }
+
+    func rcKill(host: String?, shed: String, slug: String) async throws {
+        if !ShedBackend.shared.testMode {
+            let h = try resolveHost(host)
+            let res = try await ProcessRunner.run(
+                RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: RemoteControl.killArgv(slug: slug)))
+            // Don't drop the session from the table (and report success) if
+            // the remote kill actually failed; a refresh reconciles.
+            guard res.ok else {
+                throw IPCHandlerError.internalError("rc kill failed: \(res.stderr.isEmpty ? res.stdout : res.stderr)")
+            }
+        }
+        rcTable[slug] = nil
+        publishRcSessions()
+    }
+
+    func rcList(host: String?, shed: String?) async throws -> [RcSession] {
+        if !ShedBackend.shared.testMode {
+            // Best-effort: probe the running sheds (or the named one)
+            // concurrently and rebuild the table from what's actually live.
+            // SSH latency is high-variance, so a serial loop would stall on
+            // a slow/dead host's 10s timeout.
+            let targets: [(ShedHost, Shed)] = state.sheds.compactMap { shedItem in
+                guard shedItem.status == .running,
+                      host == nil || shedItem.host == host,
+                      shed == nil || shedItem.name == shed,
+                      let h = state.hosts.first(where: { $0.name == shedItem.host })
+                else { return nil }
+                return (h, shedItem)
+            }
+            let lists = await withTaskGroup(of: [RcSession].self) { group in
+                for (h, shedItem) in targets {
+                    group.addTask { (try? await self.listReal(h: h, serverName: shedItem.host, shed: shedItem.name)) ?? [] }
+                }
+                var all: [RcSession] = []
+                for await s in group { all.append(contentsOf: s) }
+                return all
+            }
+            rcTable = Dictionary(lists.map { ($0.slug, $0) }, uniquingKeysWith: { _, b in b })
+        }
+        publishRcSessions()
+        return rcTable.values
+            .filter { (host == nil || $0.host == host) && (shed == nil || $0.shed == shed) }
+            .sorted { $0.slug < $1.slug }
+    }
+
+    private func publishRcSessions() {
+        state.rcSessions = rcTable.values.sorted { $0.slug < $1.slug }
+    }
+
+    private func isSafeRCValue(_ s: String) -> Bool {
+        !s.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+
+    private func syntheticURL(kind: RcKind, slug: String) -> String? {
+        switch kind {
+        case .agent: return "https://claude.ai/code?environment=env_\(slug)"
+        case .repl: return "https://claude.ai/code/session_\(slug)"
+        case .shell: return nil
+        }
+    }
+
+    // MARK: - real RC (SSH; never runs under the test harness)
+
+    private func probeReal(h: ShedHost, shed: String, slug: String, kind: RcKind) async throws -> RcClassification {
+        let res = try await ProcessRunner.run(
+            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: RemoteControl.captureArgv(slug: slug)))
+        guard res.ok else { return RcClassification(state: .dead) }
+        return RemoteControl.classifyPane(kind: kind, pane: res.stdout)
+    }
+
+    /// List + classify rc-* sessions on one shed via a single bash script
+    /// over SSH (the script + parser live in RemoteControl).
+    private func listReal(h: ShedHost, serverName: String, shed: String) async throws -> [RcSession] {
+        let sep = "@@RC@@"
+        let res = try await ProcessRunner.run(
+            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: ["bash", "-c", RemoteControl.listScript(sep: sep)]))
+        guard res.ok else { return [] }
+        return RemoteControl.parseSessionList(res.stdout, sep: sep, serverName: serverName, shed: shed)
+    }
 }

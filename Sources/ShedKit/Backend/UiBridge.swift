@@ -52,4 +52,10 @@ public protocol UiBridge: AnyObject {
     func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand
     /// Build AND launch the terminal (side-effecting; gated to test mode off).
     func openTerminal(shed: String, host: String?, session: String?) throws -> TerminalCommand
+
+    // MARK: - M2: remote-control sessions
+
+    func rcList(host: String?, shed: String?) async throws -> [RcSession]
+    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession
+    func rcKill(host: String?, shed: String, slug: String) async throws
 }

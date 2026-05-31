@@ -13,6 +13,16 @@ public enum Theme {
         }
     }
 
+    public static func rcStateColor(_ state: RcState) -> Color {
+        switch state {
+        case .ready: return .green
+        case .starting: return .yellow
+        case .reconnecting: return .orange
+        case .needsTrust, .needsAuth: return .red
+        case .dead: return .secondary
+        }
+    }
+
     public static let sidebarWidth: CGFloat = 172
 }
 

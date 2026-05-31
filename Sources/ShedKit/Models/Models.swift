@@ -163,6 +163,44 @@ public struct CreateShedRequest: Codable, Sendable, Equatable {
     }
 }
 
+/// A remote-control session running in a shed (a detached tmux session
+/// named `rc-<slug>`).
+public struct RcSession: Codable, Sendable, Equatable, Identifiable {
+    public var host: String
+    public var shed: String
+    public var slug: String
+    public var tmuxSession: String
+    public var displayName: String
+    public var workdir: String
+    public var kind: RcKind
+    public var state: RcState
+    public var url: String?
+
+    public var id: String { "\(host)/\(shed)/\(slug)" }
+
+    enum CodingKeys: String, CodingKey {
+        case host, shed, slug
+        case tmuxSession = "tmux_session"
+        case displayName = "display_name"
+        case workdir, kind, state, url
+    }
+
+    public init(
+        host: String, shed: String, slug: String, tmuxSession: String,
+        displayName: String, workdir: String, kind: RcKind, state: RcState, url: String? = nil
+    ) {
+        self.host = host
+        self.shed = shed
+        self.slug = slug
+        self.tmuxSession = tmuxSession
+        self.displayName = displayName
+        self.workdir = workdir
+        self.kind = kind
+        self.state = state
+        self.url = url
+    }
+}
+
 /// `GET /api/info` response.
 public struct ServerInfo: Codable, Sendable, Equatable {
     public var name: String

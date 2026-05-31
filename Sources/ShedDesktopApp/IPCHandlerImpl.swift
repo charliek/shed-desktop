@@ -76,6 +76,21 @@ actor IPCHandlerImpl: IPCHandler {
         case "terminal.open":
             let p = try decodeParams(params, as: TerminalParams.self, expected: ["host", "shed", "session"])
             return try await encodeResult(terminalOpenOp(p))
+        case "rc.classify":
+            let p = try decodeParams(params, as: RcClassifyParams.self, expected: ["kind", "pane"])
+            let cls = RemoteControl.classifyPane(kind: p.kind, pane: p.pane)
+            return try encodeResult(RcClassifyResult(state: cls.state, url: cls.url))
+        case "rc.list":
+            let p = try decodeParams(params, as: RcListParams.self, expected: ["host", "shed"])
+            return try await encodeResult(rcListOp(p))
+        case "rc.launch":
+            let p = try decodeParams(params, as: RcLaunchParams.self,
+                expected: ["host", "shed", "kind", "display_name", "workdir"])
+            return try await encodeResult(rcLaunchOp(p))
+        case "rc.kill":
+            let p = try decodeParams(params, as: RcKillParams.self, expected: ["host", "shed", "slug"])
+            try await rcKillOp(p)
+            return emptyResult
         default:
             throw IPCHandlerError.unknownOp(op)
         }
@@ -132,6 +147,18 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalCommand {
         try uiBridge().terminalCommand(shed: p.shed, host: p.host, session: p.session)
+    }
+
+    @MainActor private func rcListOp(_ p: RcListParams) async throws -> RcListResult {
+        RcListResult(sessions: try await uiBridge().rcList(host: p.host, shed: p.shed))
+    }
+
+    @MainActor private func rcLaunchOp(_ p: RcLaunchParams) async throws -> RcSession {
+        try await uiBridge().rcLaunch(host: p.host, shed: p.shed, kind: p.kind, displayName: p.displayName, workdir: p.workdir)
+    }
+
+    @MainActor private func rcKillOp(_ p: RcKillParams) async throws {
+        try await uiBridge().rcKill(host: p.host, shed: p.shed, slug: p.slug)
     }
 
     @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {
@@ -222,6 +249,35 @@ private struct TerminalParams: Decodable {
     let shed: String
     let session: String?
 }
+
+private struct RcClassifyParams: Decodable { let kind: RcKind; let pane: String }
+private struct RcListParams: Decodable { let host: String?; let shed: String? }
+private struct RcKillParams: Decodable { let host: String?; let shed: String; let slug: String }
+
+private struct RcLaunchParams: Decodable {
+    let host: String?
+    let shed: String
+    let kind: RcKind
+    let displayName: String?
+    let workdir: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host, shed, kind, workdir
+        case displayName = "display_name"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.host = try c.decodeIfPresent(String.self, forKey: .host)
+        self.shed = try c.decode(String.self, forKey: .shed)
+        self.kind = try c.decodeIfPresent(RcKind.self, forKey: .kind) ?? .default
+        self.displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        self.workdir = try c.decodeIfPresent(String.self, forKey: .workdir)
+    }
+}
+
+private struct RcListResult: Encodable, Sendable { let sessions: [RcSession] }
+private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let url: String? }
 
 private struct ScreenshotParams: Decodable {
     let scale: Int

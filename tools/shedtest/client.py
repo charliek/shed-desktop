@@ -135,6 +135,33 @@ class ShedDesktop:
             params["session"] = session
         return self.call("terminal.preview", params)
 
+    # -- M2: remote control ----------------------------------------------
+    def rc_classify(self, kind: str, pane: str) -> dict:
+        return self.call("rc.classify", {"kind": kind, "pane": pane})
+
+    def rc_list(self, host: str | None = None, shed: str | None = None) -> list[dict]:
+        params: dict = {}
+        if host:
+            params["host"] = host
+        if shed:
+            params["shed"] = shed
+        return self.call("rc.list", params)["sessions"]
+
+    def rc_launch(self, shed: str, kind: str = "repl", host: str | None = None,
+                  display_name: str | None = None) -> dict:
+        params: dict = {"shed": shed, "kind": kind}
+        if host:
+            params["host"] = host
+        if display_name:
+            params["display_name"] = display_name
+        return self.call("rc.launch", params)
+
+    def rc_kill(self, shed: str, slug: str, host: str | None = None) -> None:
+        params: dict = {"shed": shed, "slug": slug}
+        if host:
+            params["host"] = host
+        self.call("rc.kill", params)
+
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 

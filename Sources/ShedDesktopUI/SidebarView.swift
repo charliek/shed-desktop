@@ -10,7 +10,7 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 2) {
             row(.sheds, "server.rack", "Sheds", count: state.sheds.count)
             row(.approvals, "lock.shield", "Approvals", count: nil)
-            row(.agents, "wand.and.stars", "Agents", count: nil)
+            row(.agents, "wand.and.stars", "Agents", count: state.rcSessions.isEmpty ? nil : state.rcSessions.count)
             row(.activity, "list.bullet.rectangle", "Activity", count: nil)
 
             Divider().padding(.vertical, 10)

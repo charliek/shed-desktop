@@ -23,6 +23,10 @@ public final class AppState: ObservableObject {
     @Published public var hostAgentConnected: Bool = false
     /// Whether the create-shed sheet is presented.
     @Published public var showCreateSheet: Bool = false
+    /// Whether the launch-agent sheet is presented.
+    @Published public var showLaunchSheet: Bool = false
+    /// Remote-control sessions across sheds (the Agents pane).
+    @Published public var rcSessions: [RcSession] = []
 
     // Action seams the app wires up (the UI module can't reach AppModel
     // directly, so it calls these). All run on the main actor. Contract:
@@ -32,6 +36,10 @@ public final class AppState: ObservableObject {
     public var onShedAction: ((ShedAction, Shed) -> Void)?
     public var onOpenTerminal: ((Shed) -> Void)?
     public var onCreate: ((String?, CreateShedRequest) -> Void)?
+    public var onRcLaunch: ((String?, String, RcKind, String?) -> Void)?
+    public var onRcKill: ((RcSession) -> Void)?
+    public var onRcRefresh: (() -> Void)?
+    public var onOpenURL: ((String) -> Void)?
 
     public init() {}
 

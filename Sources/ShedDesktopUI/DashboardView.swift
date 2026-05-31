@@ -27,6 +27,9 @@ public struct DashboardView: View {
         .sheet(isPresented: $state.showCreateSheet) {
             CreateShedSheet(state: state)
         }
+        .sheet(isPresented: $state.showLaunchSheet) {
+            AgentLaunchSheet(state: state)
+        }
     }
 
     private var header: some View {
@@ -63,11 +66,7 @@ public struct DashboardView: View {
                 message: "Approvals route here when the host agent's mode is shed-desktop (M3)."
             )
         case .agents:
-            PlaceholderPane(
-                title: "Remote-control agents",
-                systemImage: "wand.and.stars",
-                message: "Launch and track Claude remote-control sessions (M2)."
-            )
+            AgentsView(state: state)
         case .activity:
             PlaceholderPane(
                 title: "Activity",
