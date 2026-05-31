@@ -1,0 +1,139 @@
+"""Thin JSON-IPC client for a running ShedDesktop app.
+
+Speaks the newline-delimited JSON protocol directly over the Unix socket —
+the same contract `shedctl` uses. Tests drive the app through this and read
+back via `ui.state` / `sheds.list`, exercising exactly the op set users
+drive. No subprocess on the hot path; request ids are string-wrapped int64
+on the wire and surfaced as ints here.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import socket
+import time
+
+# Scale every wait from one knob so a slower CI runner can buy headroom
+# without editing each call site. Default 1.0; CI sets the scale higher.
+_TIMEOUT_SCALE = float(os.environ.get("SHED_DESKTOP_TEST_TIMEOUT_SCALE", "1.0"))
+
+
+def scaled_timeout(timeout: float) -> float:
+    return timeout * _TIMEOUT_SCALE
+
+
+class ShedError(Exception):
+    """A server error envelope (`ok: false`) or a transport failure."""
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"{code}: {message}")
+        self.code = code
+        self.message = message
+
+
+class Timeout(ShedError):
+    def __init__(self, message: str):
+        super().__init__("timeout", message)
+
+
+class ShedDesktop:
+    def __init__(self, socket_path: str):
+        self.path = str(socket_path)
+        self._next_id = 0
+        self._buf = b""
+        self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        # A timeout so a wedged app (accepts but never replies) surfaces as a
+        # test failure instead of hanging CI forever.
+        self._sock.settimeout(scaled_timeout(15.0))
+        self._sock.connect(self.path)
+
+    # -- lifecycle --------------------------------------------------------
+    def close(self) -> None:
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+
+    def __enter__(self) -> "ShedDesktop":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+    # -- transport --------------------------------------------------------
+    def call(self, op: str, params: dict | None = None) -> dict:
+        self._next_id += 1
+        req = {"id": str(self._next_id), "op": op, "params": params or {}}
+        self._sock.sendall((json.dumps(req) + "\n").encode())
+        resp = json.loads(self._readline())
+        if not resp.get("ok"):
+            err = resp.get("error") or {}
+            raise ShedError(err.get("code", "unknown"), err.get("message", ""))
+        return resp.get("result") or {}
+
+    def _readline(self) -> str:
+        while b"\n" not in self._buf:
+            try:
+                chunk = self._sock.recv(1 << 16)
+            except socket.timeout as e:
+                raise Timeout("no IPC response within socket timeout") from e
+            if not chunk:
+                raise ShedError("disconnected", "socket closed mid-response")
+            self._buf += chunk
+        line, self._buf = self._buf.split(b"\n", 1)
+        return line.decode()
+
+    # -- ops --------------------------------------------------------------
+    def identify(self) -> dict:
+        return self.call("identify")
+
+    def ui_state(self) -> dict:
+        return self.call("ui.state")
+
+    def navigate(self, pane: str) -> dict:
+        return self.call("ui.navigate", {"pane": pane})
+
+    def show_window(self) -> None:
+        self.call("ui.show_window")
+
+    def open_menu(self, open_: bool) -> None:
+        self.call("ui.open_menu", {"open": open_})
+
+    def host_list(self) -> list[dict]:
+        return self.call("host.list")["hosts"]
+
+    def sheds_list(self, host: str | None = None) -> list[dict]:
+        params = {"host": host} if host else {}
+        return self.call("sheds.list", params)["sheds"]
+
+    def refresh(self) -> None:
+        self.call("sheds.refresh")
+
+    def window_metrics(self) -> dict:
+        return self.call("app.window_metrics")
+
+    def screenshot(self, surface: str = "window", scale: int = 1) -> tuple[bytes, int, int]:
+        r = self.call("app.screenshot", {"surface": surface, "scale": scale})
+        return base64.b64decode(r["png"]), r["width"], r["height"]
+
+    # -- waits (poll the op set; no sleeps in tests) ----------------------
+    def wait_until(self, pred, timeout: float = 5.0, what: str = "condition") -> None:
+        eff = scaled_timeout(timeout)
+        deadline = time.monotonic() + eff
+        while True:
+            try:
+                if pred():
+                    return
+            except ShedError:
+                pass
+            if time.monotonic() >= deadline:
+                raise Timeout(f"timed out after {eff}s waiting for {what}")
+            time.sleep(0.1)
+
+    def shed_status(self, name: str) -> str | None:
+        for s in self.sheds_list():
+            if s["name"] == name:
+                return s["status"]
+        return None

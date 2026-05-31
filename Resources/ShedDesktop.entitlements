@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for ShedDesktop.app.
+
+  Empty for M0–M2: the app is NOT sandboxed (so outbound URLSession needs
+  no entitlement), and Touch ID via LAContext (M3) and the Unix-domain
+  IPC socket both work fine under ad-hoc signing with no special grant.
+  `disable-library-validation` is added only when M4 embeds the ad-hoc
+  Sparkle.framework.
+-->
+<plist version="1.0">
+<dict>
+</dict>
+</plist>

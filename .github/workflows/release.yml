@@ -1,0 +1,45 @@
+name: release
+
+# Scaffold for the release-workflows convention. Triggered by a vX.Y.Z tag
+# (created by scripts/release/update-version.sh + the release flow). For now
+# it builds an ad-hoc-signed bundle and attaches a zip to the GitHub
+# release. Developer ID signing, notarization, a DMG, and the Sparkle
+# appcast land in M4 (guarded behind the signing secrets).
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag matches VERSION
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(tr -d '[:space:]' < VERSION)"
+          if [ "$TAG" != "$FILE" ]; then
+            echo "tag $TAG does not match VERSION $FILE" >&2
+            exit 1
+          fi
+      - name: Build + bundle
+        run: ./scripts/bundle.sh release
+      - name: Unit tests
+        run: swift test
+      - name: Zip app
+        run: |
+          cd build
+          zip -r -y "ShedDesktop-${GITHUB_REF_NAME}.zip" ShedDesktop.app
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Ad-hoc signed build. Not notarized yet — right-click → Open on first launch." \
+            "build/ShedDesktop-${GITHUB_REF_NAME}.zip"

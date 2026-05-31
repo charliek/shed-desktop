@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift:
+    name: build · test · e2e
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Build
+        run: swift build
+      - name: Unit tests
+        run: swift test
+      - name: Bundle
+        run: ./scripts/bundle.sh debug
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Hermetic E2E
+        # Headless GUI launch via `open`; the screenshot op renders
+        # in-process so no screen-recording TCC grant is needed. Slower CI
+        # gets a wider wait budget.
+        run: SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+
+  docs:
+    name: docs build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Build docs
+        run: uv run --group docs mkdocs build

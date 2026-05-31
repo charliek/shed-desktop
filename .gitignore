@@ -1,0 +1,17 @@
+# Swift / SPM
+.build/
+build/
+*.xcodeproj
+.swiftpm/
+
+# Docs
+site-build/
+
+# Python / uv
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# macOS
+.DS_Store
