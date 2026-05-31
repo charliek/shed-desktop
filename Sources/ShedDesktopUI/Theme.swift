@@ -23,6 +23,32 @@ public enum Theme {
         }
     }
 
+    public static func namespaceColor(_ namespace: String) -> Color {
+        switch namespace {
+        case "ssh-agent": return .blue
+        case "aws-credentials": return .orange
+        case "docker-credentials": return .teal
+        default: return .secondary
+        }
+    }
+
+    public static func namespaceSymbol(_ namespace: String) -> String {
+        switch namespace {
+        case "ssh-agent": return "key"
+        case "aws-credentials": return "cloud"
+        case "docker-credentials": return "shippingbox"
+        default: return "lock"
+        }
+    }
+
+    public static func auditResultColor(_ result: String) -> Color {
+        switch result {
+        case "ok": return .green
+        case "denied", "error": return .red
+        default: return .secondary
+        }
+    }
+
     public static let sidebarWidth: CGFloat = 172
 }
 

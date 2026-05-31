@@ -136,7 +136,7 @@ public final class IPCServer {
 
     private nonisolated static func serveConnection(fd: Int32, handler: IPCHandler) async {
         defer { Darwin.close(fd) }
-        var reader = FrameReader(fd: fd)
+        var reader = LineFrameReader(fd: fd)
         while true {
             do {
                 guard let line = try reader.readLine() else { return }
@@ -147,26 +147,6 @@ public final class IPCServer {
                 NSLog("ipc: connection error: \(error)")
                 return
             }
-        }
-    }
-
-    private nonisolated static func writeAll(fd: Int32, data: Data) -> Bool {
-        var offset = 0
-        let total = data.count
-        return data.withUnsafeBytes { buf -> Bool in
-            guard let base = buf.baseAddress else { return true }
-            while offset < total {
-                let remaining = total - offset
-                let written = Darwin.write(fd, base.advanced(by: offset), remaining)
-                if written < 0 {
-                    if errno == EINTR { continue }
-                    NSLog("ipc: write failed: \(errno)")
-                    return false
-                }
-                if written == 0 { return false }
-                offset += written
-            }
-            return true
         }
     }
 
@@ -219,42 +199,6 @@ public struct IPCHandlerError: Error, CustomStringConvertible {
     }
     public static func notEnabled(_ message: String) -> IPCHandlerError {
         IPCHandlerError(code: "not-enabled", message: message)
-    }
-}
-
-// MARK: - Framing
-
-private struct FrameReader {
-    let fd: Int32
-    var pending: Data = Data()
-    var scanCursor: Int = 0
-
-    mutating func readLine() throws -> Data? {
-        while true {
-            if scanCursor < pending.count {
-                if let pos = pending[scanCursor...].firstIndex(of: 0x0a) {
-                    let line = pending[..<pos]
-                    let rest = pending[(pos + 1)...]
-                    let lineData = Data(line)
-                    pending = Data(rest)
-                    scanCursor = 0
-                    if lineData.count > ipcMaxFrameBytes { throw IPCServerError.frameTooLarge }
-                    return lineData
-                }
-                scanCursor = pending.count
-            }
-            if pending.count > ipcMaxFrameBytes { throw IPCServerError.frameTooLarge }
-            var buf = [UInt8](repeating: 0, count: 65536)
-            let n = buf.withUnsafeMutableBufferPointer { ptr -> Int in
-                Darwin.read(fd, ptr.baseAddress, ptr.count)
-            }
-            if n == 0 { return nil }
-            if n < 0 {
-                if errno == EINTR { continue }
-                throw IPCServerError.read(errno: errno)
-            }
-            pending.append(contentsOf: buf.prefix(n))
-        }
     }
 }
 

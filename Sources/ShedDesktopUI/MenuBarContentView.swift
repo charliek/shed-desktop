@@ -33,6 +33,30 @@ public struct MenuBarContentView: View {
             .padding(.horizontal, 14).padding(.vertical, 10)
             Divider()
 
+            if !state.approvals.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(state.approvals.count) pending approval\(state.approvals.count == 1 ? "" : "s")")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.red)
+                    ForEach(state.approvals.prefix(3)) { req in
+                        HStack(spacing: 8) {
+                            NamespaceIcon(req.namespace).scaleEffect(0.8)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text("\(req.namespace) \(req.op)").font(.system(size: 12, weight: .medium))
+                                Text(req.shed).font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button { state.onApprovalDecide?(req, .approve, false) } label: { Image(systemName: "touchid") }
+                                .buttonStyle(.borderless).foregroundStyle(.green)
+                            Button { state.onApprovalDecide?(req, .deny, false) } label: { Image(systemName: "xmark") }
+                                .buttonStyle(.borderless).foregroundStyle(.red)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 8)
+                .background(Color.red.opacity(0.08))
+                Divider()
+            }
+
             VStack(alignment: .leading, spacing: 0) {
                 menuHeader("Sheds", trailing: "\(state.runningCount) running")
                 ForEach(state.sheds.filter { $0.status == .running }.prefix(6)) { shed in

@@ -34,6 +34,19 @@ public enum DateFormatting {
         return nil
     }
 
+    /// Current time as a plain ISO8601 UTC string (the wire `ts` format).
+    public static func nowISO8601() -> String {
+        makeFormatter(fractional: false).string(from: Date())
+    }
+
+    /// `HH:mm:ss` of a flexible timestamp string, for the activity feed.
+    public static func shortTime(_ raw: String) -> String {
+        guard let d = parseFlexibleTimestamp(raw) else { return "" }
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f.string(from: d)
+    }
+
     /// A short "3h" / "2d" style duration between `date` and `now`.
     public static func shortRelative(_ date: Date, now: Date = Date()) -> String {
         let seconds = max(0, now.timeIntervalSince(date))

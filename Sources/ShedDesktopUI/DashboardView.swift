@@ -40,6 +40,11 @@ public struct DashboardView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
             Spacer()
+            if !state.approvals.isEmpty {
+                Label("\(state.approvals.count) pending", systemImage: "shield.lefthalf.filled")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.red)
+            }
             HStack(spacing: 6) {
                 Circle()
                     .fill(state.hostAgentConnected ? Color.green : Color.secondary)
@@ -60,19 +65,11 @@ public struct DashboardView: View {
         case .sheds:
             ShedListView(state: state)
         case .approvals:
-            PlaceholderPane(
-                title: "Credential approvals",
-                systemImage: "lock.shield",
-                message: "Approvals route here when the host agent's mode is shed-desktop (M3)."
-            )
+            ApprovalsView(state: state)
         case .agents:
             AgentsView(state: state)
         case .activity:
-            PlaceholderPane(
-                title: "Activity",
-                systemImage: "list.bullet.rectangle",
-                message: "Merged credential audit + lifecycle + RC state changes (M3)."
-            )
+            ActivityView(state: state)
         }
     }
 }

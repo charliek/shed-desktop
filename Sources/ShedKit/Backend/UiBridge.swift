@@ -58,4 +58,12 @@ public protocol UiBridge: AnyObject {
     func rcList(host: String?, shed: String?) async throws -> [RcSession]
     func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession
     func rcKill(host: String?, shed: String, slug: String) async throws
+
+    // MARK: - M3: credential approvals + activity
+
+    func approvalsList() -> [ApprovalRequest]
+    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool) async throws
+    func activityList(limit: Int) -> [AuditEntry]
+    /// Replace the policy rules (test-mode only, to exercise the matrix E2E).
+    func setPolicyRules(_ rules: [PolicyRule])
 }

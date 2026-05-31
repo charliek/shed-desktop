@@ -27,12 +27,21 @@ public final class AppState: ObservableObject {
     @Published public var showLaunchSheet: Bool = false
     /// Remote-control sessions across sheds (the Agents pane).
     @Published public var rcSessions: [RcSession] = []
+    /// Pending credential-approval requests (the Approvals pane + menu bar).
+    @Published public var approvals: [ApprovalRequest] = []
+    /// Merged activity feed (host-agent audit + lifecycle + RC).
+    @Published public var activity: [AuditEntry] = []
 
     // Action seams the app wires up (the UI module can't reach AppModel
     // directly, so it calls these). All run on the main actor. Contract:
     // these are fire-and-forget — results surface back through the
     // @Published state above (sheds/activeCreate refresh; failures land in
     // lastError), not via return values.
+    //
+    // STOP RULE: this bag is at its practical limit (~8). The NEXT new
+    // action seam should promote this to a `weak var actions: AppActions?`
+    // delegate protocol (named methods, one wiring point, missing wiring =
+    // compile error) rather than adding a ninth closure.
     public var onShedAction: ((ShedAction, Shed) -> Void)?
     public var onOpenTerminal: ((Shed) -> Void)?
     public var onCreate: ((String?, CreateShedRequest) -> Void)?
@@ -40,6 +49,8 @@ public final class AppState: ObservableObject {
     public var onRcKill: ((RcSession) -> Void)?
     public var onRcRefresh: (() -> Void)?
     public var onOpenURL: ((String) -> Void)?
+    /// Decide a pending approval: (request, decision, grantSession).
+    public var onApprovalDecide: ((ApprovalRequest, ApprovalDecision, Bool) -> Void)?
 
     public init() {}
 

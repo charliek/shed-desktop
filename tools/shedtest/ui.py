@@ -81,7 +81,8 @@ def quit() -> None:
     (cache / "shed-desktop.lock").unlink(missing_ok=True)
 
 
-def launch(*, mock_base_url: str, config_path: Path, state_dir: Path) -> None:
+def launch(*, mock_base_url: str, config_path: Path, state_dir: Path,
+           host_agent_socket: str | None = None) -> None:
     if platform.system() != "Darwin":
         raise RuntimeError("ShedDesktop requires macOS")
     if not APP.is_dir():
@@ -91,8 +92,10 @@ def launch(*, mock_base_url: str, config_path: Path, state_dir: Path) -> None:
         "--env", f"SHED_DESKTOP_MOCK_BASE_URL={mock_base_url}",
         "--env", f"SHED_DESKTOP_SHED_CONFIG={config_path}",
         "--env", f"SHED_DESKTOP_STATE_DIR={state_dir}",
-        str(APP),
     ]
+    if host_agent_socket:
+        argv += ["--env", f"SHED_DESKTOP_HOST_AGENT_SOCKET={host_agent_socket}"]
+    argv += [str(APP)]
     subprocess.run(argv, check=True)
     wait_alive(mock_base_url=mock_base_url)
 

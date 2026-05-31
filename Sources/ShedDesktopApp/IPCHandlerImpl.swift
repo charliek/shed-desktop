@@ -91,6 +91,20 @@ actor IPCHandlerImpl: IPCHandler {
             let p = try decodeParams(params, as: RcKillParams.self, expected: ["host", "shed", "slug"])
             try await rcKillOp(p)
             return emptyResult
+        case "approvals.list":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(approvalsListOp())
+        case "approval.decide":
+            let p = try decodeParams(params, as: ApprovalDecideParams.self, expected: ["id", "decision", "grant_session"])
+            try await approvalDecideOp(p)
+            return emptyResult
+        case "activity.list":
+            let p = try decodeParams(params, as: ActivityListParams.self, expected: ["limit"])
+            return try await encodeResult(activityListOp(limit: p.limit))
+        case "policy.set":
+            let p = try decodeParams(params, as: PolicySetParams.self, expected: ["rules"])
+            try await policySetOp(p)
+            return emptyResult
         default:
             throw IPCHandlerError.unknownOp(op)
         }
@@ -159,6 +173,25 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func rcKillOp(_ p: RcKillParams) async throws {
         try await uiBridge().rcKill(host: p.host, shed: p.shed, slug: p.slug)
+    }
+
+    @MainActor private func approvalsListOp() throws -> ApprovalListResult {
+        ApprovalListResult(approvals: try uiBridge().approvalsList())
+    }
+
+    @MainActor private func approvalDecideOp(_ p: ApprovalDecideParams) async throws {
+        try await uiBridge().decideApproval(id: p.id, decision: p.decision, grantSession: p.grantSession)
+    }
+
+    @MainActor private func activityListOp(limit: Int) throws -> ActivityListResult {
+        ActivityListResult(entries: try uiBridge().activityList(limit: limit))
+    }
+
+    @MainActor private func policySetOp(_ p: PolicySetParams) throws {
+        guard ShedBackend.shared.testMode else {
+            throw IPCHandlerError.notEnabled("policy.set requires SHED_DESKTOP_TEST_MODE=1")
+        }
+        try uiBridge().setPolicyRules(p.rules)
     }
 
     @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {
@@ -278,6 +311,36 @@ private struct RcLaunchParams: Decodable {
 
 private struct RcListResult: Encodable, Sendable { let sessions: [RcSession] }
 private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let url: String? }
+
+private struct ApprovalDecideParams: Decodable {
+    let id: String
+    let decision: ApprovalDecision
+    let grantSession: Bool
+    enum CodingKeys: String, CodingKey {
+        case id, decision
+        case grantSession = "grant_session"
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.decision = try c.decode(ApprovalDecision.self, forKey: .decision)
+        self.grantSession = try c.decodeIfPresent(Bool.self, forKey: .grantSession) ?? false
+    }
+}
+
+private struct ActivityListParams: Decodable {
+    let limit: Int
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.limit = try c.decodeIfPresent(Int.self, forKey: .limit) ?? 200
+    }
+    enum CodingKeys: String, CodingKey { case limit }
+}
+
+private struct PolicySetParams: Decodable { let rules: [PolicyRule] }
+
+private struct ApprovalListResult: Encodable, Sendable { let approvals: [ApprovalRequest] }
+private struct ActivityListResult: Encodable, Sendable { let entries: [AuditEntry] }
 
 private struct ScreenshotParams: Decodable {
     let scale: Int

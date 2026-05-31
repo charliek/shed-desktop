@@ -162,6 +162,19 @@ class ShedDesktop:
             params["host"] = host
         self.call("rc.kill", params)
 
+    # -- M3: approvals + activity ----------------------------------------
+    def approvals_list(self) -> list[dict]:
+        return self.call("approvals.list")["approvals"]
+
+    def approval_decide(self, id: str, decision: str, grant_session: bool = False) -> None:
+        self.call("approval.decide", {"id": id, "decision": decision, "grant_session": grant_session})
+
+    def activity_list(self, limit: int = 200) -> list[dict]:
+        return self.call("activity.list", {"limit": limit})["entries"]
+
+    def policy_set(self, rules: list[dict]) -> None:
+        self.call("policy.set", {"rules": rules})
+
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 

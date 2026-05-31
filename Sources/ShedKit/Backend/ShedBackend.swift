@@ -35,6 +35,11 @@ public final class ShedBackend {
     /// tests seed a fixture without touching the real config.
     public private(set) var shedConfigPath: String = ""
 
+    /// The shed-host-agent UDS path the approval client connects to.
+    /// Overridable via `SHED_DESKTOP_HOST_AGENT_SOCKET` so the test fake
+    /// can stand in for the real host agent.
+    public private(set) var hostAgentSocketPath: String = ""
+
     private var started = false
 
     private init() {}
@@ -62,9 +67,11 @@ public final class ShedBackend {
         self.testMode = env["SHED_DESKTOP_TEST_MODE"] == "1"
         self.mockBaseURL = env["SHED_DESKTOP_MOCK_BASE_URL"]
 
-        let defaultConfig = ((env["HOME"] ?? NSHomeDirectory()) as NSString)
-            .appendingPathComponent(".shed/config.yaml")
-        self.shedConfigPath = env["SHED_DESKTOP_SHED_CONFIG"] ?? defaultConfig
+        let home = (env["HOME"] ?? NSHomeDirectory()) as NSString
+        self.shedConfigPath = env["SHED_DESKTOP_SHED_CONFIG"]
+            ?? home.appendingPathComponent(".shed/config.yaml")
+        self.hostAgentSocketPath = env["SHED_DESKTOP_HOST_AGENT_SOCKET"]
+            ?? home.appendingPathComponent("Library/Application Support/shed/host-agent.sock")
 
         for dir in [profile.stateDir, (profile.socketPath as NSString).deletingLastPathComponent, profile.logDir] {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)

@@ -29,6 +29,22 @@ final class AppModel: NSObject, UiBridge {
     private var pollTask: Task<Void, Never>?
     private var ipcServer: IPCServer?
 
+    // M3: approvals
+    private var hostAgent: HostAgentClient?
+    private var policyEngine = PolicyEngine(rules: AppModel.defaultPolicyRules)
+    private var auditStore: AuditStore?
+    private var sessionGrants: [SessionGrantKey: Date] = [:]
+    /// A queued prompt: the request plus the gate to apply when the user acts.
+    private struct PendingApproval { let request: ApprovalRequest; let gate: PolicyGate }
+    private var pending: [String: PendingApproval] = [:]
+    private var hostAgentTask: Task<Void, Never>?
+    private var expiryTask: Task<Void, Never>?
+
+    static let defaultPolicyRules: [PolicyRule] = [
+        PolicyRule(scope: .default, action: .prompt, gate: .touchid),
+    ]
+    private let grantTTL: TimeInterval = 4 * 3600
+
     private(set) var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
@@ -46,6 +62,7 @@ final class AppModel: NSObject, UiBridge {
         buildStatusItem()
         bindIPC(profile: profile)
         startPolling()
+        startApprovals(profile: profile)
     }
 
     /// Wire the UI's action seams to the bridge methods (the UI module
@@ -91,6 +108,13 @@ final class AppModel: NSObject, UiBridge {
         }
         state.onOpenURL = { url in
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
+        }
+        state.onApprovalDecide = { [weak self] req, decision, grant in
+            Task { [weak self] in
+                guard let self else { return }
+                do { try await self.decideApproval(id: req.id, decision: decision, grantSession: grant) }
+                catch { self.state.lastError = "approval \(req.id): \(error)" }
+            }
         }
     }
 
@@ -518,5 +542,140 @@ final class AppModel: NSObject, UiBridge {
             RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: ["bash", "-c", RemoteControl.listScript(sep: sep)]))
         guard res.ok else { return [] }
         return RemoteControl.parseSessionList(res.stdout, sep: sep, serverName: serverName, shed: shed)
+    }
+
+    // MARK: - M3: approvals + activity
+
+    private var uiVersion: String { Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0" }
+    private var pid: Int32 { Int32(ProcessInfo.processInfo.processIdentifier) }
+
+    private func startApprovals(profile: BundleProfile) {
+        let store = AuditStore(path: (profile.stateDir as NSString).appendingPathComponent("audit.jsonl"))
+        self.auditStore = store
+        publishActivity()
+
+        let client = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
+        self.hostAgent = client
+        let info = HelloClientInfo(
+            name: "shed-desktop", version: uiVersion, pid: pid,
+            capabilities: ["approval.ssh", "event.stream"], replayEvents: 50)
+        let stream = client.start(client: info)
+        hostAgentTask = Task { [weak self] in
+            for await event in stream { await self?.handleHostAgentEvent(event) }
+        }
+        expiryTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                await self?.expirePending()
+            }
+        }
+    }
+
+    private func handleHostAgentEvent(_ event: HostAgentEvent) {
+        switch event {
+        case .connected:
+            state.hostAgentConnected = true
+        case .disconnected:
+            state.hostAgentConnected = false
+        case .frame(let frame):
+            switch frame {
+            case .approvalRequest(let req): handleApprovalRequest(req)
+            case .event(let evt): ingestEvent(evt)
+            default: break
+            }
+        }
+    }
+
+    private func handleApprovalRequest(_ req: ApprovalRequest) {
+        let decision = policyEngine.decide(for: req, sessionGrants: validGrants())
+        switch decision.action {
+        case .approve:
+            respondAndAudit(req, .approve, decidedBy: .policy, policy: decision.appliedScope.rawValue)
+        case .deny:
+            respondAndAudit(req, .deny, decidedBy: .policy, policy: decision.appliedScope.rawValue)
+        case .prompt:
+            pending[req.id] = PendingApproval(request: req, gate: decision.gate)
+            publishApprovals()
+        }
+    }
+
+    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool) async throws {
+        guard let item = pending[id] else { throw IPCHandlerError.notFound("no pending approval \(id)") }
+        let req = item.request
+        var decidedBy: DecidedBy = .user
+        if decision == .approve, item.gate == .touchid, !ShedBackend.shared.testMode {
+            let ok = await TouchID.authenticate(reason: "Approve \(req.namespace) \(req.op) for shed \(req.shed)")
+            guard ok else {
+                state.lastError = "Touch ID not confirmed for \(req.shed)"
+                return  // stay pending; user can retry or it expires
+            }
+            // The request may have expired (and been denied) while the
+            // biometric prompt was up — don't send a late, contradictory
+            // approve or grant a session for a dead request.
+            guard pending[id] != nil else { return }
+            decidedBy = .touchid
+        }
+        if grantSession, decision == .approve {
+            sessionGrants[SessionGrantKey(namespace: req.namespace, shed: req.shed)] = Date().addingTimeInterval(grantTTL)
+        }
+        respondAndAudit(req, decision, decidedBy: decidedBy, policy: grantSession ? "session-grant" : "manual")
+        pending[id] = nil
+        publishApprovals()
+    }
+
+    private func expirePending() {
+        let now = Date()
+        let expired = pending.values.map(\.request).filter { ($0.expiresAtDate ?? now) < now }
+        for req in expired {
+            respondAndAudit(req, .deny, decidedBy: .timeout, policy: "expired")
+            pending[req.id] = nil
+        }
+        if !expired.isEmpty { publishApprovals() }
+    }
+
+    private func respondAndAudit(_ req: ApprovalRequest, _ decision: ApprovalDecision, decidedBy: DecidedBy, policy: String) {
+        // Record the decision before transmitting it, so there's always an
+        // app-side trail for an approve we sent.
+        auditStore?.append(AuditEntry(
+            id: req.id, ts: DateFormatting.nowISO8601(), source: .app, shed: req.shed, ns: req.namespace, op: req.op,
+            result: decision == .approve ? "ok" : "denied", detail: req.detail, approval: "shed-desktop", policy: policy))
+        publishActivity()
+        hostAgent?.respond(requestID: req.id, decision: decision, decidedBy: decidedBy)
+    }
+
+    private func ingestEvent(_ evt: AuditEventFrame) {
+        auditStore?.append(AuditEntry(frame: evt))
+        publishActivity()
+    }
+
+    private func validGrants() -> Set<SessionGrantKey> {
+        let now = Date()
+        return Set(sessionGrants.filter { $0.value > now }.keys)
+    }
+
+    /// Pending requests, soonest-to-expire first — the single ordering used
+    /// by both the published queue and the IPC list.
+    private var sortedPending: [ApprovalRequest] {
+        pending.values.map(\.request).sorted { $0.expiresAt < $1.expiresAt }
+    }
+
+    private func publishApprovals() {
+        state.approvals = sortedPending
+    }
+
+    private func publishActivity() {
+        state.activity = auditStore?.recent() ?? []
+    }
+
+    // MARK: - UiBridge (M3)
+
+    func approvalsList() -> [ApprovalRequest] { sortedPending }
+
+    func activityList(limit: Int) -> [AuditEntry] {
+        auditStore?.recent(limit: limit) ?? []
+    }
+
+    func setPolicyRules(_ rules: [PolicyRule]) {
+        policyEngine = PolicyEngine(rules: rules)
     }
 }

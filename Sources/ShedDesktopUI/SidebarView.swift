@@ -9,7 +9,7 @@ struct SidebarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             row(.sheds, "server.rack", "Sheds", count: state.sheds.count)
-            row(.approvals, "lock.shield", "Approvals", count: nil)
+            row(.approvals, "lock.shield", "Approvals", count: state.approvals.isEmpty ? nil : state.approvals.count, danger: true)
             row(.agents, "wand.and.stars", "Agents", count: state.rcSessions.isEmpty ? nil : state.rcSessions.count)
             row(.activity, "list.bullet.rectangle", "Activity", count: nil)
 
@@ -43,7 +43,7 @@ struct SidebarView: View {
     }
 
     @ViewBuilder
-    private func row(_ pane: DashboardPane, _ icon: String, _ label: String, count: Int?) -> some View {
+    private func row(_ pane: DashboardPane, _ icon: String, _ label: String, count: Int?, danger: Bool = false) -> some View {
         let selected = state.pane == pane
         Button {
             state.pane = pane
@@ -57,9 +57,10 @@ struct SidebarView: View {
                 if let count {
                     Text("\(count)")
                         .font(.system(size: 11))
+                        .foregroundStyle(danger ? Color.red : Color.secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.15))
+                        .background((danger ? Color.red : Color.secondary).opacity(0.15))
                         .clipShape(Capsule())
                 }
             }
