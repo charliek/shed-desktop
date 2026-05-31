@@ -42,6 +42,10 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await showWindowOp()
             return emptyResult
+        case "ui.open_preferences":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await openPreferencesOp()
+            return emptyResult
         case "ui.open_menu":
             let p = try decodeParams(params, as: OpenMenuParams.self, expected: ["open"])
             try await openMenuOp(p.open)
@@ -136,6 +140,7 @@ actor IPCHandlerImpl: IPCHandler {
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
     @MainActor private func uiStateOp() throws -> UIState { try uiBridge().uiState() }
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
+    @MainActor private func openPreferencesOp() throws { try uiBridge().openPreferences() }
     @MainActor private func openMenuOp(_ open: Bool) throws { try uiBridge().setMenuOpen(open) }
     @MainActor private func hostListOp() throws -> HostListResult { HostListResult(hosts: try uiBridge().uiState().hosts) }
 

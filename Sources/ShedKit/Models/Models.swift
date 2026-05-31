@@ -284,6 +284,7 @@ public enum DashboardPane: String, Codable, Sendable, CaseIterable {
 public enum ScreenshotSurface: String, Codable, Sendable {
     case window
     case menu
+    case preferences
 }
 
 /// A shed lifecycle mutation (`shed.start`/`stop`/`reset`/`delete`).

@@ -19,6 +19,9 @@ public protocol UiBridge: AnyObject {
     /// it closed). Used by `ui.showWindow` before a window screenshot.
     func showWindow()
 
+    /// Open (and front) the preferences window.
+    func openPreferences()
+
     /// Force the menu-bar popover open or closed (`ui.openMenu`).
     func setMenuOpen(_ open: Bool)
 

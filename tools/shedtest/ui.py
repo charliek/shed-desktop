@@ -20,6 +20,7 @@ from client import ShedDesktop, ShedError, scaled_timeout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP = REPO_ROOT / "build" / "ShedDesktop.app"
+DEFAULTS_SUITE = "ai.stridelabs.ShedDesktop.e2e"
 
 
 def socket_path() -> Path:
@@ -79,6 +80,9 @@ def quit() -> None:
     cache = Path.home() / "Library/Caches/ShedDesktop"
     (cache / "shed-desktop.sock").unlink(missing_ok=True)
     (cache / "shed-desktop.lock").unlink(missing_ok=True)
+    # Drop the throwaway preferences suite so a run never leaves dev defaults.
+    subprocess.run(["defaults", "delete", DEFAULTS_SUITE],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def launch(*, mock_base_url: str, config_path: Path, state_dir: Path,
@@ -95,6 +99,9 @@ def launch(*, mock_base_url: str, config_path: Path, state_dir: Path,
     ]
     if host_agent_socket:
         argv += ["--env", f"SHED_DESKTOP_HOST_AGENT_SOCKET={host_agent_socket}"]
+    # Throwaway UserDefaults suite so preferences never touch the dev's real
+    # defaults (the SHED_DESKTOP_STATE_DIR analog for UserDefaults).
+    argv += ["--env", f"SHED_DESKTOP_DEFAULTS_SUITE={DEFAULTS_SUITE}"]
     argv += [str(APP)]
     subprocess.run(argv, check=True)
     wait_alive(mock_base_url=mock_base_url)

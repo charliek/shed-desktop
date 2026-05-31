@@ -101,6 +101,9 @@ class ShedDesktop:
     def open_menu(self, open_: bool) -> None:
         self.call("ui.open_menu", {"open": open_})
 
+    def open_preferences(self) -> None:
+        self.call("ui.open_preferences")
+
     def host_list(self) -> list[dict]:
         return self.call("host.list")["hosts"]
 

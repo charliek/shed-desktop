@@ -31,7 +31,9 @@ final class AppModel: NSObject, UiBridge {
 
     // M3: approvals
     private var hostAgent: HostAgentClient?
-    private var policyEngine = PolicyEngine(rules: AppModel.defaultPolicyRules)
+    // Replaced from preferences in loadPreferences(); empty rules fail-safe
+    // to a Touch ID prompt via PolicyEngine.decide.
+    private var policyEngine = PolicyEngine(rules: [])
     private var auditStore: AuditStore?
     private var sessionGrants: [SessionGrantKey: Date] = [:]
     /// A queued prompt: the request plus the gate to apply when the user acts.
@@ -40,10 +42,12 @@ final class AppModel: NSObject, UiBridge {
     private var hostAgentTask: Task<Void, Never>?
     private var expiryTask: Task<Void, Never>?
 
-    static let defaultPolicyRules: [PolicyRule] = [
-        PolicyRule(scope: .default, action: .prompt, gate: .touchid),
-    ]
     private let grantTTL: TimeInterval = 4 * 3600
+
+    // M4: preferences
+    private let prefsStore = PreferencesStore()
+    private let prefs = Preferences()
+    private var prefsWindow: NSWindow?
 
     private(set) var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
@@ -57,12 +61,48 @@ final class AppModel: NSObject, UiBridge {
         ShedBackend.shared.start(profile: profile)
         ShedBackend.shared.registerUI(self)
         loadConfigAndClients()
+        loadPreferences()
         wireActions()
         buildMainWindow()
         buildStatusItem()
         bindIPC(profile: profile)
         startPolling()
         startApprovals(profile: profile)
+    }
+
+    private func loadPreferences() {
+        let testMode = ShedBackend.shared.testMode
+        prefs.launchAtLogin = testMode ? false : LoginItem.isEnabled
+        prefs.terminalTemplate = prefsStore.terminalTemplate
+        prefs.defaultApprovalMode = prefsStore.defaultApprovalMode
+        // Apply the stored default approval mode to the policy engine.
+        policyEngine = PolicyEngine(rules: [prefsStore.defaultApprovalMode.rule])
+
+        prefs.onLaunchAtLogin = { [weak self] on in
+            guard let self else { return }
+            // Never register a real login item under the test harness. The
+            // SMAppService status is the source of truth (no separate
+            // persisted flag), re-read on next launch.
+            guard !ShedBackend.shared.testMode else { return }
+            do {
+                try LoginItem.setEnabled(on)
+                if on && !LoginItem.isEnabled {
+                    // register() succeeded but the item is .requiresApproval.
+                    self.state.lastError = "Approve “shed desktop” in System Settings › Login Items to finish enabling launch at login."
+                }
+            } catch {
+                self.state.lastError = "launch at login: \(error)"
+                self.prefs.launchAtLogin = LoginItem.isEnabled
+            }
+        }
+        prefs.onTerminalTemplate = { [weak self] template in
+            self?.prefsStore.terminalTemplate = template
+        }
+        prefs.onDefaultMode = { [weak self] mode in
+            guard let self else { return }
+            self.prefsStore.defaultApprovalMode = mode
+            self.policyEngine = PolicyEngine(rules: [mode.rule])
+        }
     }
 
     /// Wire the UI's action seams to the bridge methods (the UI module
@@ -268,6 +308,10 @@ final class AppModel: NSObject, UiBridge {
                 self?.setMenuOpen(false)
                 self?.showWindow()
             },
+            onOpenPreferences: { [weak self] in
+                self?.setMenuOpen(false)
+                self?.openPreferences()
+            },
             onQuit: { NSApp.terminate(nil) }
         ))
         self.popover = popover
@@ -311,6 +355,8 @@ final class AppModel: NSObject, UiBridge {
         case .menu:
             guard let popover, popover.isShown else { return nil }
             return popover.contentViewController?.view.window
+        case .preferences:
+            return prefsWindow
         }
     }
 
@@ -423,8 +469,27 @@ final class AppModel: NSObject, UiBridge {
     }
 
     /// User-configurable terminal command template (`{cmd}` placeholder);
-    /// nil = default to Terminal.app. Wired to preferences in M4.
-    private var terminalTemplate: String? { nil }
+    /// nil = default to Terminal.app.
+    private var terminalTemplate: String? {
+        let t = prefs.terminalTemplate.trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
+    }
+
+    // MARK: - preferences window (M4)
+
+    func openPreferences() {
+        if prefsWindow == nil {
+            let hosting = NSHostingController(rootView: PreferencesView(prefs: prefs, state: state))
+            let window = NSWindow(contentViewController: hosting)
+            window.title = "shed desktop — Preferences"
+            window.styleMask = [.titled, .closable]
+            window.isReleasedWhenClosed = false
+            window.center()
+            prefsWindow = window
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        prefsWindow?.makeKeyAndOrderFront(nil)
+    }
 
     // MARK: - UiBridge (M2: remote control)
 

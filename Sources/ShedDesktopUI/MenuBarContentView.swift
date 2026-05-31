@@ -9,15 +9,18 @@ import SwiftUI
 public struct MenuBarContentView: View {
     @ObservedObject var state: AppState
     let onOpenDashboard: () -> Void
+    let onOpenPreferences: () -> Void
     let onQuit: () -> Void
 
     public init(
         state: AppState,
         onOpenDashboard: @escaping () -> Void,
+        onOpenPreferences: @escaping () -> Void,
         onQuit: @escaping () -> Void
     ) {
         self.state = state
         self.onOpenDashboard = onOpenDashboard
+        self.onOpenPreferences = onOpenPreferences
         self.onQuit = onQuit
     }
 
@@ -77,6 +80,7 @@ public struct MenuBarContentView: View {
 
             Divider()
             menuButton("Open dashboard", systemImage: "macwindow", action: onOpenDashboard)
+            menuButton("Preferences…", systemImage: "gearshape", action: onOpenPreferences)
             menuButton("Quit", systemImage: "power", action: onQuit)
                 .padding(.bottom, 6)
         }
