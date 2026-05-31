@@ -111,6 +111,30 @@ class ShedDesktop:
     def refresh(self) -> None:
         self.call("sheds.refresh")
 
+    # -- M1: lifecycle, create, terminal ---------------------------------
+    def shed_action(self, action: str, name: str, host: str | None = None) -> None:
+        params = {"name": name}
+        if host:
+            params["host"] = host
+        self.call(f"shed.{action}", params)
+
+    def create_start(self, name: str, host: str | None = None, **fields) -> str:
+        params = {"name": name, **fields}
+        if host:
+            params["host"] = host
+        return self.call("create.start", params)["create_id"]
+
+    def create_status(self, create_id: str) -> dict:
+        return self.call("create.status", {"create_id": create_id})
+
+    def terminal_preview(self, shed: str, host: str | None = None, session: str | None = None) -> dict:
+        params: dict = {"shed": shed}
+        if host:
+            params["host"] = host
+        if session:
+            params["session"] = session
+        return self.call("terminal.preview", params)
+
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 

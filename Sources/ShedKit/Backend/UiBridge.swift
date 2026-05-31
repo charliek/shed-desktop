@@ -36,4 +36,20 @@ public protocol UiBridge: AnyObject {
     /// the refresh has completed so tests can assert without waiting for the
     /// poll interval.
     func refreshSheds() async
+
+    // MARK: - M1: lifecycle, create, terminal
+
+    /// Run a lifecycle mutation on a shed, then refresh so the result is
+    /// reflected by the time this returns.
+    func shedAction(_ action: ShedAction, host: String?, name: String) async throws
+
+    /// Kick off a create; returns a create id whose progress is polled via
+    /// `createStatus`.
+    func startCreate(host: String?, request: CreateShedRequest) throws -> String
+    func createStatus(id: String) -> CreateProgress?
+
+    /// Build the ssh command to reach a shed (pure; spawns nothing).
+    func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand
+    /// Build AND launch the terminal (side-effecting; gated to test mode off).
+    func openTerminal(shed: String, host: String?, session: String?) throws -> TerminalCommand
 }

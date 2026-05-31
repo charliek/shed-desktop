@@ -128,6 +128,41 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+/// Body for `POST /api/sheds`. `repo` and `localDir` are mutually
+/// exclusive; only non-nil fields are sent.
+public struct CreateShedRequest: Codable, Sendable, Equatable {
+    public var name: String
+    public var repo: String?
+    public var localDir: String?
+    public var image: String?
+    public var backend: String?
+    public var cpus: Int?
+    public var memoryMB: Int?
+    public var noProvision: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case name, repo, image, backend, cpus
+        case localDir = "local_dir"
+        case memoryMB = "memory_mb"
+        case noProvision = "no_provision"
+    }
+
+    public init(
+        name: String, repo: String? = nil, localDir: String? = nil,
+        image: String? = nil, backend: String? = nil,
+        cpus: Int? = nil, memoryMB: Int? = nil, noProvision: Bool? = nil
+    ) {
+        self.name = name
+        self.repo = repo
+        self.localDir = localDir
+        self.image = image
+        self.backend = backend
+        self.cpus = cpus
+        self.memoryMB = memoryMB
+        self.noProvision = noProvision
+    }
+}
+
 /// `GET /api/info` response.
 public struct ServerInfo: Codable, Sendable, Equatable {
     public var name: String
@@ -211,4 +246,32 @@ public enum DashboardPane: String, Codable, Sendable, CaseIterable {
 public enum ScreenshotSurface: String, Codable, Sendable {
     case window
     case menu
+}
+
+/// A shed lifecycle mutation (`shed.start`/`stop`/`reset`/`delete`).
+public enum ShedAction: String, Codable, Sendable {
+    case start, stop, reset, delete
+}
+
+/// The lifecycle of an in-flight create. Encodes to the same wire strings
+/// (`progress`/`complete`/`error`) the harness asserts on.
+public enum CreateState: String, Codable, Sendable {
+    case progress, complete, error
+}
+
+/// Progress of an in-flight `create.start`, polled via `create.status`.
+public struct CreateProgress: Codable, Sendable, Equatable {
+    public var id: String
+    public var state: CreateState
+    public var messages: [String]
+    public var shed: Shed?
+    public var error: String?
+
+    public init(id: String, state: CreateState, messages: [String] = [], shed: Shed? = nil, error: String? = nil) {
+        self.id = id
+        self.state = state
+        self.messages = messages
+        self.shed = shed
+        self.error = error
+    }
 }

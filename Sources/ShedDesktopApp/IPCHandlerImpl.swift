@@ -56,6 +56,26 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await shedsRefreshOp()
             return emptyResult
+        case "shed.start", "shed.stop", "shed.reset", "shed.delete":
+            guard let action = ShedAction(rawValue: String(op.dropFirst("shed.".count))) else {
+                throw IPCHandlerError.unknownOp(op)
+            }
+            let p = try decodeParams(params, as: ShedActionParams.self, expected: ["host", "name"])
+            try await shedActionOp(action, host: p.host, name: p.name)
+            return emptyResult
+        case "create.start":
+            let p = try decodeParams(params, as: CreateStartParams.self,
+                expected: ["host", "name", "repo", "local_dir", "image", "backend", "cpus", "memory_mb", "no_provision"])
+            return try await createStartOp(p)
+        case "create.status":
+            let p = try decodeParams(params, as: CreateStatusParams.self, expected: ["create_id"])
+            return try await encodeResult(createStatusOp(id: p.createID))
+        case "terminal.preview":
+            let p = try decodeParams(params, as: TerminalParams.self, expected: ["host", "shed", "session"])
+            return try await encodeResult(terminalPreviewOp(p))
+        case "terminal.open":
+            let p = try decodeParams(params, as: TerminalParams.self, expected: ["host", "shed", "session"])
+            return try await encodeResult(terminalOpenOp(p))
         default:
             throw IPCHandlerError.unknownOp(op)
         }
@@ -92,6 +112,34 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func shedsRefreshOp() async throws {
         try await uiBridge().refreshSheds()
+    }
+
+    @MainActor private func shedActionOp(_ action: ShedAction, host: String?, name: String) async throws {
+        try await uiBridge().shedAction(action, host: host, name: name)
+    }
+
+    @MainActor private func createStartOp(_ p: CreateStartParams) throws -> AnyCodable? {
+        let id = try uiBridge().startCreate(host: p.host, request: p.request)
+        return AnyCodable(["create_id": id])
+    }
+
+    @MainActor private func createStatusOp(id: String) throws -> CreateProgress {
+        guard let status = try uiBridge().createStatus(id: id) else {
+            throw IPCHandlerError.notFound("no create with id \(id)")
+        }
+        return status
+    }
+
+    @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalCommand {
+        try uiBridge().terminalCommand(shed: p.shed, host: p.host, session: p.session)
+    }
+
+    @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {
+        // Never spawn a terminal under the test harness.
+        guard !ShedBackend.shared.testMode else {
+            throw IPCHandlerError.notEnabled("terminal.open is disabled in test mode (use terminal.preview)")
+        }
+        return try uiBridge().openTerminal(shed: p.shed, host: p.host, session: p.session)
     }
 
     @MainActor
@@ -145,6 +193,35 @@ private struct PaneParams: Decodable { let pane: String }
 private struct OpenMenuParams: Decodable { let open: Bool }
 
 private struct HostFilterParams: Decodable { let host: String? }
+
+private struct ShedActionParams: Decodable {
+    let host: String?
+    let name: String
+}
+
+/// The create body fields (decoded straight into `CreateShedRequest`, the
+/// single owner of that field list) plus the flat `host` selector.
+private struct CreateStartParams: Decodable {
+    let host: String?
+    let request: CreateShedRequest
+
+    init(from decoder: Decoder) throws {
+        self.request = try CreateShedRequest(from: decoder)
+        self.host = try decoder.container(keyedBy: HostKey.self).decodeIfPresent(String.self, forKey: .host)
+    }
+    private enum HostKey: String, CodingKey { case host }
+}
+
+private struct CreateStatusParams: Decodable {
+    let createID: String
+    enum CodingKeys: String, CodingKey { case createID = "create_id" }
+}
+
+private struct TerminalParams: Decodable {
+    let host: String?
+    let shed: String
+    let session: String?
+}
 
 private struct ScreenshotParams: Decodable {
     let scale: Int

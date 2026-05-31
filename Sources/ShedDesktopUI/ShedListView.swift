@@ -8,15 +8,22 @@ struct ShedListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
+            HStack(spacing: 8) {
                 Text("Sheds").font(.system(size: 16, weight: .semibold))
-                Spacer()
                 if let err = state.lastError {
                     Label(err, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11))
                         .foregroundStyle(.orange)
                         .lineLimit(1)
                 }
+                Spacer()
+                Button {
+                    state.showCreateSheet = true
+                } label: {
+                    Label("New shed", systemImage: "plus")
+                        .font(.system(size: 13))
+                }
+                .buttonStyle(.borderless)
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
@@ -63,7 +70,7 @@ struct ShedListView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.tertiary)
             ForEach(sheds) { shed in
-                ShedRow(shed: shed)
+                ShedRow(shed: shed, state: state)
             }
         }
     }
@@ -71,6 +78,9 @@ struct ShedListView: View {
 
 struct ShedRow: View {
     let shed: Shed
+    @ObservedObject var state: AppState
+    @State private var confirmingDelete = false
+    @State private var confirmingReset = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -92,11 +102,40 @@ struct ShedRow: View {
                     .background(Color.secondary.opacity(0.1))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
+            actions
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
         .opacity(shed.status == .stopped ? 0.6 : 1.0)
+        .confirmationDialog("Delete shed \(shed.name)?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) { state.onShedAction?(.delete, shed) }
+        }
+        .confirmationDialog("Reset shed \(shed.name)? This discards the writable layer.", isPresented: $confirmingReset) {
+            Button("Reset", role: .destructive) { state.onShedAction?(.reset, shed) }
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: 6) {
+            if shed.status == .running {
+                iconButton("terminal", "Open terminal") { state.onOpenTerminal?(shed) }
+                iconButton("arrow.clockwise", "Reset") { confirmingReset = true }
+                iconButton("stop.fill", "Stop") { state.onShedAction?(.stop, shed) }
+            } else if shed.status == .stopped {
+                iconButton("play.fill", "Start") { state.onShedAction?(.start, shed) }
+                iconButton("trash", "Delete") { confirmingDelete = true }
+            }
+        }
+    }
+
+    private func iconButton(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol).font(.system(size: 12)).frame(width: 22, height: 22)
+        }
+        .buttonStyle(.bordered)
+        .help(help)
     }
 
     private var metaLine: String {

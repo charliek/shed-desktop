@@ -2,9 +2,10 @@
 //
 // Server-Sent Events framing. A stateful, synchronous parser fed one line
 // at a time, so it's trivially unit-testable and free of async/Sendable
-// entanglement. The M1 create flow drives it from
-// `URLSession.bytes(for:).lines`, pushing each line and acting on the
-// emitted records.
+// entanglement. The M1 create flow (ShedServerClient.createShed) feeds it
+// lines split from the raw byte stream by hand — NOT
+// `URLSession.bytes.lines`, whose AsyncLineSequence drops the blank lines
+// SSE relies on to dispatch an event.
 //
 // Dialect (matches shed-server + shed-remote-agent):
 //   * `event:` sets the event type for the next dispatch

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
@@ -55,6 +56,9 @@ class MockShedServer:
         # `sheds` may be a list or None (the real server returns
         # `{"sheds": null}` when empty — a decoding path we must exercise).
         self.sheds: list | None = [dict(s) for s in DEFAULT_SHEDS]
+        # Create-stream controls.
+        self.create_should_fail = False
+        self.create_progress = ["resolving image", "starting VM", "provisioning workspace"]
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -65,8 +69,11 @@ class MockShedServer:
         return f"http://{host}:{port}"
 
     def snapshot(self) -> tuple[dict, list | None]:
+        # Deep-copy the shed dicts under the lock so a GET never encodes a
+        # dict that a concurrent lifecycle POST is mutating.
         with self._lock:
-            return dict(self.info), (None if self.sheds is None else list(self.sheds))
+            sheds = None if self.sheds is None else [dict(s) for s in self.sheds]
+            return dict(self.info), sheds
 
     def set_sheds(self, sheds: list | None) -> None:
         with self._lock:
@@ -76,6 +83,37 @@ class MockShedServer:
         with self._lock:
             self.info = dict(DEFAULT_INFO)
             self.sheds = [dict(s) for s in DEFAULT_SHEDS]
+            self.create_should_fail = False
+
+    def shed(self, name: str) -> dict | None:
+        with self._lock:
+            for s in (self.sheds or []):
+                if s["name"] == name:
+                    return dict(s)
+        return None
+
+    # -- mutations the request handlers call (under lock) -----------------
+    def _set_status(self, name: str, status: str) -> bool:
+        with self._lock:
+            for s in (self.sheds or []):
+                if s["name"] == name:
+                    s["status"] = status
+                    return True
+        return False
+
+    def _delete(self, name: str) -> bool:
+        with self._lock:
+            if not self.sheds:
+                return False
+            before = len(self.sheds)
+            self.sheds = [s for s in self.sheds if s["name"] != name]
+            return len(self.sheds) != before
+
+    def _add(self, shed: dict) -> None:
+        with self._lock:
+            if self.sheds is None:
+                self.sheds = []
+            self.sheds.append(shed)
 
     def start(self) -> None:
         state = self
@@ -92,6 +130,12 @@ class MockShedServer:
                 self.end_headers()
                 self.wfile.write(payload)
 
+            def _body(self) -> dict:
+                length = int(self.headers.get("Content-Length", 0))
+                if not length:
+                    return {}
+                return json.loads(self.rfile.read(length) or b"{}")
+
             def do_GET(self):
                 info, sheds = state.snapshot()
                 if self.path == "/api/info":
@@ -100,6 +144,57 @@ class MockShedServer:
                     self._send(200, {"sheds": sheds})
                 else:
                     self._send(404, {"error": "not found"})
+
+            def do_POST(self):
+                parts = self.path.strip("/").split("/")  # api/sheds[/name/action]
+                if self.path == "/api/sheds":
+                    self._create()
+                elif len(parts) == 4 and parts[:2] == ["api", "sheds"]:
+                    name, action = parts[2], parts[3]
+                    status = {"start": "running", "stop": "stopped", "reset": "running"}.get(action)
+                    if status and state._set_status(name, status):
+                        self._send(200, {"ok": True})
+                    else:
+                        self._send(404, {"error": "no such shed/action"})
+                else:
+                    self._send(404, {"error": "not found"})
+
+            def do_DELETE(self):
+                parts = self.path.strip("/").split("/")
+                if len(parts) == 3 and parts[:2] == ["api", "sheds"]:
+                    self._send(200 if state._delete(parts[2]) else 404, {"ok": True})
+                else:
+                    self._send(404, {"error": "not found"})
+
+            def _create(self):
+                body = self._body()
+                name = body.get("name", "new-shed")
+                # Stream SSE progress, then a complete (or error) event.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+
+                def frame(event: str, data: dict):
+                    self.wfile.write(f"event: {event}\ndata: {json.dumps(data)}\n\n".encode())
+                    self.wfile.flush()
+
+                for msg in state.create_progress:
+                    frame("progress", {"message": msg})
+                    time.sleep(0.02)
+                if state.create_should_fail:
+                    frame("error", {"code": "create_failed", "message": f"could not create {name}"})
+                    return
+                shed = {
+                    "name": name, "status": "running",
+                    "backend": body.get("backend") or "vz",
+                    "cpus": body.get("cpus") or 2,
+                    "memory_mb": body.get("memory_mb") or 4096,
+                    "started_at": "2026-05-31T18:33:02.364547927Z",
+                }
+                if body.get("repo"):
+                    shed["repo"] = body["repo"]
+                state._add(shed)
+                frame("complete", shed)
 
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)

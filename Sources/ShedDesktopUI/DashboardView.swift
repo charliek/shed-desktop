@@ -24,6 +24,9 @@ public struct DashboardView: View {
         }
         .frame(minWidth: 720, minHeight: 460)
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $state.showCreateSheet) {
+            CreateShedSheet(state: state)
+        }
     }
 
     private var header: some View {

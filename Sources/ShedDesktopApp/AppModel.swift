@@ -21,7 +21,9 @@ import SwiftUI
 final class AppModel: NSObject, UiBridge {
     let state = AppState()
 
-    private var clients: [ShedServerClient] = []
+    private var clients: [String: ShedServerClient] = [:]
+    private var defaultServerName: String?
+    private var creates: [String: CreateProgress] = [:]
     private var pollTask: Task<Void, Never>?
     private var ipcServer: IPCServer?
 
@@ -37,10 +39,33 @@ final class AppModel: NSObject, UiBridge {
         ShedBackend.shared.start(profile: profile)
         ShedBackend.shared.registerUI(self)
         loadConfigAndClients()
+        wireActions()
         buildMainWindow()
         buildStatusItem()
         bindIPC(profile: profile)
         startPolling()
+    }
+
+    /// Wire the UI's action seams to the bridge methods (the UI module
+    /// can't reach AppModel directly).
+    private func wireActions() {
+        state.onShedAction = { [weak self] action, shed in
+            Task { [weak self] in
+                guard let self else { return }
+                do { try await self.shedAction(action, host: shed.host, name: shed.name) }
+                catch { self.state.lastError = "\(action.rawValue) \(shed.name): \(error)" }
+            }
+        }
+        state.onOpenTerminal = { [weak self] shed in
+            guard let self else { return }
+            do { _ = try self.openTerminal(shed: shed.name, host: shed.host, session: nil) }
+            catch { self.state.lastError = "terminal \(shed.name): \(error)" }
+        }
+        state.onCreate = { [weak self] host, request in
+            guard let self else { return }
+            do { _ = try self.startCreate(host: host, request: request) }
+            catch { self.state.lastError = "create \(request.name): \(error)" }
+        }
     }
 
     private func loadConfigAndClients() {
@@ -48,7 +73,7 @@ final class AppModel: NSObject, UiBridge {
         let mockBase = ShedBackend.shared.testMode ? ShedBackend.shared.mockBaseURL : nil
 
         var hosts: [ShedHost] = []
-        var clients: [ShedServerClient] = []
+        var clients: [String: ShedServerClient] = [:]
         for entry in config.servers {
             hosts.append(ShedHost(
                 name: entry.name, host: entry.host,
@@ -59,10 +84,25 @@ final class AppModel: NSObject, UiBridge {
             } else {
                 baseURL = URL(string: "http://\(entry.host):\(entry.httpPort)")!
             }
-            clients.append(ShedServerClient(baseURL: baseURL, serverName: entry.name))
+            clients[entry.name] = ShedServerClient(baseURL: baseURL, serverName: entry.name)
         }
         self.clients = clients
+        self.defaultServerName = config.defaultServer ?? config.servers.first?.name
         state.hosts = hosts
+    }
+
+    /// Resolve a host argument (or the default) to a configured server
+    /// name, or throw. The single point both the client and host-metadata
+    /// lookups go through.
+    private func resolveName(_ host: String?) throws -> String {
+        guard let name = host ?? defaultServerName, clients[name] != nil else {
+            throw IPCHandlerError.notFound("no configured host\(host.map { " named \($0)" } ?? "")")
+        }
+        return name
+    }
+
+    private func client(for host: String?) throws -> ShedServerClient {
+        clients[try resolveName(host)]!
     }
 
     private func startPolling() {
@@ -80,10 +120,26 @@ final class AppModel: NSObject, UiBridge {
 
     // MARK: - polling (UiBridge.refreshSheds)
 
+    private var inflightRefresh: Task<Void, Never>?
+
+    /// Serialize refreshes: chain each after any in-flight one so a slow
+    /// older poll can't resolve late and overwrite a newer refresh's state.
+    /// Returns once this refresh has applied (the contract action ops rely
+    /// on — the result is visible by the time the call returns).
     func refreshSheds() async {
+        let previous = inflightRefresh
+        let task = Task { [weak self] in
+            await previous?.value
+            await self?.doRefresh()
+        }
+        inflightRefresh = task
+        await task.value
+    }
+
+    private func doRefresh() async {
         // Probe every host concurrently; an unreachable host degrades to a
         // dot, never a hard failure of the whole list.
-        let clients = self.clients
+        let clients = Array(self.clients.values)
         var newHosts = state.hosts
         var allSheds: [Shed] = []
         var errors: [String] = []
@@ -243,4 +299,80 @@ final class AppModel: NSObject, UiBridge {
             sidebarWidth: Double(Theme.sidebarWidth),
             visiblePane: state.pane.rawValue)
     }
+
+    // MARK: - UiBridge (M1)
+
+    func shedAction(_ action: ShedAction, host: String?, name: String) async throws {
+        let client = try client(for: host)
+        switch action {
+        case .start: try await client.start(name: name)
+        case .stop: try await client.stop(name: name)
+        case .reset: try await client.reset(name: name)
+        case .delete: try await client.delete(name: name)
+        }
+        await refreshSheds()
+    }
+
+    func startCreate(host: String?, request: CreateShedRequest) throws -> String {
+        let client = try client(for: host)
+        let id = UUID().uuidString
+        var progress = CreateProgress(id: id, state: .progress, messages: [])
+        creates[id] = progress
+        state.activeCreate = progress
+
+        Task { [weak self] in
+            do {
+                for try await event in client.createShed(request) {
+                    guard let self else { return }
+                    switch event {
+                    case .progress(let msg): progress.messages.append(msg)
+                    case .complete(let shed):
+                        progress.state = .complete
+                        progress.shed = shed
+                    }
+                    self.updateCreate(progress)
+                }
+                // createShed guarantees a complete event or a throw, so by
+                // here progress is already .complete.
+                await self?.refreshSheds()
+            } catch {
+                progress.state = .error
+                progress.error = "\(error)"
+                self?.updateCreate(progress)
+            }
+        }
+        return id
+    }
+
+    private func updateCreate(_ progress: CreateProgress) {
+        creates[progress.id] = progress
+        if state.activeCreate?.id == progress.id { state.activeCreate = progress }
+    }
+
+    func createStatus(id: String) -> CreateProgress? {
+        creates[id]
+    }
+
+    func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand {
+        let h = try resolveHost(host)
+        return TerminalLauncher.sshCommand(shed: shed, host: h.host, sshPort: h.sshPort, session: session)
+    }
+
+    func openTerminal(shed: String, host: String?, session: String?) throws -> TerminalCommand {
+        let cmd = try terminalCommand(shed: shed, host: host, session: session)
+        try TerminalLauncher.launchInTerminal(cmd, template: terminalTemplate)
+        return cmd
+    }
+
+    private func resolveHost(_ host: String?) throws -> ShedHost {
+        let name = try resolveName(host)
+        guard let h = state.hosts.first(where: { $0.name == name }) else {
+            throw IPCHandlerError.notFound("no host metadata for \(name)")
+        }
+        return h
+    }
+
+    /// User-configurable terminal command template (`{cmd}` placeholder);
+    /// nil = default to Terminal.app. Wired to preferences in M4.
+    private var terminalTemplate: String? { nil }
 }
