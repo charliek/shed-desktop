@@ -10,17 +10,20 @@ public struct MenuBarContentView: View {
     @ObservedObject var state: AppState
     let onOpenDashboard: () -> Void
     let onOpenPreferences: () -> Void
+    let onCheckForUpdates: () -> Void
     let onQuit: () -> Void
 
     public init(
         state: AppState,
         onOpenDashboard: @escaping () -> Void,
         onOpenPreferences: @escaping () -> Void,
+        onCheckForUpdates: @escaping () -> Void = {},
         onQuit: @escaping () -> Void
     ) {
         self.state = state
         self.onOpenDashboard = onOpenDashboard
         self.onOpenPreferences = onOpenPreferences
+        self.onCheckForUpdates = onCheckForUpdates
         self.onQuit = onQuit
     }
 
@@ -81,6 +84,7 @@ public struct MenuBarContentView: View {
             Divider()
             menuButton("Open dashboard", systemImage: "macwindow", action: onOpenDashboard)
             menuButton("Preferences…", systemImage: "gearshape", action: onOpenPreferences)
+            menuButton("Check for Updates…", systemImage: "arrow.down.circle", action: onCheckForUpdates)
             menuButton("Quit", systemImage: "power", action: onQuit)
                 .padding(.bottom, 6)
         }

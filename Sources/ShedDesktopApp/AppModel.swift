@@ -15,6 +15,7 @@ import AppKit
 import Foundation
 import ShedKit
 import ShedDesktopUI
+import Sparkle
 import SwiftUI
 
 @MainActor
@@ -57,6 +58,7 @@ final class AppModel: NSObject, UiBridge {
     private(set) var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
     private var popover: NSPopover?
+    private var updater: SPUStandardUpdaterController?
 
     private let pollInterval: Duration = .seconds(5)
 
@@ -73,6 +75,22 @@ final class AppModel: NSObject, UiBridge {
         bindIPC(profile: profile)
         startPolling()
         startApprovals(profile: profile)
+        setupUpdater()
+    }
+
+    // MARK: - M8: Sparkle auto-update
+
+    /// Retained for the app's lifetime; owns the background scheduler and backs
+    /// the menu's "Check for Updates…". Skipped under the test harness so the
+    /// hermetic E2E never instantiates Sparkle (no network, no update UI). Feed
+    /// URL + EdDSA key come from Info.plist (SUFeedURL / SUPublicEDKey).
+    private func setupUpdater() {
+        guard !ShedBackend.shared.testMode else { return }
+        updater = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    }
+
+    func checkForUpdates() {
+        updater?.checkForUpdates(nil)
     }
 
     private func loadPreferences() {
@@ -411,6 +429,10 @@ final class AppModel: NSObject, UiBridge {
             onOpenPreferences: { [weak self] in
                 self?.setMenuOpen(false)
                 self?.openPreferences()
+            },
+            onCheckForUpdates: { [weak self] in
+                self?.setMenuOpen(false)
+                self?.checkForUpdates()
             },
             onQuit: { NSApp.terminate(nil) }
         ))

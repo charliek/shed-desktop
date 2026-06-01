@@ -4,13 +4,20 @@
 <!--
   Entitlements for ShedDesktop.app.
 
-  Empty for M0–M2: the app is NOT sandboxed (so outbound URLSession needs
-  no entitlement), and Touch ID via LAContext (M3) and the Unix-domain
-  IPC socket both work fine under ad-hoc signing with no special grant.
-  `disable-library-validation` is added only when M4 embeds the ad-hoc
-  Sparkle.framework.
+  The app is NOT sandboxed (so outbound URLSession needs no entitlement),
+  and Touch ID via LAContext + the Unix-domain IPC socket work under ad-hoc
+  signing with no special grant.
+
+  cs.disable-library-validation (M8): required by the embedded ad-hoc
+  Sparkle.framework. Library validation insists every linked library share
+  the main executable's Team ID; ad-hoc has none, so the hardened runtime
+  would refuse to load Sparkle and the app would abort at launch. This
+  lifts the same-team requirement. REMOVE once a Developer ID + notarized
+  build ships (both signed by the same team satisfies validation).
 -->
 <plist version="1.0">
 <dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
 </dict>
 </plist>

@@ -17,12 +17,16 @@ help:  ## List available targets
 
 # ---- build ------------------------------------------------------------
 
-.PHONY: build bundle run
+.PHONY: build bundle dmg run
 build:  ## swift build the package
 	swift build
 
 bundle:  ## Build + assemble ShedDesktop.app (debug)
 	./scripts/bundle.sh debug
+
+dmg:  ## Build a release bundle + package a drag-install DMG
+	./scripts/bundle.sh release
+	./scripts/make-dmg.sh
 
 run: bundle  ## Build the bundle and launch it
 	open $(APP)

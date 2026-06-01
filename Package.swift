@@ -25,6 +25,15 @@ let package = Package(
         .executable(name: "ShedDesktop", targets: ["ShedDesktopApp"]),
         .executable(name: "shedctl", targets: ["shedctl"]),
     ],
+    dependencies: [
+        // Sparkle 2 auto-update (M8). The release DMG is ad-hoc-signed (no
+        // Apple Developer ID yet), so update authenticity rests on Sparkle's
+        // EdDSA signature, not a Team ID. The embedded framework needs the
+        // `@executable_path/../Frameworks` rpath (linkerSettings below) and the
+        // `cs.disable-library-validation` entitlement (ShedDesktop.entitlements)
+        // to load under the hardened runtime without a matching signing team.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         // Core: no SwiftUI. Foundation + AppKit (the latter only for
         // NSBitmapImageRep in Screenshot and NSWindow types in UiBridge).
@@ -41,8 +50,19 @@ let package = Package(
         // @main app: MenuBarExtra + WindowGroup + the IPC handler impl.
         .executableTarget(
             name: "ShedDesktopApp",
-            dependencies: ["ShedKit", "ShedDesktopUI"],
-            path: "Sources/ShedDesktopApp"
+            dependencies: [
+                "ShedKit",
+                "ShedDesktopUI",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            path: "Sources/ShedDesktopApp",
+            linkerSettings: [
+                // `-Xlinker` is required: a bare `-rpath` is rejected by the
+                // Swift driver ("unknown argument"); only `-Xlinker` passes the
+                // token straight to `ld`. Lets the binary resolve
+                // `@rpath/Sparkle.framework` from Contents/Frameworks at launch.
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         // CLI driver for the IPC socket (mirrors roost's roostctl).
         .executableTarget(

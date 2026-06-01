@@ -13,10 +13,12 @@
 #      Contents/Resources/, Contents/Resources/bin/shedctl.
 #   3. Substitutes @VERSION@ in Resources/Info.plist.template with the
 #      contents of the top-level VERSION file (or $SHED_DESKTOP_VERSION).
-#   4. Ad-hoc code-signs (inner shedctl first, then the outer .app).
+#   4. Embeds + ad-hoc-signs Sparkle.framework (auto-update, M8).
+#   5. Ad-hoc code-signs (inner shedctl, then the framework, then the .app).
 #
-# What this does NOT do (M4 follow-ups): Developer ID signing,
-# notarization, DMG, Sparkle embedding/appcast.
+# What this does NOT do: Developer ID signing + notarization (gated on
+# SHED_DESKTOP_DEVELOPER_ID_IDENTITY + Apple secrets). The DMG + appcast are
+# scripts/make-dmg.sh + the release workflow.
 #
 # Usage:
 #   ./scripts/bundle.sh                 # debug build (default)
@@ -95,6 +97,23 @@ if [ -f "${ICON_SRC}" ]; then
   cp "${ICON_SRC}" "${APP_DIR}/Contents/Resources/AppIcon.icns"
 fi
 
+# Sparkle.framework — auto-update (M8). SwiftPM builds it next to the binary;
+# we embed it under Contents/Frameworks/ where the app's
+# `@executable_path/../Frameworks` rpath (Package.swift) resolves
+# `@rpath/Sparkle.framework/...`. Without this the app aborts at launch with
+# `dyld: Library not loaded`. `cp -R` preserves the Versions/Current symlink
+# farm codesign requires.
+echo "==> Embedding Sparkle.framework"
+SPARKLE_FW_SRC="${SWIFT_BIN_DIR}/Sparkle.framework"
+if [ ! -d "${SPARKLE_FW_SRC}" ]; then
+  echo "error: Sparkle.framework not found at ${SPARKLE_FW_SRC}" >&2
+  echo "       (did 'swift build --product ShedDesktop' fetch the Sparkle artifact?)" >&2
+  exit 1
+fi
+mkdir -p "${APP_DIR}/Contents/Frameworks"
+cp -R "${SPARKLE_FW_SRC}" "${APP_DIR}/Contents/Frameworks/"
+echo "    Embedded: ${APP_DIR}/Contents/Frameworks/Sparkle.framework"
+
 # Ad-hoc codesign. Inner (shedctl) first, then the outer .app — codesign
 # seals nested code into the outer signature. A real Developer ID lands in
 # M4 (set SHED_DESKTOP_DEVELOPER_ID_IDENTITY + the notarization secrets).
@@ -134,7 +153,33 @@ else
     echo "    error: codesign(${target}) failed (set SHED_DESKTOP_ALLOW_UNSIGNED=1 to bypass)" >&2
     exit 1
   }
+  # Sparkle.framework is signed --deep but WITHOUT --entitlements: the framework
+  # + its nested helpers (XPCServices/*.xpc, Updater.app, Autoupdate) carry
+  # their own designated requirements, and forcing the app's entitlements onto
+  # them breaks Sparkle's XPC handshake. The outer app's
+  # disable-library-validation entitlement is what lets it load this ad-hoc
+  # framework. --deep is safe on a framework signed with uniform options; it is
+  # only dangerous on the outer .app, where it would clobber these signatures.
+  codesign_framework_or_die() {
+    local target="$1"
+    # shellcheck disable=SC2086
+    if codesign --force --sign "${SIGN_IDENTITY}" \
+         --options runtime \
+         --deep \
+         ${TS_FLAG} \
+         "${target}"
+    then
+      return 0
+    fi
+    if [ "${SHED_DESKTOP_ALLOW_UNSIGNED:-0}" = "1" ]; then
+      echo "    warn: codesign(${target}) failed; SHED_DESKTOP_ALLOW_UNSIGNED=1, continuing"
+      return 0
+    fi
+    echo "    error: codesign(${target}) failed (set SHED_DESKTOP_ALLOW_UNSIGNED=1 to bypass)" >&2
+    exit 1
+  }
   codesign_or_die "${APP_DIR}/Contents/Resources/bin/shedctl"
+  codesign_framework_or_die "${APP_DIR}/Contents/Frameworks/Sparkle.framework"
   codesign_or_die "${APP_DIR}"
 fi
 
