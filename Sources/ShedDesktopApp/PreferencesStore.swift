@@ -31,4 +31,21 @@ struct PreferencesStore {
         get { ApprovalMode(rawValue: defaults.string(forKey: "defaultApprovalMode") ?? "") ?? .touchID }
         nonmutating set { defaults.set(newValue.rawValue, forKey: "defaultApprovalMode") }
     }
+
+    /// Per-namespace + per-shed policy rules (the default-scope rule is
+    /// `defaultApprovalMode`). JSON-encoded in the defaults suite so per-shed
+    /// "always allow" grants and per-namespace overrides survive relaunch.
+    var policyRules: [PolicyRule] {
+        get {
+            guard let data = defaults.data(forKey: "policyRules"),
+                  let rules = try? JSONDecoder().decode([PolicyRule].self, from: data) else { return [] }
+            return rules
+        }
+        nonmutating set {
+            // Only write on a successful encode — never set(nil), which would
+            // silently wipe every per-namespace/per-shed rule.
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: "policyRules")
+        }
+    }
 }

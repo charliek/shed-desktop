@@ -37,6 +37,7 @@ public struct HelloAck: Sendable, Decodable {
 /// stream-only).
 public struct AuditEventFrame: Sendable, Decodable {
     public let kind: String?
+    public let server: String?         // shed server (omitted in single-server mode)
     public let shed: String?
     public let ns: String?
     public let op: String?
@@ -47,7 +48,7 @@ public struct AuditEventFrame: Sendable, Decodable {
     public let ts: String?
 
     enum CodingKeys: String, CodingKey {
-        case kind, shed, ns, op, result, detail, approval, ts
+        case kind, server, shed, ns, op, result, detail, approval, ts
         case requestID = "request_id"
     }
 }

@@ -65,8 +65,21 @@ public protocol UiBridge: AnyObject {
     // MARK: - M3: credential approvals + activity
 
     func approvalsList() -> [ApprovalRequest]
-    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool) async throws
+    /// Resolve a pending approval. `grantSession` adds a 4h session grant;
+    /// `always` persists a per-(server,shed) approve rule ("always allow").
+    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool, always: Bool) async throws
     func activityList(limit: Int) -> [AuditEntry]
+    /// Filesystem path of the append-only audit log (FR-6 export).
+    func auditLogPath() -> String
     /// Replace the policy rules (test-mode only, to exercise the matrix E2E).
     func setPolicyRules(_ rules: [PolicyRule])
+    /// The current effective rule set (default + per-namespace + per-shed).
+    func policyRules() -> [PolicyRule]
+
+    // MARK: - M5: notifications (driveable over IPC)
+
+    /// Notifications the app has posted (only the test presenter records these).
+    func postedNotifications() -> [PostedNotification]
+    /// Drive a posted notification's Approve/Deny action (test presenter only).
+    func invokeNotification(id: String, decision: ApprovalDecision) throws
 }

@@ -20,7 +20,7 @@ Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 | op | params | result |
 |----|--------|--------|
 | `identify` | — | `socket_path`, `pid`, `app_label`, `app_id`, `ui_version`, `protocol_version`, `test_mode`, `mock_base_url?` |
-| `ui.state` | — | `pane`, `hosts[]`, `sheds[]`, `last_error?` |
+| `ui.state` | — | `pane`, `hosts[]`, `sheds[]`, `host_agent_connected`, `last_error?` |
 | `ui.navigate` | `pane` (sheds\|approvals\|agents\|activity) | `pane` |
 | `ui.show_window` | — | `{}` |
 | `ui.open_menu` | `open` (bool) | `open` |
@@ -33,6 +33,24 @@ Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 The screenshot renders the target window's content view to a PNG in-process — no screen
 capture permission, works even when the window is occluded or off-screen. Capturing the
 menu requires it to be open first (`ui.open_menu {open:true}`).
+
+## Approval ops (M3 / M5)
+
+These drive the credential-approval gate (see [Credential approvals](approvals.md)).
+
+| op | params | result |
+|----|--------|--------|
+| `approvals.list` | — | `approvals[]` (each carries `server?`, `namespace`, `op`, `shed`, `detail`, `expires_at`) |
+| `approval.decide` | `id`, `decision` (approve\|deny), `grant_session?`, `always?` | `{}` |
+| `activity.list` | `limit?` (default 200) | `entries[]` (audit feed) |
+| `activity.log_path` | — | `path` (the append-only audit log) |
+| `policy.list` | — | `rules[]` (effective: default + per-namespace + per-shed) |
+| `policy.set` | `rules[]` | `{}` (test mode only) |
+| `notifications.list` | — | `notifications[]` (test mode: what the gate posted) |
+| `notification.invoke` | `id`, `action` (approve\|deny) | `{}` (test mode: drive a notification action) |
+
+`approval.decide` with `always:true` persists a per-`(server,shed)` auto-approve rule;
+`grant_session:true` adds a 4-hour in-memory grant.
 
 ## Test mode
 

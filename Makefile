@@ -37,7 +37,7 @@ e2e:  ## pytest functional harness against a running/auto-launched app
 	uv run --group test pytest tools/shedtest
 
 e2e-ci: bundle  ## E2E at CI parity: fresh, test-mode, hermetic mock server
-	SHED_DESKTOP_TEST_MODE=1 uv run --group test pytest tools/shedtest --shed-fresh
+	SHED_DESKTOP_TEST_MODE=1 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
 
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh

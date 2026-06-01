@@ -51,6 +51,10 @@ public final class AppState: ObservableObject {
     public var onOpenURL: ((String) -> Void)?
     /// Decide a pending approval: (request, decision, grantSession).
     public var onApprovalDecide: ((ApprovalRequest, ApprovalDecision, Bool) -> Void)?
+    /// "Always allow" — approve now and persist a per-(server,shed) rule.
+    public var onApprovalAlwaysAllow: ((ApprovalRequest) -> Void)?
+    /// Reveal the audit log file in Finder (FR-6).
+    public var onRevealAuditLog: (() -> Void)?
 
     public init() {}
 
@@ -67,6 +71,6 @@ public final class AppState: ObservableObject {
 
     /// Snapshot for the `ui.state` IPC op.
     public func snapshot() -> UIState {
-        UIState(pane: pane.rawValue, hosts: hosts, sheds: sheds, lastError: lastError)
+        UIState(pane: pane.rawValue, hosts: hosts, sheds: sheds, hostAgentConnected: hostAgentConnected, lastError: lastError)
     }
 }

@@ -116,23 +116,31 @@ class FakeHostAgent:
         return self._hello_seen.wait(timeout)
 
     def emit_request(self, namespace: str, op: str, shed: str, detail: str = "",
-                     expires_in_s: float = 25.0, request_id: str | None = None) -> str:
+                     expires_in_s: float = 25.0, request_id: str | None = None,
+                     server: str = "") -> str:
         rid = request_id or str(uuid.uuid4())
         expires = (datetime.now(timezone.utc) + timedelta(seconds=expires_in_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        self._send_active({
+        frame = {
             "v": 1, "type": "approval_request", "id": rid, "ts": _now_iso(),
             "namespace": namespace, "op": op, "shed": shed, "detail": detail,
             "expires_at": expires,
-        })
+        }
+        # The real agent omits `server` in single-server mode (#21); mirror that.
+        if server:
+            frame["server"] = server
+        self._send_active(frame)
         return rid
 
     def emit_event(self, namespace: str, op: str, shed: str, result: str = "ok",
-                   detail: str = "", approval: str = "none") -> None:
-        self._send_active({
+                   detail: str = "", approval: str = "none", server: str = "") -> None:
+        frame = {
             "v": 1, "type": "event", "id": str(uuid.uuid4()), "ts": _now_iso(),
             "kind": "audit", "ns": namespace, "op": op, "shed": shed,
             "result": result, "detail": detail, "approval": approval,
-        })
+        }
+        if server:
+            frame["server"] = server
+        self._send_active(frame)
 
     def wait_response(self, request_id: str, timeout: float = 10.0) -> dict | None:
         deadline = time.monotonic() + timeout

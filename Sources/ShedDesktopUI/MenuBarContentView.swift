@@ -45,7 +45,7 @@ public struct MenuBarContentView: View {
                             NamespaceIcon(req.namespace).scaleEffect(0.8)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text("\(req.namespace) \(req.op)").font(.system(size: 12, weight: .medium))
-                                Text(req.shed).font(.system(size: 11)).foregroundStyle(.secondary)
+                                Text(req.qualifiedShed).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button { state.onApprovalDecide?(req, .approve, false) } label: { Image(systemName: "touchid") }

@@ -169,14 +169,28 @@ class ShedDesktop:
     def approvals_list(self) -> list[dict]:
         return self.call("approvals.list")["approvals"]
 
-    def approval_decide(self, id: str, decision: str, grant_session: bool = False) -> None:
-        self.call("approval.decide", {"id": id, "decision": decision, "grant_session": grant_session})
+    def approval_decide(self, id: str, decision: str, grant_session: bool = False, always: bool = False) -> None:
+        self.call("approval.decide",
+                  {"id": id, "decision": decision, "grant_session": grant_session, "always": always})
 
     def activity_list(self, limit: int = 200) -> list[dict]:
         return self.call("activity.list", {"limit": limit})["entries"]
 
+    def activity_log_path(self) -> str:
+        return self.call("activity.log_path")["path"]
+
     def policy_set(self, rules: list[dict]) -> None:
         self.call("policy.set", {"rules": rules})
+
+    def policy_list(self) -> list[dict]:
+        return self.call("policy.list")["rules"]
+
+    # -- M5: notifications (fake presenter in test mode) ------------------
+    def notifications_list(self) -> list[dict]:
+        return self.call("notifications.list")["notifications"]
+
+    def notification_invoke(self, id: str, action: str) -> None:
+        self.call("notification.invoke", {"id": id, "action": action})
 
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")

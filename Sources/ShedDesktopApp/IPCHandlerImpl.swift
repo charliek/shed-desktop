@@ -99,15 +99,28 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(approvalsListOp())
         case "approval.decide":
-            let p = try decodeParams(params, as: ApprovalDecideParams.self, expected: ["id", "decision", "grant_session"])
+            let p = try decodeParams(params, as: ApprovalDecideParams.self, expected: ["id", "decision", "grant_session", "always"])
             try await approvalDecideOp(p)
             return emptyResult
         case "activity.list":
             let p = try decodeParams(params, as: ActivityListParams.self, expected: ["limit"])
             return try await encodeResult(activityListOp(limit: p.limit))
+        case "activity.log_path":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(activityLogPathOp())
         case "policy.set":
             let p = try decodeParams(params, as: PolicySetParams.self, expected: ["rules"])
             try await policySetOp(p)
+            return emptyResult
+        case "policy.list":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(policyListOp())
+        case "notifications.list":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(notificationsListOp())
+        case "notification.invoke":
+            let p = try decodeParams(params, as: NotificationInvokeParams.self, expected: ["id", "action"])
+            try await notificationInvokeOp(p)
             return emptyResult
         default:
             throw IPCHandlerError.unknownOp(op)
@@ -185,11 +198,15 @@ actor IPCHandlerImpl: IPCHandler {
     }
 
     @MainActor private func approvalDecideOp(_ p: ApprovalDecideParams) async throws {
-        try await uiBridge().decideApproval(id: p.id, decision: p.decision, grantSession: p.grantSession)
+        try await uiBridge().decideApproval(id: p.id, decision: p.decision, grantSession: p.grantSession, always: p.always)
     }
 
     @MainActor private func activityListOp(limit: Int) throws -> ActivityListResult {
         ActivityListResult(entries: try uiBridge().activityList(limit: limit))
+    }
+
+    @MainActor private func activityLogPathOp() throws -> AuditLogPathResult {
+        AuditLogPathResult(path: try uiBridge().auditLogPath())
     }
 
     @MainActor private func policySetOp(_ p: PolicySetParams) throws {
@@ -197,6 +214,18 @@ actor IPCHandlerImpl: IPCHandler {
             throw IPCHandlerError.notEnabled("policy.set requires SHED_DESKTOP_TEST_MODE=1")
         }
         try uiBridge().setPolicyRules(p.rules)
+    }
+
+    @MainActor private func policyListOp() throws -> PolicyListResult {
+        PolicyListResult(rules: try uiBridge().policyRules())
+    }
+
+    @MainActor private func notificationsListOp() throws -> NotificationListResult {
+        NotificationListResult(notifications: try uiBridge().postedNotifications())
+    }
+
+    @MainActor private func notificationInvokeOp(_ p: NotificationInvokeParams) throws {
+        try uiBridge().invokeNotification(id: p.id, decision: p.action)
     }
 
     @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {
@@ -321,8 +350,9 @@ private struct ApprovalDecideParams: Decodable {
     let id: String
     let decision: ApprovalDecision
     let grantSession: Bool
+    let always: Bool
     enum CodingKeys: String, CodingKey {
-        case id, decision
+        case id, decision, always
         case grantSession = "grant_session"
     }
     init(from decoder: Decoder) throws {
@@ -330,6 +360,7 @@ private struct ApprovalDecideParams: Decodable {
         self.id = try c.decode(String.self, forKey: .id)
         self.decision = try c.decode(ApprovalDecision.self, forKey: .decision)
         self.grantSession = try c.decodeIfPresent(Bool.self, forKey: .grantSession) ?? false
+        self.always = try c.decodeIfPresent(Bool.self, forKey: .always) ?? false
     }
 }
 
@@ -343,9 +374,14 @@ private struct ActivityListParams: Decodable {
 }
 
 private struct PolicySetParams: Decodable { let rules: [PolicyRule] }
+private struct PolicyListResult: Encodable, Sendable { let rules: [PolicyRule] }
+
+private struct NotificationInvokeParams: Decodable { let id: String; let action: ApprovalDecision }
 
 private struct ApprovalListResult: Encodable, Sendable { let approvals: [ApprovalRequest] }
 private struct ActivityListResult: Encodable, Sendable { let entries: [AuditEntry] }
+private struct AuditLogPathResult: Encodable, Sendable { let path: String }
+private struct NotificationListResult: Encodable, Sendable { let notifications: [PostedNotification] }
 
 private struct ScreenshotParams: Decodable {
     let scale: Int

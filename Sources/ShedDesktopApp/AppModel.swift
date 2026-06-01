@@ -34,6 +34,9 @@ final class AppModel: NSObject, UiBridge {
     // Replaced from preferences in loadPreferences(); empty rules fail-safe
     // to a Touch ID prompt via PolicyEngine.decide.
     private var policyEngine = PolicyEngine(rules: [])
+    /// Per-namespace + per-shed rules (the default rule comes from prefs);
+    /// persisted via PreferencesStore.policyRules.
+    private var extraRules: [PolicyRule] = []
     private var auditStore: AuditStore?
     private var sessionGrants: [SessionGrantKey: Date] = [:]
     /// A queued prompt: the request plus the gate to apply when the user acts.
@@ -41,6 +44,8 @@ final class AppModel: NSObject, UiBridge {
     private var pending: [String: PendingApproval] = [:]
     private var hostAgentTask: Task<Void, Never>?
     private var expiryTask: Task<Void, Never>?
+    /// Actionable Approve/Deny notifications (Fake under the harness).
+    private var notifier: (any NotificationPresenter)?
 
     private let grantTTL: TimeInterval = 4 * 3600
 
@@ -75,8 +80,10 @@ final class AppModel: NSObject, UiBridge {
         prefs.launchAtLogin = testMode ? false : LoginItem.isEnabled
         prefs.terminalTemplate = prefsStore.terminalTemplate
         prefs.defaultApprovalMode = prefsStore.defaultApprovalMode
-        // Apply the stored default approval mode to the policy engine.
-        policyEngine = PolicyEngine(rules: [prefsStore.defaultApprovalMode.rule])
+        // Apply the stored default mode + persisted per-namespace/per-shed rules.
+        extraRules = prefsStore.policyRules
+        rebuildPolicy()
+        publishPolicyPrefs()
 
         prefs.onLaunchAtLogin = { [weak self] on in
             guard let self else { return }
@@ -101,8 +108,54 @@ final class AppModel: NSObject, UiBridge {
         prefs.onDefaultMode = { [weak self] mode in
             guard let self else { return }
             self.prefsStore.defaultApprovalMode = mode
-            self.policyEngine = PolicyEngine(rules: [mode.rule])
+            self.rebuildPolicy()
         }
+        prefs.onNamespaceMode = { [weak self] ns, mode in self?.setNamespaceMode(ns, mode: mode) }
+        prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
+    }
+
+    // MARK: - policy rules (default + per-namespace + per-shed)
+
+    private func rebuildPolicy() {
+        policyEngine = PolicyEngine(rules: [prefsStore.defaultApprovalMode.rule] + extraRules)
+    }
+
+    private func persistAndRebuild() {
+        prefsStore.policyRules = extraRules
+        rebuildPolicy()
+        publishPolicyPrefs()
+    }
+
+    /// Mirror the current extra rules into the preferences view-model.
+    private func publishPolicyPrefs() {
+        var modes: [String: ApprovalMode] = [:]
+        for r in extraRules where r.scope == .namespace {
+            if let ns = r.namespace, let m = ApprovalMode(action: r.action, gate: r.gate) { modes[ns] = m }
+        }
+        prefs.namespaceModes = modes
+        prefs.shedRules = extraRules
+            .filter { $0.scope == .shed }
+            .map { ShedRuleRow(server: $0.server ?? "", shed: $0.shed ?? "") }
+    }
+
+    private func addShedRule(server: String, shed: String) {
+        // Store the server verbatim ("" = the single/unnamed server) rather than
+        // collapsing "" → nil: nil is reserved for an explicit any-server rule,
+        // so a single-server grant never silently widens to other servers.
+        extraRules.removeAll { $0.scope == .shed && $0.shed == shed && ($0.server ?? "") == server }
+        extraRules.append(PolicyRule(scope: .shed, server: server, shed: shed, action: .approve, gate: .none))
+        persistAndRebuild()
+    }
+
+    private func removeShedRule(server: String, shed: String) {
+        extraRules.removeAll { $0.scope == .shed && $0.shed == shed && ($0.server ?? "") == server }
+        persistAndRebuild()
+    }
+
+    private func setNamespaceMode(_ ns: String, mode: ApprovalMode?) {
+        extraRules.removeAll { $0.scope == .namespace && $0.namespace == ns }
+        if let mode { extraRules.append(mode.rule(forNamespace: ns)) }
+        persistAndRebuild()
     }
 
     /// Wire the UI's action seams to the bridge methods (the UI module
@@ -152,9 +205,20 @@ final class AppModel: NSObject, UiBridge {
         state.onApprovalDecide = { [weak self] req, decision, grant in
             Task { [weak self] in
                 guard let self else { return }
-                do { try await self.decideApproval(id: req.id, decision: decision, grantSession: grant) }
+                do { try await self.decideApproval(id: req.id, decision: decision, grantSession: grant, always: false) }
                 catch { self.state.lastError = "approval \(req.id): \(error)" }
             }
+        }
+        state.onApprovalAlwaysAllow = { [weak self] req in
+            Task { [weak self] in
+                guard let self else { return }
+                do { try await self.decideApproval(id: req.id, decision: .approve, grantSession: false, always: true) }
+                catch { self.state.lastError = "always-allow \(req.id): \(error)" }
+            }
+        }
+        state.onRevealAuditLog = { [weak self] in
+            guard let self, let store = self.auditStore, !ShedBackend.shared.testMode else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([store.fileURL])
         }
     }
 
@@ -484,6 +548,11 @@ final class AppModel: NSObject, UiBridge {
             window.title = "shed desktop — Preferences"
             window.styleMask = [.titled, .closable]
             window.isReleasedWhenClosed = false
+            // Pin the content size so the window has a concrete frame immediately
+            // (SwiftUI's fitting size is otherwise async — a screenshot taken
+            // right after open could see a zero-size window). Matches the
+            // PreferencesView .frame.
+            window.setContentSize(NSSize(width: 460, height: 560))
             window.center()
             prefsWindow = window
         }
@@ -619,6 +688,15 @@ final class AppModel: NSObject, UiBridge {
         self.auditStore = store
         publishActivity()
 
+        let notifier: any NotificationPresenter = ShedBackend.shared.testMode
+            ? FakeNotificationPresenter() : SystemNotificationPresenter()
+        notifier.onAction = { [weak self] id, decision in
+            // Already on the main actor (the presenter is @MainActor).
+            Task { [weak self] in try? await self?.decideApproval(id: id, decision: decision, grantSession: false) }
+        }
+        if !ShedBackend.shared.testMode { notifier.requestAuthorization() }
+        self.notifier = notifier
+
         let client = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
         self.hostAgent = client
         let info = HelloClientInfo(
@@ -642,6 +720,12 @@ final class AppModel: NSObject, UiBridge {
             state.hostAgentConnected = true
         case .disconnected:
             state.hostAgentConnected = false
+            // In-flight requests are dead: the agent fails closed on its side
+            // (our response would be dropped anyway), so drop them rather than
+            // let the user act on — or persist a rule from — a stale prompt.
+            for id in pending.keys { notifier?.withdraw(id: id) }
+            pending.removeAll()
+            publishApprovals()
         case .frame(let frame):
             switch frame {
             case .approvalRequest(let req): handleApprovalRequest(req)
@@ -660,11 +744,12 @@ final class AppModel: NSObject, UiBridge {
             respondAndAudit(req, .deny, decidedBy: .policy, policy: decision.appliedScope.rawValue)
         case .prompt:
             pending[req.id] = PendingApproval(request: req, gate: decision.gate)
+            notifier?.post(req)
             publishApprovals()
         }
     }
 
-    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool) async throws {
+    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool, always: Bool = false) async throws {
         guard let item = pending[id] else { throw IPCHandlerError.notFound("no pending approval \(id)") }
         let req = item.request
         var decidedBy: DecidedBy = .user
@@ -680,11 +765,15 @@ final class AppModel: NSObject, UiBridge {
             guard pending[id] != nil else { return }
             decidedBy = .touchid
         }
-        if grantSession, decision == .approve {
-            sessionGrants[SessionGrantKey(namespace: req.namespace, shed: req.shed)] = Date().addingTimeInterval(grantTTL)
+        if decision == .approve, always {
+            // "Always allow" — persist a per-(server,shed) approve rule.
+            addShedRule(server: req.server, shed: req.shed)
+        } else if grantSession, decision == .approve {
+            sessionGrants[SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)] = Date().addingTimeInterval(grantTTL)
         }
-        respondAndAudit(req, decision, decidedBy: decidedBy, policy: grantSession ? "session-grant" : "manual")
+        respondAndAudit(req, decision, decidedBy: decidedBy, policy: always ? "shed-rule" : (grantSession ? "session-grant" : "manual"))
         pending[id] = nil
+        notifier?.withdraw(id: id)
         publishApprovals()
     }
 
@@ -694,6 +783,7 @@ final class AppModel: NSObject, UiBridge {
         for req in expired {
             respondAndAudit(req, .deny, decidedBy: .timeout, policy: "expired")
             pending[req.id] = nil
+            notifier?.withdraw(id: req.id)
         }
         if !expired.isEmpty { publishApprovals() }
     }
@@ -702,7 +792,8 @@ final class AppModel: NSObject, UiBridge {
         // Record the decision before transmitting it, so there's always an
         // app-side trail for an approve we sent.
         auditStore?.append(AuditEntry(
-            id: req.id, ts: DateFormatting.nowISO8601(), source: .app, shed: req.shed, ns: req.namespace, op: req.op,
+            id: req.id, ts: DateFormatting.nowISO8601(), source: .app, server: req.server.isEmpty ? nil : req.server,
+            shed: req.shed, ns: req.namespace, op: req.op,
             result: decision == .approve ? "ok" : "denied", detail: req.detail, approval: "shed-desktop", policy: policy))
         publishActivity()
         hostAgent?.respond(requestID: req.id, decision: decision, decidedBy: decidedBy)
@@ -740,7 +831,26 @@ final class AppModel: NSObject, UiBridge {
         auditStore?.recent(limit: limit) ?? []
     }
 
+    func auditLogPath() -> String { auditStore?.fileURL.path ?? "" }
+
     func setPolicyRules(_ rules: [PolicyRule]) {
         policyEngine = PolicyEngine(rules: rules)
+    }
+
+    func policyRules() -> [PolicyRule] { policyEngine.rules }
+
+    // M5: notifications (driveable over IPC via the fake presenter).
+
+    func postedNotifications() -> [PostedNotification] {
+        (notifier as? FakeNotificationPresenter)?.posted ?? []
+    }
+
+    func invokeNotification(id: String, decision: ApprovalDecision) throws {
+        guard let fake = notifier as? FakeNotificationPresenter else {
+            throw IPCHandlerError.notEnabled("notification.invoke requires the test presenter")
+        }
+        guard fake.invoke(id: id, decision: decision) else {
+            throw IPCHandlerError.notFound("no posted notification \(id)")
+        }
     }
 }

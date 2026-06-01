@@ -37,6 +37,42 @@ public struct PreferencesView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
+            Section("Per-namespace overrides") {
+                ForEach(CredentialNamespace.all, id: \.self) { ns in
+                    Picker(ns, selection: namespaceBinding(ns)) {
+                        Text("Inherit default").tag(ApprovalMode?.none)
+                        ForEach(ApprovalMode.allCases, id: \.self) { mode in
+                            Text(mode.label).tag(ApprovalMode?.some(mode))
+                        }
+                    }
+                }
+                Text("Only ssh-agent is gated today; aws-credentials and docker-credentials are audit-only.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+
+            Section("Per-shed overrides") {
+                if prefs.shedRules.isEmpty {
+                    Text("None. Use “Always allow” on an approval to auto-approve a shed.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    ForEach(prefs.shedRules) { row in
+                        HStack(spacing: 8) {
+                            Text(row.shed)
+                            if !row.server.isEmpty {
+                                Text(row.server).foregroundStyle(.secondary).font(.system(size: 11))
+                            }
+                            Spacer()
+                            Text("auto-approve").foregroundStyle(.secondary).font(.system(size: 11))
+                            Button { prefs.onRemoveShedRule?(row.server, row.shed) } label: {
+                                Image(systemName: "xmark.circle")
+                            }
+                            .buttonStyle(.borderless).foregroundStyle(.secondary)
+                            .help("Remove this override")
+                        }
+                    }
+                }
+            }
+
             Section("Hosts") {
                 if state.hosts.isEmpty {
                     Text("No hosts in ~/.shed/config.yaml").foregroundStyle(.secondary)
@@ -55,6 +91,13 @@ public struct PreferencesView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 460, height: 460)
+        .frame(width: 460, height: 560)
+    }
+
+    /// Two-way binding for a namespace override (nil = inherit the default).
+    private func namespaceBinding(_ ns: String) -> Binding<ApprovalMode?> {
+        Binding(
+            get: { prefs.namespaceModes[ns] },
+            set: { prefs.onNamespaceMode?(ns, $0) })
     }
 }

@@ -93,6 +93,7 @@ nav:
       - First Run: getting-started/first-run.md
   - Reference:
       - Architecture: reference/architecture.md
+      - Credential approvals: reference/approvals.md
       - IPC: reference/ipc.md
       - shedctl CLI: reference/cli.md
   - Development:

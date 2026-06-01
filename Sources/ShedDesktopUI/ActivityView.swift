@@ -9,8 +9,16 @@ struct ActivityView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Activity").font(.system(size: 16, weight: .semibold))
-                .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 4)
+            HStack {
+                Text("Activity").font(.system(size: 16, weight: .semibold))
+                Spacer()
+                Button { state.onRevealAuditLog?() } label: {
+                    Label("Reveal log", systemImage: "doc.text.magnifyingglass").font(.system(size: 12))
+                }
+                .buttonStyle(.borderless)
+                .help("Reveal the append-only audit log in Finder.")
+            }
+            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 4)
             Text("Host-agent credential audit + shed-desktop decisions, newest first.")
                 .font(.system(size: 12)).foregroundStyle(.tertiary)
                 .padding(.horizontal, 18).padding(.bottom, 8)
@@ -59,7 +67,7 @@ struct ActivityRow: View {
     private var opLine: String {
         var parts: [String] = []
         if let op = entry.op { parts.append(op) }
-        if let shed = entry.shed { parts.append(shed) }
+        if let shed = entry.shed { parts.append(entry.server.map { "\($0)/\(shed)" } ?? shed) }
         if let detail = entry.detail { parts.append(detail) }
         return parts.joined(separator: " · ")
     }

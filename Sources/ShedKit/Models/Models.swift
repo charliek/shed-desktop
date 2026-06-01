@@ -231,17 +231,20 @@ public struct UIState: Codable, Sendable, Equatable {
     public var pane: String
     public var hosts: [ShedHost]
     public var sheds: [Shed]
+    public var hostAgentConnected: Bool
     public var lastError: String?
 
     enum CodingKeys: String, CodingKey {
         case pane, hosts, sheds
+        case hostAgentConnected = "host_agent_connected"
         case lastError = "last_error"
     }
 
-    public init(pane: String, hosts: [ShedHost], sheds: [Shed], lastError: String? = nil) {
+    public init(pane: String, hosts: [ShedHost], sheds: [Shed], hostAgentConnected: Bool = false, lastError: String? = nil) {
         self.pane = pane
         self.hosts = hosts
         self.sheds = sheds
+        self.hostAgentConnected = hostAgentConnected
         self.lastError = lastError
     }
 }

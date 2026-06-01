@@ -58,7 +58,7 @@ struct ApprovalCard: View {
                 NamespaceIcon(req.namespace)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("\(req.namespace) · \(req.op)").font(.system(size: 14, weight: .medium))
-                    Text("shed \(req.shed) · \(req.detail)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("shed \(req.qualifiedShed) · \(req.detail)").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 Spacer()
                 countdown
@@ -73,10 +73,11 @@ struct ApprovalCard: View {
                 }
                 .buttonStyle(.bordered)
                 Spacer()
-                Button("Always allow \(req.namespace) for \(req.shed)") {
-                    state.onApprovalDecide?(req, .approve, true)
+                Button("Always allow for \(req.qualifiedShed)") {
+                    state.onApprovalAlwaysAllow?(req)
                 }
                 .buttonStyle(.borderless).font(.system(size: 12))
+                .help("Approve now and auto-approve future requests for this shed (manage in Preferences).")
             }
         }
         .padding(12)

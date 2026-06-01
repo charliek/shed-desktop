@@ -19,6 +19,24 @@ public enum ApprovalMode: String, Codable, Sendable, CaseIterable {
         }
     }
 
+    /// The same action/gate as `rule`, but scoped to one namespace (for the
+    /// per-namespace overrides in preferences).
+    public func rule(forNamespace ns: String) -> PolicyRule {
+        PolicyRule(scope: .namespace, namespace: ns, action: rule.action, gate: rule.gate)
+    }
+
+    /// Recover the mode from a rule's action+gate (nil if it's not one of the
+    /// four canonical modes).
+    public init?(action: PolicyAction, gate: PolicyGate) {
+        switch (action, gate) {
+        case (.prompt, .touchid): self = .touchID
+        case (.prompt, .none): self = .prompt
+        case (.approve, .none): self = .approve
+        case (.deny, .none): self = .deny
+        default: return nil
+        }
+    }
+
     public var label: String {
         switch self {
         case .touchID: return "Touch ID each time"

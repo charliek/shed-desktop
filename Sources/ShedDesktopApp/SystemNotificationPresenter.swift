@@ -1,0 +1,79 @@
+// SystemNotificationPresenter.swift — the real (M5) notification presenter.
+//
+// Posts an actionable Approve/Deny banner via UNUserNotificationCenter and
+// routes the chosen action back through `onAction` → AppModel.decideApproval.
+// Only instantiated in non-test mode; the harness uses FakeNotificationPresenter
+// so CI never touches the real Notification Center (no authorization prompt,
+// no bundle/TCC requirements).
+
+import Foundation
+import ShedKit
+import UserNotifications
+
+@MainActor
+final class SystemNotificationPresenter: NSObject, NotificationPresenter, UNUserNotificationCenterDelegate {
+    var onAction: ((String, ApprovalDecision) -> Void)?
+
+    private static let categoryID = "approval"
+    private static let approveAction = "approve"
+    private static let denyAction = "deny"
+
+    private let center = UNUserNotificationCenter.current()
+
+    override init() {
+        super.init()
+        center.delegate = self
+        // No `.authenticationRequired` on Approve: the app applies its own
+        // Touch ID gate in decideApproval, so requiring it here too would
+        // double-prompt.
+        let approve = UNNotificationAction(identifier: Self.approveAction, title: "Approve", options: [])
+        let deny = UNNotificationAction(identifier: Self.denyAction, title: "Deny", options: [.destructive])
+        let category = UNNotificationCategory(
+            identifier: Self.categoryID, actions: [approve, deny], intentIdentifiers: [], options: [])
+        center.setNotificationCategories([category])
+    }
+
+    func requestAuthorization() {
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func post(_ req: ApprovalRequest) {
+        let content = UNMutableNotificationContent()
+        content.title = ApprovalNotificationText.title(req)
+        content.body = ApprovalNotificationText.body(req)
+        content.categoryIdentifier = Self.categoryID
+        content.sound = .default
+        // Use the request id as the notification id so withdraw() can target it.
+        center.add(UNNotificationRequest(identifier: req.id, content: content, trigger: nil))
+    }
+
+    func withdraw(id: String) {
+        center.removeDeliveredNotifications(withIdentifiers: [id])
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+    }
+
+    // Show the banner even when shed-desktop is frontmost.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let id = response.notification.request.identifier
+        let decision: ApprovalDecision?
+        switch response.actionIdentifier {
+        case Self.approveAction: decision = .approve
+        case Self.denyAction: decision = .deny
+        default: decision = nil   // default tap / dismiss → leave it pending
+        }
+        if let decision {
+            Task { @MainActor in self.onAction?(id, decision) }
+        }
+        completionHandler()
+    }
+}

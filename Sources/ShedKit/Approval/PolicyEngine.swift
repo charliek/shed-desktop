@@ -18,10 +18,12 @@ public struct PolicyEngine: Sendable {
     /// `sessionGrants` must already be filtered to the currently-valid set
     /// by the caller (keeps this pure).
     public func decide(for req: ApprovalRequest, sessionGrants: Set<SessionGrantKey>) -> PolicyDecision {
-        if sessionGrants.contains(SessionGrantKey(namespace: req.namespace, shed: req.shed)) {
+        if sessionGrants.contains(SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)) {
             return PolicyDecision(action: .approve, gate: .none, appliedScope: .session)
         }
-        if let r = rules.first(where: { $0.scope == .shed && $0.shed == req.shed }) {
+        // Per-shed rule: match the shed, and the server too unless the rule is
+        // server-agnostic (nil server = any server).
+        if let r = rules.first(where: { $0.scope == .shed && $0.shed == req.shed && ($0.server == nil || $0.server == req.server) }) {
             return PolicyDecision(action: r.action, gate: r.gate, appliedScope: .shed)
         }
         if let r = rules.first(where: { $0.scope == .namespace && $0.namespace == req.namespace }) {

@@ -34,3 +34,26 @@ def test_menu_screenshot_requires_open_menu(shed):
     with pytest.raises(ShedError) as exc:
         shed.screenshot(surface="menu")
     assert exc.value.code == "internal"
+
+
+def test_approvals_pane_renders_request(shed, fake):
+    # The Approvals pane renders a real pending request (not just empty state).
+    rid = fake.emit_request("ssh-agent", "sign", "shot-shed", "ssh-ed25519", server="mini3")
+    shed.wait_until(lambda: rid in {a["id"] for a in shed.approvals_list()}, what="request queued")
+    shed.show_window()
+    shed.navigate("approvals")
+    png, w, h = shed.screenshot(surface="window", scale=2)
+    assert png.startswith(PNG_MAGIC) and w > 0 and h > 0
+    # Clean up so the queued request doesn't leak into later tests.
+    shed.approval_decide(rid, "deny")
+
+
+def test_activity_pane_renders_events(shed, fake):
+    # The Activity pane renders streamed audit events.
+    fake.emit_event("aws-credentials", "get_credentials", "shot-shed", result="ok", server="mini3")
+    shed.wait_until(lambda: any(e["shed"] == "shot-shed" for e in shed.activity_list()),
+                    what="event in feed")
+    shed.show_window()
+    shed.navigate("activity")
+    png, w, h = shed.screenshot(surface="window", scale=2)
+    assert png.startswith(PNG_MAGIC) and w > 0 and h > 0
