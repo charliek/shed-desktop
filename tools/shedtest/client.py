@@ -114,6 +114,9 @@ class ShedDesktop:
     def refresh(self) -> None:
         self.call("sheds.refresh")
 
+    def system_df(self) -> list[dict]:
+        return self.call("system.df")["usage"]
+
     # -- M1: lifecycle, create, terminal ---------------------------------
     def shed_action(self, action: str, name: str, host: str | None = None) -> None:
         params = {"name": name}

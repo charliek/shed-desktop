@@ -31,6 +31,8 @@ public final class AppState: ObservableObject {
     @Published public var approvals: [ApprovalRequest] = []
     /// Merged activity feed (host-agent audit + lifecycle + RC).
     @Published public var activity: [AuditEntry] = []
+    /// Per-host disk usage (the System pane).
+    @Published public var systemUsage: [HostDiskUsage] = []
 
     // Action seams the app wires up (the UI module can't reach AppModel
     // directly, so it calls these). All run on the main actor. Contract:
@@ -48,6 +50,8 @@ public final class AppState: ObservableObject {
     public var onRcLaunch: ((String?, String, RcKind, String?) -> Void)?
     public var onRcKill: ((RcSession) -> Void)?
     public var onRcRefresh: (() -> Void)?
+    /// Refresh per-host disk usage (the System pane).
+    public var onSystemRefresh: (() -> Void)?
     public var onOpenURL: ((String) -> Void)?
     /// Decide a pending approval: (request, decision, grantSession).
     public var onApprovalDecide: ((ApprovalRequest, ApprovalDecision, Bool) -> Void)?

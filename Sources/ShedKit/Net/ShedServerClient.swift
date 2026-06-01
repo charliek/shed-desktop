@@ -63,6 +63,16 @@ public struct ShedServerClient: Sendable {
         }
     }
 
+    /// `GET /api/system/df` → this server's disk usage (M7).
+    public func systemDF() async throws -> SystemDiskUsage {
+        let data = try await get("/api/system/df")
+        do {
+            return try JSONDecoder().decode(SystemDiskUsage.self, from: data)
+        } catch {
+            throw ShedClientError.decode("\(error)")
+        }
+    }
+
     // MARK: - lifecycle (M1)
 
     public func start(name: String) async throws { try await send("POST", "/api/sheds/\(name)/start") }

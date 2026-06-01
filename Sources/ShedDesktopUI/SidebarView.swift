@@ -12,6 +12,7 @@ struct SidebarView: View {
             row(.approvals, "lock.shield", "Approvals", count: state.approvals.isEmpty ? nil : state.approvals.count, danger: true)
             row(.agents, "wand.and.stars", "Agents", count: state.rcSessions.isEmpty ? nil : state.rcSessions.count)
             row(.activity, "list.bullet.rectangle", "Activity", count: nil)
+            row(.system, "internaldrive", "System", count: nil)
 
             Divider().padding(.vertical, 10)
 

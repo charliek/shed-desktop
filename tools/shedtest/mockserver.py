@@ -17,6 +17,23 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+# A non-zero GET /api/system/df payload (M7) so the System pane renders real numbers.
+_GiB = 1024 ** 3
+_DF_FIXTURE = {
+    "server_name": "mock", "backend": "vz", "generated_at": "2026-06-01T00:00:00Z",
+    "images": [{"name": "base", "docker_ref": "ghcr.io/x/base",
+                "size": {"logical_bytes": _GiB, "physical_bytes": _GiB // 2}}],
+    "sheds": [{"name": "shed-a", "size": {"logical_bytes": 2 * _GiB, "physical_bytes": _GiB}}],
+    "orphans": [],
+    "totals": {
+        "images": {"logical_bytes": _GiB, "physical_bytes": _GiB // 2},
+        "sheds": {"logical_bytes": 2 * _GiB, "physical_bytes": _GiB},
+        "snapshots": {"logical_bytes": 0, "physical_bytes": 0},
+        "orphans": {"logical_bytes": 0, "physical_bytes": 0},
+        "all": {"logical_bytes": 3 * _GiB, "physical_bytes": _GiB + _GiB // 2},
+    },
+}
+
 
 DEFAULT_INFO = {
     "name": "mock",
@@ -142,6 +159,8 @@ class MockShedServer:
                     self._send(200, info)
                 elif self.path == "/api/sheds":
                     self._send(200, {"sheds": sheds})
+                elif self.path == "/api/system/df":
+                    self._send(200, _DF_FIXTURE)
                 else:
                     self._send(404, {"error": "not found"})
 

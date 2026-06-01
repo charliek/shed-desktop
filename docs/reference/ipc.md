@@ -21,12 +21,13 @@ Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 |----|--------|--------|
 | `identify` | — | `socket_path`, `pid`, `app_label`, `app_id`, `ui_version`, `protocol_version`, `test_mode`, `mock_base_url?` |
 | `ui.state` | — | `pane`, `hosts[]`, `sheds[]`, `host_agent_connected`, `last_error?` |
-| `ui.navigate` | `pane` (sheds\|approvals\|agents\|activity) | `pane` |
+| `ui.navigate` | `pane` (sheds\|approvals\|agents\|activity\|system) | `pane` |
 | `ui.show_window` | — | `{}` |
 | `ui.open_menu` | `open` (bool) | `open` |
 | `host.list` | — | `hosts[]` |
 | `sheds.list` | `host?` | `sheds[]` |
 | `sheds.refresh` | — | `{}` (forces an immediate poll) |
+| `system.df` | — | `usage[]` (per-host `GET /api/system/df`: totals + image/shed/orphan disk entries) |
 | `app.window_metrics` | — | `window_width`, `window_height`, `sidebar_width`, `visible_pane` |
 | `app.screenshot` | `surface` (window\|menu), `scale` (1\|2) | `png` (base64), `width`, `height`, `scale`, `surface` |
 

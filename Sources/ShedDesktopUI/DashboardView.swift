@@ -70,6 +70,8 @@ public struct DashboardView: View {
             AgentsView(state: state)
         case .activity:
             ActivityView(state: state)
+        case .system:
+            SystemView(state: state)
         }
     }
 }

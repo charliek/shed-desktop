@@ -279,6 +279,105 @@ public enum DashboardPane: String, Codable, Sendable, CaseIterable {
     case approvals
     case agents
     case activity
+    case system
+}
+
+// MARK: - System disk usage (M7: GET /api/system/df)
+
+/// A logical/physical byte pair. Decodes defensively (missing → 0) since the
+/// backend omits zero sizes in some shapes.
+public struct DiskSize: Codable, Sendable, Equatable {
+    public var logicalBytes: Int64
+    public var physicalBytes: Int64
+    enum CodingKeys: String, CodingKey { case logicalBytes = "logical_bytes"; case physicalBytes = "physical_bytes" }
+    public init(logicalBytes: Int64 = 0, physicalBytes: Int64 = 0) {
+        self.logicalBytes = logicalBytes
+        self.physicalBytes = physicalBytes
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        logicalBytes = try c.decodeIfPresent(Int64.self, forKey: .logicalBytes) ?? 0
+        physicalBytes = try c.decodeIfPresent(Int64.self, forKey: .physicalBytes) ?? 0
+    }
+    public static let zero = DiskSize()
+}
+
+/// One image/shed/orphan disk entry.
+public struct DiskEntry: Codable, Sendable, Equatable, Identifiable {
+    public var name: String
+    public var dockerRef: String?
+    public var size: DiskSize
+    public var id: String { name }
+    enum CodingKeys: String, CodingKey { case name; case dockerRef = "docker_ref"; case size }
+    public init(name: String, dockerRef: String? = nil, size: DiskSize = .zero) {
+        self.name = name
+        self.dockerRef = dockerRef
+        self.size = size
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "?"
+        dockerRef = try c.decodeIfPresent(String.self, forKey: .dockerRef)
+        size = try c.decodeIfPresent(DiskSize.self, forKey: .size) ?? .zero
+    }
+}
+
+public struct DiskTotals: Codable, Sendable, Equatable {
+    public var images: DiskSize
+    public var sheds: DiskSize
+    public var snapshots: DiskSize
+    public var orphans: DiskSize
+    public var all: DiskSize
+    public init(images: DiskSize = .zero, sheds: DiskSize = .zero, snapshots: DiskSize = .zero, orphans: DiskSize = .zero, all: DiskSize = .zero) {
+        self.images = images; self.sheds = sheds; self.snapshots = snapshots; self.orphans = orphans; self.all = all
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        func d(_ k: CodingKeys) throws -> DiskSize { try c.decodeIfPresent(DiskSize.self, forKey: k) ?? .zero }
+        images = try d(.images); sheds = try d(.sheds); snapshots = try d(.snapshots); orphans = try d(.orphans); all = try d(.all)
+    }
+    enum CodingKeys: String, CodingKey { case images, sheds, snapshots, orphans, all }
+}
+
+/// `GET /api/system/df` — server disk usage. Arrays default to [] (the real
+/// empty shape uses `null`/omitted), totals to zero.
+public struct SystemDiskUsage: Codable, Sendable, Equatable {
+    public var serverName: String?
+    public var backend: String?
+    public var images: [DiskEntry]
+    public var sheds: [DiskEntry]
+    public var orphans: [DiskEntry]
+    public var totals: DiskTotals
+    enum CodingKeys: String, CodingKey {
+        case serverName = "server_name"
+        case backend, images, sheds, orphans, totals
+    }
+    public init(serverName: String? = nil, backend: String? = nil, images: [DiskEntry] = [], sheds: [DiskEntry] = [], orphans: [DiskEntry] = [], totals: DiskTotals = DiskTotals()) {
+        self.serverName = serverName; self.backend = backend
+        self.images = images; self.sheds = sheds; self.orphans = orphans; self.totals = totals
+    }
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverName = try c.decodeIfPresent(String.self, forKey: .serverName)
+        backend = try c.decodeIfPresent(String.self, forKey: .backend)
+        images = try c.decodeIfPresent([DiskEntry].self, forKey: .images) ?? []
+        sheds = try c.decodeIfPresent([DiskEntry].self, forKey: .sheds) ?? []
+        orphans = try c.decodeIfPresent([DiskEntry].self, forKey: .orphans) ?? []
+        totals = try c.decodeIfPresent(DiskTotals.self, forKey: .totals) ?? DiskTotals()
+    }
+}
+
+/// One host's disk usage, for the System pane / `system.df`.
+public struct HostDiskUsage: Codable, Sendable, Equatable, Identifiable {
+    public var host: String
+    public var usage: SystemDiskUsage?
+    public var error: String?
+    public var id: String { host }
+    public init(host: String, usage: SystemDiskUsage? = nil, error: String? = nil) {
+        self.host = host
+        self.usage = usage
+        self.error = error
+    }
 }
 
 /// A capturable surface for `app.screenshot`. Decoding the param as this

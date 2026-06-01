@@ -40,6 +40,10 @@ public protocol UiBridge: AnyObject {
     /// poll interval.
     func refreshSheds() async
 
+    /// Fan out `GET /api/system/df` to every host and publish + return the
+    /// per-host disk usage (`system.df`, M7).
+    func refreshSystemUsage() async -> [HostDiskUsage]
+
     // MARK: - M1: lifecycle, create, terminal
 
     /// Run a lifecycle mutation on a shed, then refresh so the result is

@@ -60,6 +60,9 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await shedsRefreshOp()
             return emptyResult
+        case "system.df":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(systemDFOp())
         case "shed.start", "shed.stop", "shed.reset", "shed.delete":
             guard let action = ShedAction(rawValue: String(op.dropFirst("shed.".count))) else {
                 throw IPCHandlerError.unknownOp(op)
@@ -159,6 +162,10 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func shedsRefreshOp() async throws {
         try await uiBridge().refreshSheds()
+    }
+
+    @MainActor private func systemDFOp() async throws -> SystemUsageResult {
+        SystemUsageResult(usage: try await uiBridge().refreshSystemUsage())
     }
 
     @MainActor private func shedActionOp(_ action: ShedAction, host: String?, name: String) async throws {
@@ -417,6 +424,7 @@ private struct IdentifyResult: Encodable, Sendable {
 
 private struct HostListResult: Encodable, Sendable { let hosts: [ShedHost] }
 private struct ShedListResult: Encodable, Sendable { let sheds: [Shed] }
+private struct SystemUsageResult: Encodable, Sendable { let usage: [HostDiskUsage] }
 
 // MARK: - decode/encode helpers (ported from roost)
 
