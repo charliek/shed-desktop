@@ -1,7 +1,9 @@
 # First Run
 
-Launch `ShedDesktop.app`. It runs as a menu-bar item (no Dock icon) and opens the
-dashboard window on first launch.
+Launch `ShedDesktop.app`. It starts in the **menu bar only** (no Dock icon, no window) —
+look for the shippingbox icon. Open the dashboard from its dropdown. While a window is open
+the app becomes a regular app (Dock icon + ⌘-Tab + the top-left app menu); close the window
+and it returns to menu-bar-only, the icon staying put.
 
 ## The dashboard
 

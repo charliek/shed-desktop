@@ -401,7 +401,10 @@ final class AppModel: NSObject, UiBridge {
         window.delegate = self
         window.center()
         self.mainWindow = window
-        showWindow()
+        // Build the window but DON'T show it: the app launches to the menu bar
+        // only (stays an accessory), and becomes a regular app — Dock icon +
+        // ⌘-Tab — the first time the user opens the dashboard. The harness opens
+        // it explicitly via `ui.show_window` before any window screenshot.
     }
 
     private func buildStatusItem() {
