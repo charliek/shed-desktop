@@ -10,6 +10,21 @@ a UI-free core (`ShedKit`) so they're unit-testable without a running app, and s
 Linux port can reuse the core. A first-class design goal is that the app is **drivable and
 observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
 
+## Why a native app
+
+The app's whole job is to call HTTP endpoints, consume SSE streams, shell out and read
+pipes, and integrate deeply with macOS (menu bar, Touch ID, notifications, login item,
+Sparkle). Swift does the first three natively (`URLSession.bytes`, `Process`/`Pipe`) and is
+categorically best at the fourth. The one capability that would favor a web stack — an
+embedded streaming terminal — is a deliberate non-goal (terminals are delegated to the
+user's terminal app), which takes SwiftUI's weakest area off the critical path.
+
+Electron was rejected on size (~85–120 MB of bundled Chromium); Tauri was the earlier lean
+*when an embedded terminal was assumed* — once terminals are delegated out, its web-native
+advantage no longer applies while its weak spots (menu-bar popover, Touch ID) are exactly
+this app's headline features. If a future pane genuinely needs web rendering, a `WKWebView`
+scoped to that one pane is the escape hatch — not the default substrate.
+
 ## System context
 
 shed-desktop sits between three other systems: the **shed servers** (one per host, over

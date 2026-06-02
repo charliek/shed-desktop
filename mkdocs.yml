@@ -101,7 +101,6 @@ nav:
   - Development:
       - Setup: development/setup.md
       - Test automation: development/test-automation.md
-      - Design Spec (historical): spec.md
 
 extra:
   social:
