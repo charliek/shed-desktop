@@ -11,10 +11,10 @@ Update authenticity rests on Sparkle's **EdDSA signature** (`SUPublicEDKey` in
 safely. The feed is the appcast on GitHub Pages
 (`https://charliek.github.io/shed-desktop/appcast.xml`, served from `docs/appcast.xml`).
 
-The signing key is **shared with roost** (Sparkle recommends one key across apps), so the
-private key is the existing `SPARKLE_ED_PRIVATE_KEY` secret. To use a dedicated key, run
-`.build/artifacts/sparkle/Sparkle/bin/generate_keys`, paste its public key into
-`Info.plist.template`, and set a new `SPARKLE_ED_PRIVATE_KEY` secret.
+shed-desktop uses its own **dedicated** EdDSA signing key (public key in
+`Info.plist.template`; private key in the `SPARKLE_ED_PRIVATE_KEY` secret). To rotate, run
+`.build/artifacts/sparkle/Sparkle/bin/generate_keys`, paste the new public key into
+`Info.plist.template`, and update the secret.
 
 ## Build artifacts locally
 
@@ -32,19 +32,21 @@ make dmg      # build/ShedDesktop-<version>.dmg (drag-install + first-launch not
 The `release` workflow (`.github/workflows/release.yml`) verifies the tag matches `VERSION`,
 builds + bundles, and attaches the artifact to a GitHub release.
 
-## Remaining wiring (one-time setup)
+## Pipeline configuration (in place)
 
-The full release-workflows + Sparkle appcast pipeline needs three repo-level inputs that
-are set once:
+The release-workflows + Sparkle appcast pipeline is fully wired:
 
-1. **release-bot GitHub App** installed on the repo + secrets `RELEASE_BOT_CLIENT_ID` /
-   `RELEASE_BOT_APP_KEY` (so CI can push the signed appcast to `main`).
-2. **`SPARKLE_ED_PRIVATE_KEY`** secret (base64 private key; reuse roost's or a dedicated one).
-3. **Branch ruleset on `main`** requiring `ci-success`, with the App + admin as bypass actors.
+- **release-bot GitHub App** installed, with secrets `RELEASE_BOT_CLIENT_ID` /
+  `RELEASE_BOT_APP_KEY` (CI mints a token to push the signed appcast to `main`).
+- **`SPARKLE_ED_PRIVATE_KEY`** secret (the dedicated key above).
+- **`main-protection` ruleset**: requires `ci-success`, blocks force-push/deletion, with the
+  release-bot App + repo admin as bypass actors (so the bot's appcast push and the
+  maintainer's release commits land without waiting on their own `ci-success`).
 
-Once those exist, `release.yml` gains a `sparkle-appcast` job: it `sign_update`s the DMG with
-the secret, runs `scripts/update-appcast.py` to append the entry, and the bot pushes
-`docs/appcast.xml` to `main` → `docs.yml` redeploys Pages → the appcast is live.
+On a tagged release, `release.yml` builds + attaches the DMG, then `sign_update`s it with the
+secret, runs `scripts/update-appcast.py` to append the entry, and the bot pushes
+`docs/appcast.xml` to `main` → `docs.yml` redeploys Pages → the appcast is live. First proven
+by `v0.0.1`.
 
 ## Notarization (deferred)
 
