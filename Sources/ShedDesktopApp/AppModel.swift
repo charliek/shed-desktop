@@ -398,6 +398,7 @@ final class AppModel: NSObject, UiBridge {
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = false
         window.isReleasedWhenClosed = false
+        window.delegate = self
         window.center()
         self.mainWindow = window
         showWindow()
@@ -415,10 +416,12 @@ final class AppModel: NSObject, UiBridge {
 
         let popover = NSPopover()
         popover.behavior = .transient
-        // No animation: open/close take effect synchronously so the IPC
-        // ui.open_menu → app.screenshot {surface:menu} sequence is
-        // deterministic for the test harness (no lingering isShown).
-        popover.animates = false
+        // Animate in normal use — the animated show path positions the popover
+        // under the status item reliably (the non-animated path can land with a
+        // gap / wrong spot until a reflow snaps it back). Under the test harness
+        // we keep it OFF so the ui.open_menu → app.screenshot {surface:menu}
+        // sequence is deterministic (no lingering isShown).
+        popover.animates = !ShedBackend.shared.testMode
         popover.contentSize = NSSize(width: 300, height: 360)
         popover.contentViewController = NSHostingController(rootView: MenuBarContentView(
             state: state,
@@ -484,6 +487,10 @@ final class AppModel: NSObject, UiBridge {
 
     func showWindow() {
         guard let window = mainWindow else { return }
+        // Becoming a regular app (Dock icon + ⌘-Tab + the top-left app menu)
+        // while a window is open; windowWillClose reverts to accessory. Skipped
+        // under the harness so its activation policy stays put.
+        if !ShedBackend.shared.testMode { NSApp.setActivationPolicy(.regular) }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
@@ -611,9 +618,11 @@ final class AppModel: NSObject, UiBridge {
             // right after open could see a zero-size window). Matches the
             // PreferencesView .frame.
             window.setContentSize(NSSize(width: 460, height: 560))
+            window.delegate = self
             window.center()
             prefsWindow = window
         }
+        if !ShedBackend.shared.testMode { NSApp.setActivationPolicy(.regular) }
         NSApp.activate(ignoringOtherApps: true)
         prefsWindow?.makeKeyAndOrderFront(nil)
     }
@@ -910,5 +919,21 @@ final class AppModel: NSObject, UiBridge {
         guard fake.invoke(id: id, decision: decision) else {
             throw IPCHandlerError.notFound("no posted notification \(id)")
         }
+    }
+}
+
+extension AppModel: NSWindowDelegate {
+    func windowWillClose(_ notification: Notification) {
+        guard !ShedBackend.shared.testMode else { return }
+        // When the last managed window closes, drop back to a menu-bar-only
+        // accessory (Dock icon + ⌘-Tab entry go; the status item stays). The
+        // closing window is still `isVisible` here, so exclude it explicitly.
+        let closing = notification.object as? NSWindow
+        // A miniaturized window is still "open" (it has a restorable Dock tile),
+        // so keep .regular for it; only a genuinely-closed last window reverts.
+        let stillOpen = [mainWindow, prefsWindow]
+            .compactMap { $0 }
+            .contains { $0 !== closing && ($0.isVisible || $0.isMiniaturized) }
+        if !stillOpen { NSApp.setActivationPolicy(.accessory) }
     }
 }

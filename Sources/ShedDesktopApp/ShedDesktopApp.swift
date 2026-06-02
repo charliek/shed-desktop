@@ -3,9 +3,10 @@
 // A manual AppKit bootstrap (rather than the SwiftUI App lifecycle) so the
 // app fully owns its windows: the dashboard and the menu popover are
 // AppKit NSWindows hosting SwiftUI views, which gives the IPC screenshot
-// op a stable window handle and deterministic show/hide. Accessory
-// activation policy = menu-bar app, no Dock icon (also set via
-// LSUIElement in the bundle's Info.plist).
+// op a stable window handle and deterministic show/hide. The app launches as
+// an accessory (menu-bar item, no Dock icon — also `LSUIElement` in the
+// bundle's Info.plist); `AppModel` raises it to a regular app (Dock icon +
+// ⌘-Tab + the app menu) while a window is open and reverts on close.
 
 import AppKit
 import ShedKit

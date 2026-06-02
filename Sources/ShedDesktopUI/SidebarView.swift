@@ -71,6 +71,9 @@ struct SidebarView: View {
             .background(selected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
             .foregroundStyle(selected ? Color.primary : Color.secondary)
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            // Make the whole padded row the hit target, not just the text +
+            // icon (a Button with a Spacer otherwise only clicks on its content).
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
