@@ -21,12 +21,20 @@ path.
 | `shedctl screenshot [--surface window\|menu] [--scale 1\|2] --out FILE` | Capture a PNG |
 | `shedctl call <op> [key=value ...]` | Generic call; values parse as JSON when possible |
 
+The named subcommands cover read-only inspection. Everything else in the
+[IPC op catalog](ipc.md) — lifecycle (`shed.start` …), create, terminal, remote control
+(`rc.*`), approvals (`approval.decide` …), and `system.df` — is reached through
+`shedctl call <op>`. Panes for `ui navigate` are `sheds | approvals | agents | activity |
+system`.
+
 ## Examples
 
 ```bash
 shedctl identify
-shedctl ui navigate agents
+shedctl ui navigate system
 shedctl ui show-window
 shedctl screenshot --surface window --scale 2 --out /tmp/shot.png
 shedctl call sheds.list host=mini3
+shedctl call system.df                       # per-host disk usage
+shedctl call approval.decide id=<req-id> decision=approve
 ```

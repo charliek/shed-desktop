@@ -16,11 +16,14 @@ Core/UI split (see `docs/reference/architecture.md`):
 
 - `Sources/ShedKit/` — core, no SwiftUI. HTTP (`ShedServerClient`) + SSE (`SSEParser`)
   clients, models (`Models.swift`, `ShedConfig.swift`), the IPC server
-  (`IPC/IPCServer.swift`, `IPC/IPCMessages.swift`), `Screenshot.swift`, and the
-  `UiBridge`/`ShedBackend` seam.
-- `Sources/ShedDesktopUI/` — SwiftUI views + `AppState` (the observable view-model).
-- `Sources/ShedDesktopApp/` — `@main`, `AppModel` (host poller + windows + IPC handler),
-  `IPCHandlerImpl`.
+  (`IPC/IPCServer.swift`, `IPC/IPCMessages.swift`), `Screenshot.swift`, the **Approval**
+  subsystem (`Approval/`: `HostAgentClient`, `PolicyEngine`, `AuditStore`,
+  `NotificationPresenter`), and the `UiBridge`/`ShedBackend` seam.
+- `Sources/ShedDesktopUI/` — SwiftUI views (Sheds/Approvals/Agents/Activity/System/
+  Preferences/menu) + `AppState` (the observable view-model).
+- `Sources/ShedDesktopApp/` — `@main`, `AppModel` (host poller + windows + IPC handler +
+  approval coordinator), `IPCHandlerImpl`, `SystemNotificationPresenter`, the Sparkle
+  updater, `PreferencesStore`.
 - `Sources/shedctl/` — CLI driver for the socket.
 - `tools/shedtest/` — pytest functional harness + in-process mock shed-server.
 
@@ -55,9 +58,14 @@ condition-waits (`wait_until`), never sleeps.
 - Don't expose any shed-server further; a reachable server is trusted by the network, not
   by the app.
 
-## Milestones
+## What's built
 
-M0 read-only dashboard + IPC spine (done) · M1 lifecycle/create/terminal · M2 RC agent
-launcher · M3 the cross-repo approval gate (Unix socket to `shed-host-agent`, SSH-only
-gate, fail-closed) · M4 notifications/login-item/packaging. The historical design spec is
-`docs/spec.md`.
+All shipped (first release `v0.0.1`): the read-only dashboard + IPC drivability spine; shed
+lifecycle (start/stop/reset/delete) + create-with-live-SSE-progress + terminal launch; the
+remote-control agent launcher; the **credential-approval gate** (a Unix socket to
+`shed-host-agent` — multi-server, SSH-gated, fail-closed — with a policy engine,
+notifications, and a merged audit feed); the System disk-usage pane; preferences +
+launch-at-login; and Sparkle auto-update (DMG + EdDSA appcast — see `RELEASING.md`).
+
+Deferred directions (AWS/Docker gating, sessions/snapshots/images panes, notarization) live
+in `docs/roadmap.md`.

@@ -6,9 +6,8 @@ by running the real app — not by a human clicking. Two layers:
 ## Unit tests (`swift test`)
 
 Pure logic in `ShedKit`: config parsing, model decoding against real API shapes (including
-`{"sheds": null}` and mixed timestamp formats), the SSE parser, the IPC envelope, and —
-in later milestones — the remote-control classifier and the approval policy engine. No
-running UI required.
+`{"sheds": null}` and mixed timestamp formats), the SSE parser, the IPC envelope, the
+remote-control classifier, and the approval policy engine. No running UI required.
 
 ## Functional harness (`tools/shedtest`, pytest)
 

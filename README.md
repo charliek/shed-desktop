@@ -6,16 +6,24 @@ remote-control patterns from
 [shed-remote-agent](https://github.com/charliek/shed-remote-agent) — into one resident
 control surface.
 
-It lists and creates sheds across hosts, launches Claude remote-control agents, approves
-credential requests from the host agent, and surfaces a live activity feed. It is a
-coordinator: it runs no sheds and holds no credentials.
+It lists and creates sheds across hosts, launches Claude remote-control agents, gates
+credential requests from the host agent (the headline feature), shows per-host disk usage,
+and surfaces a live activity feed. It is a coordinator: it runs no sheds and holds no
+credentials.
 
-Docs: <https://charliek.github.io/shed-desktop/>
+Docs: <https://charliek.github.io/shed-desktop/> · Architecture:
+[reference/architecture](https://charliek.github.io/shed-desktop/reference/architecture/)
 
-## Quick start
+## Install
+
+Download the latest `ShedDesktop-<version>.dmg` from
+[Releases](https://github.com/charliek/shed-desktop/releases), drag it to Applications, then
+run once: `xattr -dr com.apple.quarantine /Applications/ShedDesktop.app` (ad-hoc signed, not
+yet notarized). It auto-updates via Sparkle thereafter. Or build from source:
 
 ```bash
 make bundle && open build/ShedDesktop.app   # requires Xcode 16+ (Swift 6), macOS 14+
+make dmg                                    # build/ShedDesktop-<version>.dmg
 ```
 
 ## Drivable + testable

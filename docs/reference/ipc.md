@@ -15,7 +15,7 @@ first-class feature: it is how changes are verified without a human clicking.
 Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 `invalid-param`, `unknown-field`, `not-found`, `internal`, `not-enabled`.
 
-## Ops (M0)
+## Core ops
 
 | op | params | result |
 |----|--------|--------|
@@ -23,6 +23,7 @@ Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 | `ui.state` | — | `pane`, `hosts[]`, `sheds[]`, `host_agent_connected`, `last_error?` |
 | `ui.navigate` | `pane` (sheds\|approvals\|agents\|activity\|system) | `pane` |
 | `ui.show_window` | — | `{}` |
+| `ui.open_preferences` | — | `{}` |
 | `ui.open_menu` | `open` (bool) | `open` |
 | `host.list` | — | `hosts[]` |
 | `sheds.list` | `host?` | `sheds[]` |
@@ -35,7 +36,26 @@ The screenshot renders the target window's content view to a PNG in-process — 
 capture permission, works even when the window is occluded or off-screen. Capturing the
 menu requires it to be open first (`ui.open_menu {open:true}`).
 
-## Approval ops (M3 / M5)
+## Lifecycle, create + terminal
+
+| op | params | result |
+|----|--------|--------|
+| `shed.start` / `shed.stop` / `shed.reset` / `shed.delete` | `host?`, `name` | `{}` (refreshes first) |
+| `create.start` | `host?`, `name`, `repo?`, `local_dir?`, `image?`, `backend?`, `cpus?`, `memory_mb?`, `no_provision?` | `create_id` |
+| `create.status` | `create_id` | `CreateProgress` (poll until `complete`/`error`) |
+| `terminal.preview` | `host?`, `shed`, `session?` | the ssh `TerminalCommand` (spawns nothing) |
+| `terminal.open` | `host?`, `shed`, `session?` | launches the terminal (**disabled** in test mode) |
+
+## Remote control
+
+| op | params | result |
+|----|--------|--------|
+| `rc.classify` | `kind`, `pane` | `state`, `url?` (pure pane classifier) |
+| `rc.list` | `host?`, `shed?` | `sessions[]` |
+| `rc.launch` | `host?`, `shed`, `kind?`, `display_name?`, `workdir?` | the launched `RcSession` |
+| `rc.kill` | `host?`, `shed`, `slug` | `{}` |
+
+## Approval ops
 
 These drive the credential-approval gate (see [Credential approvals](approvals.md)).
 
@@ -57,5 +77,5 @@ These drive the credential-approval gate (see [Credential approvals](approvals.m
 
 When launched with `SHED_DESKTOP_TEST_MODE=1`, `identify` reports `test_mode: true` and the
 `mock_base_url` the app's HTTP clients were redirected to, so the harness can confirm a run
-is hermetic before asserting anything. Fault-injection ops added in later milestones are
-gated behind this flag.
+is hermetic before asserting anything. Fault-injection ops (like `policy.set`) are gated
+behind this flag.

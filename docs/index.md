@@ -6,26 +6,29 @@ Claude remote-control agents, approve credential requests from the shed-extensio
 agent, and watch a live activity feed.
 
 It is a coordinator — it runs no sheds and holds no credentials. It observes and drives
-components that already exist on the developer's Mac and on shed hosts:
+components that already exist on the developer's Mac and on shed hosts (see
+[Architecture](reference/architecture.md) for the full picture):
 
-- **shed lifecycle + events** — HTTP to one or more `shed-server` instances, discovered
-  from `~/.shed/config.yaml`.
+- **shed lifecycle** — HTTP to one or more `shed-server` instances, discovered from
+  `~/.shed/config.yaml`; live create-progress over SSE.
 - **credentials / approvals** — a Unix-domain-socket channel to `shed-host-agent`
-  (the headline feature; see the [design spec](spec.md)).
+  (the headline feature; see [Credential approvals](reference/approvals.md)).
 - **terminals + remote control** — SSH into a shed and drive `tmux`, launching the user's
   terminal app for interactive attach.
 
 ## Status
 
-Under active development. Milestones:
+Shipping. The dashboard, lifecycle/create, RC agent launcher, the credential-approval gate,
+the System (disk) pane, and Sparkle auto-update are all implemented; first release `v0.0.1`.
 
-| Milestone | Scope | State |
-|-----------|-------|-------|
-| M0 | Read-only dashboard across hosts; the IPC drivability spine | building |
-| M1 | Lifecycle (start/stop/reset/delete), create with live progress, terminal launch | planned |
-| M2 | Remote-control agent launcher (ported RC classifier) | planned |
-| M3 | The shed-desktop credential approval gate (cross-repo) | planned |
-| M4 | Notifications, launch-at-login, packaging + signing | planned |
+| Area | What | State |
+|---|---|---|
+| Dashboard + IPC spine | Read-only dashboard across hosts; the drivability socket + screenshots | ✅ |
+| Lifecycle + create | start/stop/reset/delete, create with live SSE progress, terminal launch | ✅ |
+| Agents | Remote-control launcher (ported RC classifier), Agents pane | ✅ |
+| Approval gate | Multi-server SSH approval over UDS, policy engine, notifications, merged audit feed | ✅ |
+| System | Per-host disk usage (`/api/system/df`) | ✅ |
+| Packaging | Launch-at-login, preferences, DMG + Sparkle EdDSA auto-update | ✅ |
 
 ## Design principles
 
