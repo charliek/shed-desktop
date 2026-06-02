@@ -24,6 +24,13 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Don't persist GITHUB_TOKEN creds: otherwise the appcast bot push
+          # authenticates as GITHUB_TOKEN (via the http.extraheader) instead of
+          # the App token, and GitHub suppresses the downstream docs.yml that
+          # republishes Pages. The repo is public, so the unauthenticated
+          # `git fetch origin main` below still works.
+          persist-credentials: false
       - name: Verify tag matches VERSION
         run: |
           TAG="${GITHUB_REF_NAME#v}"
