@@ -4,5 +4,13 @@
     <title>shed desktop</title>
     <link>https://charliek.github.io/shed-desktop/appcast.xml</link>
     <description>shed desktop auto-update feed. Release entries are appended by scripts/update-appcast.py from the release workflow.</description>
+    <item>
+      <title>0.0.1</title>
+      <pubDate>Tue, 02 Jun 2026 00:27:02 +0000</pubDate>
+      <sparkle:version>0.0.1</sparkle:version>
+      <sparkle:shortVersionString>0.0.1</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/charliek/shed-desktop/releases/download/v0.0.1/ShedDesktop-0.0.1.dmg" type="application/octet-stream" sparkle:edSignature="gkmnzuj1GAqWk6d4VGRyaW6tNNdv478d1ICx1fqQDZ83S0jPspIzIK2998bMkZBbnT+yVx7TB6zm5RWWa4kfDg==" length="2486856" />
+    </item>
   </channel>
 </rss>
