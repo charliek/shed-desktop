@@ -9,15 +9,21 @@
 ## Common tasks
 
 ```bash
-make build        # swift build
-make test         # swift test (ShedKit unit tests)
-make bundle       # assemble build/ShedDesktop.app (ad-hoc signed)
-make run          # bundle + open the app
-make e2e          # functional harness against the running/auto-launched app
-make e2e-ci       # hermetic: fresh app, test mode, in-process mock shed-server
-make docs-serve   # live docs preview
-make fmt / lint   # swift-format
+make build               # swift build
+make test                # swift test (ShedKit unit tests)
+make bundle              # assemble build/ShedDesktop.app (ad-hoc signed, Sparkle embedded)
+make dmg                 # release bundle + a drag-install disk image (build/ShedDesktop-<version>.dmg)
+make run                 # bundle + open the app
+make e2e                 # functional harness against the running/auto-launched app
+make e2e-ci              # hermetic: fresh app, test mode, in-process mock shed-server
+make smoke               # drive the app + capture labeled screenshots
+make docs / docs-serve   # build / live-preview the docs site
+make fmt / lint          # swift-format
+make clean               # remove build artifacts
 ```
+
+`make dmg` is the local packaging path; cutting an actual release (which signs the DMG and
+publishes the Sparkle appcast) is [RELEASING.md](https://github.com/charliek/shed-desktop/blob/main/RELEASING.md).
 
 ## Layout
 

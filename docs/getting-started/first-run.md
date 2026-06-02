@@ -9,7 +9,9 @@ The sidebar selects a pane:
 
 - **Sheds** — every shed across all configured hosts, grouped by host, with status, image
   variant, backend, resource sizing, and uptime; per-shed start/stop/reset/delete + open
-  terminal, and a create-shed sheet with live progress. Updated by polling each `shed-server`.
+  terminal. The **New shed** sheet picks a host, a source (`owner/repo` or a local dir), an
+  image variant + backend, and CPU/memory, then streams creation progress live (SSE). The
+  list is kept current by polling each `shed-server`.
 - **Approvals** — pending credential-approval requests from `shed-host-agent`, with
   Approve / Deny (optionally Touch ID) and "always allow". Empty unless the host agent is
   configured to delegate — see [Credential approvals](../reference/approvals.md).
