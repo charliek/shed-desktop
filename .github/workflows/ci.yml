@@ -39,3 +39,13 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Build docs
         run: uv run --group docs mkdocs build
+
+  # Single required check for the `main` ruleset: green only when both jobs
+  # pass. Lets the branch rule name one check instead of tracking each matrix
+  # leg (and release.yml's ci-gate can poll this one name).
+  ci-success:
+    name: ci-success
+    needs: [swift, docs]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "build · test · e2e + docs are green"

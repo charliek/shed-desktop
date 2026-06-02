@@ -47,3 +47,72 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --notes "Ad-hoc signed build (auto-updates via Sparkle). Not notarized yet — see FIRST-LAUNCH.txt in the DMG for the one-time Gatekeeper step." \
             "build/ShedDesktop-${VER}.dmg"
+
+      # ---- Sparkle appcast: sign the DMG + publish the feed as the release bot ----
+      - name: Mint release-bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id:    ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key:  ${{ secrets.RELEASE_BOT_APP_KEY }}
+          owner:        ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Sign DMG + append appcast entry
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY}" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is unset — can't sign the appcast entry."
+            exit 1
+          fi
+          VER="${GITHUB_REF_NAME#v}"
+          DMG="build/ShedDesktop-${VER}.dmg"
+          test -s "${DMG}" || { echo "::error::${DMG} missing — the DMG step must run first."; exit 1; }
+          SIGN_UPDATE="$(find .build/artifacts -path '*/bin/sign_update' -type f -not -path '*old_dsa*' | head -1)"
+          [ -n "${SIGN_UPDATE}" ] || { echo "::error::sign_update not found under .build/artifacts."; exit 1; }
+          W="$(mktemp -d)"; chmod 700 "$W"; trap 'rm -rf "$W"' EXIT
+          printf '%s' "${SPARKLE_ED_PRIVATE_KEY}" | base64 --decode > "${W}/key"
+          "${SIGN_UPDATE}" --ed-key-file "${W}/key" "${DMG}" > "${W}/sign.txt"
+          rm -f "${W}/key"
+          cat "${W}/sign.txt"
+          # The appcast lives on main (the tag was cut from main, so the
+          # untracked build/ + .build/ artifacts survive the checkout).
+          git fetch origin main
+          git checkout main
+          SHED_DESKTOP_VERSION="${VER}" SHED_DESKTOP_TAG="${GITHUB_REF_NAME}" \
+            SHED_DESKTOP_SIGN_FILE="${W}/sign.txt" python3 scripts/update-appcast.py
+          xmllint --noout docs/appcast.xml
+
+      - name: Push signed appcast to main as release-bot
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          BOT_SLUG: ${{ steps.bot-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet docs/appcast.xml; then
+            echo "::notice::docs/appcast.xml unchanged for ${GITHUB_REF_NAME} — nothing to push."
+            exit 0
+          fi
+          bot_id="$(gh api "/users/${BOT_SLUG}[bot]" --jq '.id')"
+          git config user.name  "${BOT_SLUG}[bot]"
+          git config user.email "${bot_id}+${BOT_SLUG}[bot]@users.noreply.github.com"
+          git add docs/appcast.xml
+          staged="$(git diff --cached --name-only)"
+          if [ "${staged}" != "docs/appcast.xml" ]; then
+            echo "::error::unexpected staged paths beyond docs/appcast.xml:"; echo "${staged}"; exit 1
+          fi
+          git commit -m "chore(appcast): publish ${GITHUB_REF_NAME}"
+          # Token embedded in the push URL (stays in argv, never written to disk).
+          TOKEN_URL="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          for attempt in 1 2 3; do
+            if git push "${TOKEN_URL}" HEAD:main; then
+              echo "::notice::Appcast pushed — docs.yml redeploys Pages → feed live."
+              exit 0
+            fi
+            echo "::warning::push attempt ${attempt} failed; rebasing onto origin/main"
+            git fetch "${TOKEN_URL}" main
+            git rebase FETCH_HEAD || { echo "::error::rebase conflict on docs/appcast.xml"; exit 1; }
+          done
+          echo "::error::push failed after 3 attempts."; exit 1

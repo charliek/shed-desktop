@@ -15,3 +15,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Local secrets (Sparkle private key, etc.) — never commit
+.secrets/

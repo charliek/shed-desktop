@@ -13,14 +13,13 @@
   icon (spec FR-1).
 
   Sparkle auto-update (M8): SUFeedURL is the appcast on GitHub Pages;
-  SUPublicEDKey is the EdDSA public key updates are verified against. It
-  reuses the SHARED Sparkle signing key (same key as roost — Sparkle
-  recommends one key across apps), so the matching private key is the
-  existing SPARKLE_ED_PRIVATE_KEY repo secret. To use a DEDICATED key
-  instead, run `.build/artifacts/sparkle/Sparkle/bin/generate_keys`, paste
-  its public key below, and set a new SPARKLE_ED_PRIVATE_KEY secret.
-  SUEnableAutomaticChecks=false so a background check never pops a panel
-  during the hermetic E2E (updates are user-invoked via the menu).
+  SUPublicEDKey is the EdDSA public key updates are verified against. The
+  matching private key is the SPARKLE_ED_PRIVATE_KEY repo secret (used by
+  release.yml to sign each DMG). To rotate, run
+  `.build/artifacts/sparkle/Sparkle/bin/generate_keys`, paste the new public
+  key below, and update the secret. SUEnableAutomaticChecks=false so a
+  background check never pops a panel during the hermetic E2E (updates are
+  user-invoked via the menu).
 -->
 <plist version="1.0">
 <dict>
@@ -59,7 +58,7 @@
   <key>SUFeedURL</key>
   <string>https://charliek.github.io/shed-desktop/appcast.xml</string>
   <key>SUPublicEDKey</key>
-  <string>P2VexGJQtk6cptdgKi3skMV9+WcmcZMAKjSPrKhylJA=</string>
+  <string>ROs7kN5cyTTVpMUriF1B/RZ/BaV/HJeOC8gMbBjDw+4=</string>
   <key>SUEnableAutomaticChecks</key>
   <false/>
   <key>NSHumanReadableCopyright</key>
