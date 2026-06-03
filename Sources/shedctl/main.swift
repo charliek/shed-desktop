@@ -74,10 +74,12 @@ func usage() -> Never {
       shedctl ui state
       shedctl ui navigate <sheds|approvals|agents|activity|system>
       shedctl ui show-window
+      shedctl ui show-create
       shedctl ui open-menu <true|false>
       shedctl host list
       shedctl sheds list [--host NAME]
       shedctl sheds refresh
+      shedctl images list
       shedctl screenshot [--surface window|menu] [--scale 1|2] --out FILE
       shedctl call <op> [key=value ...]   # generic; values parsed as JSON when possible
     """
@@ -136,6 +138,8 @@ do {
         printJSON(try client.call(op: "ui.navigate", params: ["pane": argv[2]]))
     case ("ui", "show-window"):
         printJSON(try client.call(op: "ui.show_window", params: [:]))
+    case ("ui", "show-create"):
+        printJSON(try client.call(op: "ui.show_create", params: [:]))
     case ("ui", "open-menu"):
         let open = (argv.count >= 3 ? argv[2] : "true") == "true"
         printJSON(try client.call(op: "ui.open_menu", params: ["open": open]))
@@ -147,6 +151,8 @@ do {
         printJSON(try client.call(op: "sheds.list", params: params))
     case ("sheds", "refresh"):
         printJSON(try client.call(op: "sheds.refresh", params: [:]))
+    case ("images", "list"):
+        printJSON(try client.call(op: "images.list", params: [:]))
     case ("screenshot", _):
         guard let out = flag(argv, "--out") else {
             FileHandle.standardError.write(Data("screenshot requires --out FILE\n".utf8)); exit(2)

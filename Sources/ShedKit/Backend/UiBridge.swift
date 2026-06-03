@@ -44,6 +44,14 @@ public protocol UiBridge: AnyObject {
     /// per-host disk usage (`system.df`, M7).
     func refreshSystemUsage() async -> [HostDiskUsage]
 
+    /// Fan out `GET /api/images` to every host and publish + return the
+    /// per-host image lists (`images.list`), feeding the New-Shed picker.
+    func refreshImages() async -> [HostImageList]
+
+    /// Open the dashboard and present the New-Shed sheet (`ui.show_create`),
+    /// so the harness can screenshot the image picker.
+    func showCreateSheet()
+
     // MARK: - M1: lifecycle, create, terminal
 
     /// Run a lifecycle mutation on a shed, then refresh so the result is

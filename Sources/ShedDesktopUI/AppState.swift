@@ -33,6 +33,8 @@ public final class AppState: ObservableObject {
     @Published public var activity: [AuditEntry] = []
     /// Per-host disk usage (the System pane).
     @Published public var systemUsage: [HostDiskUsage] = []
+    /// Per-host installed images (the New-Shed picker), keyed by host name.
+    @Published public var imagesByHost: [HostImageList] = []
 
     // Action seams the app wires up (the UI module can't reach AppModel
     // directly, so it calls these). All run on the main actor. Contract:
@@ -40,10 +42,11 @@ public final class AppState: ObservableObject {
     // @Published state above (sheds/activeCreate refresh; failures land in
     // lastError), not via return values.
     //
-    // STOP RULE: this bag is at its practical limit (~8). The NEXT new
-    // action seam should promote this to a `weak var actions: AppActions?`
-    // delegate protocol (named methods, one wiring point, missing wiring =
-    // compile error) rather than adding a ninth closure.
+    // STOP RULE: this bag is past its practical limit and overdue for
+    // promotion to a `weak var actions: AppActions?` delegate protocol (named
+    // methods, one wiring point, missing wiring = compile error). That's a
+    // cross-cutting cleanup, kept out of feature PRs; do it as its own change
+    // before threading further closures through here.
     public var onShedAction: ((ShedAction, Shed) -> Void)?
     public var onOpenTerminal: ((Shed) -> Void)?
     public var onCreate: ((String?, CreateShedRequest) -> Void)?
@@ -52,6 +55,8 @@ public final class AppState: ObservableObject {
     public var onRcRefresh: (() -> Void)?
     /// Refresh per-host disk usage (the System pane).
     public var onSystemRefresh: (() -> Void)?
+    /// Refresh per-host installed images (the New-Shed picker).
+    public var onImagesRefresh: (() -> Void)?
     public var onOpenURL: ((String) -> Void)?
     /// Decide a pending approval: (request, decision, grantSession).
     public var onApprovalDecide: ((ApprovalRequest, ApprovalDecision, Bool) -> Void)?

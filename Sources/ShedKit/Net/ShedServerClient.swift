@@ -73,6 +73,16 @@ public struct ShedServerClient: Sendable {
         }
     }
 
+    /// `GET /api/images` → this server's installed images (for the picker).
+    public func listImages() async throws -> [ShedImage] {
+        let data = try await get("/api/images")
+        do {
+            return try JSONDecoder().decode(ImageListWire.self, from: data).images ?? []
+        } catch {
+            throw ShedClientError.decode("\(error)")
+        }
+    }
+
     // MARK: - lifecycle (M1)
 
     public func start(name: String) async throws { try await send("POST", "/api/sheds/\(name)/start") }
@@ -204,4 +214,8 @@ private func decodeErrorMessage(_ data: String) -> String {
 // maintain rather than a parallel wire DTO.
 private struct ShedListWire: Decodable {
     let sheds: [Shed]?
+}
+
+private struct ImageListWire: Decodable {
+    let images: [ShedImage]?
 }

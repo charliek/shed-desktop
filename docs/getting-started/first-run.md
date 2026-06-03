@@ -10,10 +10,12 @@ and it returns to menu-bar-only, the icon staying put.
 The sidebar selects a pane:
 
 - **Sheds** — every shed across all configured hosts, grouped by host, with status, image
-  variant, backend, resource sizing, and uptime; per-shed start/stop/reset/delete + open
-  terminal. The **New shed** sheet picks a host, a source (`owner/repo` or a local dir), an
-  image variant + backend, and CPU/memory, then streams creation progress live (SSE). The
-  list is kept current by polling each `shed-server`.
+  (the ref/alias label plus a short `sha256:` digest, matching `shed list -vv`), backend,
+  resource sizing, and uptime; per-shed start/stop/reset/delete + open terminal. The **New
+  shed** sheet picks a host, a source (`owner/repo` or a local dir), an image (a dropdown of
+  the server's configured aliases, defaulting to its `default_image`) + backend, and
+  CPU/memory, then streams creation progress live (SSE). The list is kept current by polling
+  each `shed-server`.
 - **Approvals** — pending credential-approval requests from `shed-host-agent`, with
   Approve / Deny (optionally Touch ID) and "always allow". Empty unless the host agent is
   configured to delegate — see [Credential approvals](../reference/approvals.md).

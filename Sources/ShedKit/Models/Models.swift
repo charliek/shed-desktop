@@ -61,6 +61,7 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
     public var backend: String?
     public var repo: String?
     public var image: String?
+    public var imageDigest: String?
     public var localDir: String?
     public var ipAddress: String?
     public var cpus: Int?
@@ -73,6 +74,7 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case host, name, status, backend, repo, image
+        case imageDigest = "image_digest"
         case localDir = "local_dir"
         case ipAddress = "ip_address"
         case cpus
@@ -85,6 +87,7 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
     public init(
         host: String, name: String, status: ShedStatus,
         backend: String? = nil, repo: String? = nil, image: String? = nil,
+        imageDigest: String? = nil,
         localDir: String? = nil, ipAddress: String? = nil,
         cpus: Int? = nil, memoryMB: Int? = nil,
         createdAt: String? = nil, startedAt: String? = nil,
@@ -96,6 +99,7 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
         self.backend = backend
         self.repo = repo
         self.image = image
+        self.imageDigest = imageDigest
         self.localDir = localDir
         self.ipAddress = ipAddress
         self.cpus = cpus
@@ -118,6 +122,7 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
         self.backend = try c.decodeIfPresent(String.self, forKey: .backend)
         self.repo = try c.decodeIfPresent(String.self, forKey: .repo)
         self.image = try c.decodeIfPresent(String.self, forKey: .image)
+        self.imageDigest = try c.decodeIfPresent(String.self, forKey: .imageDigest)
         self.localDir = try c.decodeIfPresent(String.self, forKey: .localDir)
         self.ipAddress = try c.decodeIfPresent(String.self, forKey: .ipAddress)
         self.cpus = try c.decodeIfPresent(Int.self, forKey: .cpus)
@@ -125,6 +130,29 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
         self.createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
         self.startedAt = try c.decodeIfPresent(String.self, forKey: .startedAt)
         self.activeNamespaces = try c.decodeIfPresent([String].self, forKey: .activeNamespaces) ?? []
+    }
+
+    /// The manifest digest in shed's short `sha256:<12hex>` form, or nil.
+    /// Mirrors `vmimage.ShortDigest`: only the canonical `sha256:`-prefixed
+    /// form is shortened; anything else is returned verbatim rather than given
+    /// a synthetic prefix.
+    public var shortImageDigest: String? {
+        guard let d = imageDigest, !d.isEmpty else { return nil }
+        guard d.hasPrefix("sha256:") else { return d }
+        let hex = d.dropFirst("sha256:".count)
+        guard hex.count >= 12 else { return d }
+        return "sha256:" + hex.prefix(12)
+    }
+
+    /// The image a shed runs, rendered as `<label> (sha256:short)` — mirrors
+    /// shed's `formatShedImage` / `shed list -vv`. The label is the ref/alias
+    /// it was created from; the short digest pins the exact manifest. nil when
+    /// neither a label nor a digest is known (e.g. a not-yet-provisioned shed).
+    public var imageDisplay: String? {
+        let label = (image?.isEmpty == false) ? image : nil
+        guard let short = shortImageDigest else { return label }
+        guard let label else { return short }
+        return "\(label) (\(short))"
     }
 }
 
@@ -376,6 +404,79 @@ public struct HostDiskUsage: Codable, Sendable, Equatable, Identifiable {
     public init(host: String, usage: SystemDiskUsage? = nil, error: String? = nil) {
         self.host = host
         self.usage = usage
+        self.error = error
+    }
+}
+
+// MARK: - Images (GET /api/images)
+
+/// One installed image from `GET /api/images` (shed-server's `ImageInfo`).
+/// Decodes leniently — the picker needs only name/alias/default/cached, and
+/// pre-v0.6.1 servers omit `alias`/`is_default`.
+public struct ShedImage: Codable, Sendable, Equatable, Identifiable {
+    public var name: String
+    public var dockerRef: String?
+    public var alias: String?
+    public var isDefault: Bool
+    public var cached: Bool
+    public var inUse: Bool
+    public var digest: String?
+    public var source: String?
+    public var sizeBytes: Int64
+
+    public var id: String { digest ?? dockerRef ?? name }
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case dockerRef = "docker_ref"
+        case alias
+        case isDefault = "is_default"
+        case cached
+        case inUse = "in_use"
+        case digest
+        case source
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(
+        name: String, dockerRef: String? = nil, alias: String? = nil,
+        isDefault: Bool = false, cached: Bool = false, inUse: Bool = false,
+        digest: String? = nil, source: String? = nil, sizeBytes: Int64 = 0
+    ) {
+        self.name = name
+        self.dockerRef = dockerRef
+        self.alias = alias
+        self.isDefault = isDefault
+        self.cached = cached
+        self.inUse = inUse
+        self.digest = digest
+        self.source = source
+        self.sizeBytes = sizeBytes
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "?"
+        dockerRef = try c.decodeIfPresent(String.self, forKey: .dockerRef)
+        alias = try c.decodeIfPresent(String.self, forKey: .alias)
+        isDefault = try c.decodeIfPresent(Bool.self, forKey: .isDefault) ?? false
+        cached = try c.decodeIfPresent(Bool.self, forKey: .cached) ?? false
+        inUse = try c.decodeIfPresent(Bool.self, forKey: .inUse) ?? false
+        digest = try c.decodeIfPresent(String.self, forKey: .digest)
+        source = try c.decodeIfPresent(String.self, forKey: .source)
+        sizeBytes = try c.decodeIfPresent(Int64.self, forKey: .sizeBytes) ?? 0
+    }
+}
+
+/// One host's image list for the `images.list` op (mirrors `HostDiskUsage`).
+public struct HostImageList: Codable, Sendable, Equatable, Identifiable {
+    public var host: String
+    public var images: [ShedImage]?
+    public var error: String?
+    public var id: String { host }
+    public init(host: String, images: [ShedImage]? = nil, error: String? = nil) {
+        self.host = host
+        self.images = images
         self.error = error
     }
 }

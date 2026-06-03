@@ -220,6 +220,9 @@ final class AppModel: NSObject, UiBridge {
         state.onSystemRefresh = { [weak self] in
             Task { [weak self] in _ = await self?.refreshSystemUsage() }
         }
+        state.onImagesRefresh = { [weak self] in
+            Task { [weak self] in _ = await self?.refreshImages() }
+        }
         state.onOpenURL = { url in
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         }
@@ -297,6 +300,7 @@ final class AppModel: NSObject, UiBridge {
 
     private var inflightRefresh: Task<Void, Never>?
     private var inflightSystemRefresh: Task<Void, Never>?
+    private var inflightImageRefresh: Task<Void, Never>?
 
     /// Serialize refreshes: chain each after any in-flight one so a slow
     /// older poll can't resolve late and overwrite a newer refresh's state.
@@ -386,6 +390,38 @@ final class AppModel: NSObject, UiBridge {
         if Task.isCancelled { return }
         result.sort { $0.host < $1.host }
         state.systemUsage = result
+    }
+
+    /// Fan out `GET /api/images` to every host, publish + return the per-host
+    /// image lists. Serialized like `refreshSystemUsage` so overlapping
+    /// refreshes can't land out of order.
+    func refreshImages() async -> [HostImageList] {
+        let previous = inflightImageRefresh
+        let task = Task { [weak self] in
+            await previous?.value
+            await self?.doImageRefresh()
+        }
+        inflightImageRefresh = task
+        await task.value
+        return state.imagesByHost
+    }
+
+    private func doImageRefresh() async {
+        let clients = Array(self.clients.values)
+        var result: [HostImageList] = []
+        await withTaskGroup(of: HostImageList.self) { group in
+            for client in clients {
+                group.addTask {
+                    // Unreachable host → a row with an error, never a hard failure.
+                    do { return HostImageList(host: client.serverName, images: try await client.listImages()) }
+                    catch { return HostImageList(host: client.serverName, error: "\(error)") }
+                }
+            }
+            for await item in group { result.append(item) }
+        }
+        if Task.isCancelled { return }
+        result.sort { $0.host < $1.host }
+        state.imagesByHost = result
     }
 
     // MARK: - windows
@@ -496,6 +532,12 @@ final class AppModel: NSObject, UiBridge {
         if !ShedBackend.shared.testMode { NSApp.setActivationPolicy(.regular) }
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    func showCreateSheet() {
+        showWindow()
+        state.pane = .sheds
+        state.showCreateSheet = true
     }
 
     func setMenuOpen(_ open: Bool) {

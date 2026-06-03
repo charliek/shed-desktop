@@ -98,6 +98,9 @@ class ShedDesktop:
     def show_window(self) -> None:
         self.call("ui.show_window")
 
+    def show_create(self) -> None:
+        self.call("ui.show_create")
+
     def open_menu(self, open_: bool) -> None:
         self.call("ui.open_menu", {"open": open_})
 
@@ -116,6 +119,10 @@ class ShedDesktop:
 
     def system_df(self) -> list[dict]:
         return self.call("system.df")["usage"]
+
+    def images_list(self) -> list[dict]:
+        """Per-host image lists (`[HostImageList]`); each has host/images/error."""
+        return self.call("images.list")["images"]
 
     # -- M1: lifecycle, create, terminal ---------------------------------
     def shed_action(self, action: str, name: str, host: str | None = None) -> None:
