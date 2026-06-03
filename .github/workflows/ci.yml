@@ -30,6 +30,11 @@ jobs:
         # in-process so no screen-recording TCC grant is needed. Slower CI
         # gets a wider wait budget.
         run: SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+      - name: Real-launch smoke
+        # Non-test launch on a fresh runner (undetermined notification auth) —
+        # exercises the real SystemNotificationPresenter path the hermetic suite
+        # can't reach. Regression guard for the v0.0.2 SIGTRAP (issue #2).
+        run: ./scripts/smoke-real-launch.sh
 
   docs:
     name: docs build

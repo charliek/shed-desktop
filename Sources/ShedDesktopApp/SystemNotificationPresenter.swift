@@ -34,7 +34,18 @@ final class SystemNotificationPresenter: NSObject, NotificationPresenter, UNUser
     }
 
     func requestAuthorization() {
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        // The completion-handler overload runs this @MainActor type's closure on
+        // UserNotifications' background XPC queue → a hard SIGTRAP on first
+        // launch on macOS 26 (issue #2). Use the async overload from a DETACHED
+        // (nonisolated) task: the grant result is discarded, so nothing needs
+        // the main actor. Detaching also means we never pass the
+        // @MainActor-isolated `self.center` into the nonisolated async API,
+        // which Swift 6.0/6.1 reject as "sending risks data races" (6.2's
+        // region-based isolation allows it, which masked this locally).
+        Task.detached {
+            _ = try? await UNUserNotificationCenter.current()
+                .requestAuthorization(options: [.alert, .sound])
+        }
     }
 
     func post(_ req: ApprovalRequest) {
