@@ -13,6 +13,7 @@ public struct CreateShedSheet: View {
     @State private var name: String = ""
     @State private var repo: String = ""
     @State private var backend: String = "auto"
+    @State private var image: String = ""  // "" → the server's default_image
     @State private var cpus: String = ""
     @State private var memoryMB: String = ""
     @State private var provision = true
@@ -33,7 +34,39 @@ public struct CreateShedSheet: View {
             }
         }
         .frame(width: 460, height: 420)
-        .onAppear { if host.isEmpty { host = state.hosts.first?.name ?? "" } }
+        .onAppear {
+            if host.isEmpty { host = state.hosts.first?.name ?? "" }
+            state.onImagesRefresh?()
+        }
+        // An alias picked for one host may not exist on another; fall back to
+        // the always-valid server default when the host changes.
+        .onChange(of: host) { _, _ in image = "" }
+    }
+
+    /// Images for the currently selected host (the fan-out loads every host).
+    private var hostImages: [ShedImage] {
+        state.imagesByHost.first { $0.host == host }?.images ?? []
+    }
+
+    /// Config images with a friendly alias — the selectable presets, sorted.
+    private var imageAliases: [ShedImage] {
+        hostImages
+            .filter { ($0.alias?.isEmpty == false) }
+            .sorted { ($0.alias ?? "") < ($1.alias ?? "") }
+    }
+
+    private var defaultOptionLabel: String {
+        if let name = hostImages.first(where: { $0.isDefault })?.alias, !name.isEmpty {
+            return "Server default (\(name))"
+        }
+        return "Server default"
+    }
+
+    private func aliasLabel(_ img: ShedImage) -> String {
+        var s = img.alias ?? img.name
+        if img.isDefault { s += " · default" }
+        if !img.cached { s += " · not pulled" }
+        return s
     }
 
     private var form: some View {
@@ -48,6 +81,12 @@ public struct CreateShedSheet: View {
                     Text("auto").tag("auto")
                     Text("vz").tag("vz")
                     Text("firecracker").tag("firecracker")
+                }
+                Picker("Image", selection: $image) {
+                    Text(defaultOptionLabel).tag("")
+                    ForEach(imageAliases) { img in
+                        Text(aliasLabel(img)).tag(img.alias ?? "")
+                    }
                 }
                 HStack {
                     TextField("CPUs", text: $cpus).textFieldStyle(.roundedBorder).frame(width: 80)
@@ -112,6 +151,7 @@ public struct CreateShedSheet: View {
         let request = CreateShedRequest(
             name: name.trimmingCharacters(in: .whitespaces),
             repo: repo.isEmpty ? nil : repo,
+            image: image.isEmpty ? nil : image,
             backend: backend == "auto" ? nil : backend,
             cpus: Int(cpus),
             memoryMB: Int(memoryMB),

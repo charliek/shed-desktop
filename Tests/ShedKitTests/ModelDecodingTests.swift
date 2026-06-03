@@ -23,6 +23,53 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(shed.activeNamespaces, [])  // absent -> empty
     }
 
+    func testShedImageDisplayLabelAndDigest() throws {
+        // A shed created from an alias carries both a label and a pinned digest.
+        let json = """
+        {"name":"x","status":"running","image":"full",
+         "image_digest":"sha256:2d9669bcf0cd25ef7dc0638dc72c7380c716e3e9d336c5d234ffa4888f28713a"}
+        """
+        let shed = try JSONDecoder().decode(Shed.self, from: Data(json.utf8))
+        XCTAssertEqual(shed.imageDigest, "sha256:2d9669bcf0cd25ef7dc0638dc72c7380c716e3e9d336c5d234ffa4888f28713a")
+        XCTAssertEqual(shed.shortImageDigest, "sha256:2d9669bcf0cd")
+        XCTAssertEqual(shed.imageDisplay, "full (sha256:2d9669bcf0cd)")
+    }
+
+    func testShedImageDisplayDigestOnly() throws {
+        // The v0.6.0 default-image case: no `image`, only `image_digest`.
+        let json = #"{"name":"x","status":"running","image_digest":"sha256:abcdef0123456789aa"}"#
+        let shed = try JSONDecoder().decode(Shed.self, from: Data(json.utf8))
+        XCTAssertNil(shed.image)
+        XCTAssertEqual(shed.imageDisplay, "sha256:abcdef012345")
+    }
+
+    func testShedImageDisplayNilWhenNeither() throws {
+        let shed = try JSONDecoder().decode(Shed.self, from: Data(#"{"name":"x","status":"running"}"#.utf8))
+        XCTAssertNil(shed.imageDisplay)
+    }
+
+    func testShedImageDecodesEnrichedFields() throws {
+        let json = """
+        {"name":"ghcr.io/x/base:v1","docker_ref":"ghcr.io/x/base:v1","alias":"base",
+         "is_default":true,"cached":true,"in_use":false,"source":"config",
+         "digest":"sha256:aa11","size_bytes":1073741824}
+        """
+        let img = try JSONDecoder().decode(ShedImage.self, from: Data(json.utf8))
+        XCTAssertEqual(img.alias, "base")
+        XCTAssertTrue(img.isDefault)
+        XCTAssertTrue(img.cached)
+        XCTAssertEqual(img.dockerRef, "ghcr.io/x/base:v1")
+        XCTAssertEqual(img.sizeBytes, 1073741824)
+    }
+
+    func testShedImageLenientForPreV061Server() throws {
+        // Older server: no alias / is_default — must default cleanly, not throw.
+        let img = try JSONDecoder().decode(ShedImage.self, from: Data(#"{"name":"base","source":"config","cached":true}"#.utf8))
+        XCTAssertNil(img.alias)
+        XCTAssertFalse(img.isDefault)
+        XCTAssertTrue(img.cached)
+    }
+
     func testShedListNullDecodesToEmpty() throws {
         struct Wrapper: Decodable { let sheds: [Shed]? }
         let w = try JSONDecoder().decode(Wrapper.self, from: Data(#"{"sheds": null}"#.utf8))

@@ -42,6 +42,10 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await showWindowOp()
             return emptyResult
+        case "ui.show_create":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await showCreateSheetOp()
+            return emptyResult
         case "ui.open_preferences":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await openPreferencesOp()
@@ -63,6 +67,9 @@ actor IPCHandlerImpl: IPCHandler {
         case "system.df":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(systemDFOp())
+        case "images.list":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(imagesListOp())
         case "shed.start", "shed.stop", "shed.reset", "shed.delete":
             guard let action = ShedAction(rawValue: String(op.dropFirst("shed.".count))) else {
                 throw IPCHandlerError.unknownOp(op)
@@ -156,6 +163,7 @@ actor IPCHandlerImpl: IPCHandler {
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
     @MainActor private func uiStateOp() throws -> UIState { try uiBridge().uiState() }
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
+    @MainActor private func showCreateSheetOp() throws { try uiBridge().showCreateSheet() }
     @MainActor private func openPreferencesOp() throws { try uiBridge().openPreferences() }
     @MainActor private func openMenuOp(_ open: Bool) throws { try uiBridge().setMenuOpen(open) }
     @MainActor private func hostListOp() throws -> HostListResult { HostListResult(hosts: try uiBridge().uiState().hosts) }
@@ -166,6 +174,10 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func systemDFOp() async throws -> SystemUsageResult {
         SystemUsageResult(usage: try await uiBridge().refreshSystemUsage())
+    }
+
+    @MainActor private func imagesListOp() async throws -> ImagesListResult {
+        ImagesListResult(images: try await uiBridge().refreshImages())
     }
 
     @MainActor private func shedActionOp(_ action: ShedAction, host: String?, name: String) async throws {
@@ -425,6 +437,7 @@ private struct IdentifyResult: Encodable, Sendable {
 private struct HostListResult: Encodable, Sendable { let hosts: [ShedHost] }
 private struct ShedListResult: Encodable, Sendable { let sheds: [Shed] }
 private struct SystemUsageResult: Encodable, Sendable { let usage: [HostDiskUsage] }
+private struct ImagesListResult: Encodable, Sendable { let images: [HostImageList] }
 
 // MARK: - decode/encode helpers (ported from roost)
 

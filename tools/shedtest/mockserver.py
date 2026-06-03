@@ -35,6 +35,28 @@ _DF_FIXTURE = {
 }
 
 
+# GET /api/images (v0.6.1 shape): a default+aliased image, two more aliases
+# (one uncached → "not pulled"), and an unnamed user-pulled blob the picker
+# should ignore (no alias).
+_IMAGES_FIXTURE = {
+    "images": [
+        {"name": "ghcr.io/x/shed-vz-full:v0.6.0", "docker_ref": "ghcr.io/x/shed-vz-full:v0.6.0",
+         "alias": "full", "is_default": True, "cached": True, "source": "config",
+         "digest": "sha256:2d9669bcf0cd25ef7dc0638dc72c7380c716e3e9d336c5d234ffa4888f28713a",
+         "size_bytes": 2 * _GiB},
+        {"name": "ghcr.io/x/shed-vz-base:v0.6.0", "docker_ref": "ghcr.io/x/shed-vz-base:v0.6.0",
+         "alias": "base", "cached": True, "source": "config",
+         "digest": "sha256:aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44",
+         "size_bytes": _GiB},
+        {"name": "ghcr.io/x/shed-vz-extensions:v0.6.0", "docker_ref": "ghcr.io/x/shed-vz-extensions:v0.6.0",
+         "alias": "extensions", "cached": False, "source": "config", "size_bytes": 0},
+        {"name": "sha256:ff8800", "cached": True, "source": "dangling",
+         "digest": "sha256:ff8800aa11bb22cc33dd44ee55ff66aa11bb22cc33dd44ee55ff66aa11bb22cc",
+         "size_bytes": _GiB // 2},
+    ]
+}
+
+
 DEFAULT_INFO = {
     "name": "mock",
     "version": "0.0.0-mock",
@@ -54,12 +76,17 @@ DEFAULT_SHEDS = [
         "cpus": 2,
         "memory_mb": 4096,
         "started_at": "2026-05-31T18:33:02.364547927Z",
+        # Created from an aliased image → label + digest (the `<label> (sha256:short)` path).
+        "image": "full",
+        "image_digest": "sha256:2d9669bcf0cd25ef7dc0638dc72c7380c716e3e9d336c5d234ffa4888f28713a",
     },
     {
         "name": "callbell",
         "status": "stopped",
         "backend": "vz",
-        "image": "base",
+        # Created from the server default → no `image`, only `image_digest`
+        # (the common v0.6.0 shape: the badge falls back to the short digest).
+        "image_digest": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
     },
 ]
 
@@ -76,6 +103,9 @@ class MockShedServer:
         # Create-stream controls.
         self.create_should_fail = False
         self.create_progress = ["resolving image", "starting VM", "provisioning workspace"]
+        # The body of the most recent POST /api/sheds, so a test can assert
+        # the image picker's chosen alias reached the create request.
+        self.last_create_body: dict | None = None
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
 
@@ -101,6 +131,11 @@ class MockShedServer:
             self.info = dict(DEFAULT_INFO)
             self.sheds = [dict(s) for s in DEFAULT_SHEDS]
             self.create_should_fail = False
+            self.last_create_body = None
+
+    def last_create(self) -> dict | None:
+        with self._lock:
+            return None if self.last_create_body is None else dict(self.last_create_body)
 
     def shed(self, name: str) -> dict | None:
         with self._lock:
@@ -161,6 +196,8 @@ class MockShedServer:
                     self._send(200, {"sheds": sheds})
                 elif self.path == "/api/system/df":
                     self._send(200, _DF_FIXTURE)
+                elif self.path == "/api/images":
+                    self._send(200, _IMAGES_FIXTURE)
                 else:
                     self._send(404, {"error": "not found"})
 
@@ -187,6 +224,8 @@ class MockShedServer:
 
             def _create(self):
                 body = self._body()
+                with state._lock:
+                    state.last_create_body = dict(body)
                 name = body.get("name", "new-shed")
                 # Stream SSE progress, then a complete (or error) event.
                 self.send_response(200)
@@ -212,6 +251,8 @@ class MockShedServer:
                 }
                 if body.get("repo"):
                     shed["repo"] = body["repo"]
+                if body.get("image"):
+                    shed["image"] = body["image"]
                 state._add(shed)
                 frame("complete", shed)
 
