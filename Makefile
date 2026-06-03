@@ -46,6 +46,9 @@ e2e-ci: bundle  ## E2E at CI parity: fresh, test-mode, hermetic mock server
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh
 
+smoke-real-launch: bundle  ## Non-test launch survival check (real notification path, issue #2)
+	./scripts/smoke-real-launch.sh
+
 # ---- docs -------------------------------------------------------------
 
 .PHONY: docs docs-serve
