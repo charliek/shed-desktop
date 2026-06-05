@@ -34,6 +34,10 @@ class FakeHostAgent:
         self._hello_seen = threading.Event()
         self._thread: threading.Thread | None = None
         self._running = False
+        # Which namespaces the agent delegates to shed-desktop (advertised in
+        # hello_ack). Default to all three so the app shows every approval
+        # prefs section. Set before the app connects to change it.
+        self.gate_namespaces = ["ssh-agent", "aws-credentials", "docker-credentials"]
 
     # -- lifecycle --------------------------------------------------------
     def start(self) -> None:
@@ -85,10 +89,10 @@ class FakeHostAgent:
         t = msg.get("type")
         if t == "hello":
             ack = {
-                "v": 1, "type": "hello_ack", "id": str(uuid.uuid4()), "ts": _now_iso(),
+                "v": 2, "type": "hello_ack", "id": str(uuid.uuid4()), "ts": _now_iso(),
                 "agent": {"version": "fake", "approval_method": "shed-desktop"},
                 "namespaces": ["ssh-agent", "aws-credentials", "docker-credentials"],
-                "gate_namespaces": ["ssh-agent"],
+                "gate_namespaces": list(self.gate_namespaces),
                 "request_timeout_ms": 25000, "accepted": True,
             }
             self._send(conn, ack)
@@ -121,7 +125,7 @@ class FakeHostAgent:
         rid = request_id or str(uuid.uuid4())
         expires = (datetime.now(timezone.utc) + timedelta(seconds=expires_in_s)).strftime("%Y-%m-%dT%H:%M:%SZ")
         frame = {
-            "v": 1, "type": "approval_request", "id": rid, "ts": _now_iso(),
+            "v": 2, "type": "approval_request", "id": rid, "ts": _now_iso(),
             "namespace": namespace, "op": op, "shed": shed, "detail": detail,
             "expires_at": expires,
         }
@@ -134,7 +138,7 @@ class FakeHostAgent:
     def emit_event(self, namespace: str, op: str, shed: str, result: str = "ok",
                    detail: str = "", approval: str = "none", server: str = "") -> None:
         frame = {
-            "v": 1, "type": "event", "id": str(uuid.uuid4()), "ts": _now_iso(),
+            "v": 2, "type": "event", "id": str(uuid.uuid4()), "ts": _now_iso(),
             "kind": "audit", "ns": namespace, "op": op, "shed": shed,
             "result": result, "detail": detail, "approval": approval,
         }

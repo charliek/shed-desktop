@@ -116,7 +116,7 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(approvalsListOp())
         case "approval.decide":
-            let p = try decodeParams(params, as: ApprovalDecideParams.self, expected: ["id", "decision", "grant_session", "always"])
+            let p = try decodeParams(params, as: ApprovalDecideParams.self, expected: ["id", "decision", "scope", "ttl", "persist"])
             try await approvalDecideOp(p)
             return emptyResult
         case "activity.list":
@@ -226,7 +226,7 @@ actor IPCHandlerImpl: IPCHandler {
     }
 
     @MainActor private func approvalDecideOp(_ p: ApprovalDecideParams) async throws {
-        try await uiBridge().decideApproval(id: p.id, decision: p.decision, grantSession: p.grantSession, always: p.always)
+        try await uiBridge().decideApproval(id: p.id, choice: ApprovalChoice(decision: p.decision, scope: p.scope, ttl: p.ttl, persist: p.persist))
     }
 
     @MainActor private func activityListOp(limit: Int) throws -> ActivityListResult {
@@ -377,18 +377,17 @@ private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let u
 private struct ApprovalDecideParams: Decodable {
     let id: String
     let decision: ApprovalDecision
-    let grantSession: Bool
-    let always: Bool
-    enum CodingKeys: String, CodingKey {
-        case id, decision, always
-        case grantSession = "grant_session"
-    }
+    let scope: ApprovalScope?
+    let ttl: String?
+    let persist: Bool
+    enum CodingKeys: String, CodingKey { case id, decision, scope, ttl, persist }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.id = try c.decode(String.self, forKey: .id)
         self.decision = try c.decode(ApprovalDecision.self, forKey: .decision)
-        self.grantSession = try c.decodeIfPresent(Bool.self, forKey: .grantSession) ?? false
-        self.always = try c.decodeIfPresent(Bool.self, forKey: .always) ?? false
+        self.scope = try c.decodeIfPresent(ApprovalScope.self, forKey: .scope)
+        self.ttl = try c.decodeIfPresent(String.self, forKey: .ttl)
+        self.persist = try c.decodeIfPresent(Bool.self, forKey: .persist) ?? false
     }
 }
 
@@ -406,7 +405,7 @@ private struct PolicyListResult: Encodable, Sendable { let rules: [PolicyRule] }
 
 private struct NotificationInvokeParams: Decodable { let id: String; let action: ApprovalDecision }
 
-private struct ApprovalListResult: Encodable, Sendable { let approvals: [ApprovalRequest] }
+private struct ApprovalListResult: Encodable, Sendable { let approvals: [PendingApprovalItem] }
 private struct ActivityListResult: Encodable, Sendable { let entries: [AuditEntry] }
 private struct AuditLogPathResult: Encodable, Sendable { let path: String }
 private struct NotificationListResult: Encodable, Sendable { let notifications: [PostedNotification] }

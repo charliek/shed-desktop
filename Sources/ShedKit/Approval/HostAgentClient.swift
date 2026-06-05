@@ -71,10 +71,10 @@ public final class HostAgentClient: @unchecked Sendable {
 
     /// Send an approve/deny for a request. No-op (→ host fails closed) if
     /// not currently connected.
-    public func respond(requestID: String, decision: ApprovalDecision, decidedBy: DecidedBy) {
+    public func respond(requestID: String, decision: ApprovalDecision, decidedBy: DecidedBy, scope: String? = nil, ttl: String? = nil) {
         guard let data = try? HostAgentProtocol.approvalResponse(
             id: UUID().uuidString, ts: DateFormatting.nowISO8601(), requestID: requestID,
-            decision: decision, decidedBy: decidedBy) else { return }
+            decision: decision, decidedBy: decidedBy, scope: scope, ttl: ttl) else { return }
         writeLine(data)
     }
 

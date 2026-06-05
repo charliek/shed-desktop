@@ -43,7 +43,8 @@ public struct MenuBarContentView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("\(state.approvals.count) pending approval\(state.approvals.count == 1 ? "" : "s")")
                         .font(.system(size: 11, weight: .medium)).foregroundStyle(.red)
-                    ForEach(state.approvals.prefix(3)) { req in
+                    ForEach(state.approvals.prefix(3)) { item in
+                        let req = item.request
                         HStack(spacing: 8) {
                             NamespaceIcon(req.namespace).scaleEffect(0.8)
                             VStack(alignment: .leading, spacing: 1) {
@@ -51,9 +52,11 @@ public struct MenuBarContentView: View {
                                 Text(req.qualifiedShed).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button { state.onApprovalDecide?(req, .approve, false) } label: { Image(systemName: "touchid") }
-                                .buttonStyle(.borderless).foregroundStyle(.green)
-                            Button { state.onApprovalDecide?(req, .deny, false) } label: { Image(systemName: "xmark") }
+                            Button { state.onApprovalDecide?(req, ApprovalChoice(decision: .approve, scope: item.defaultScope, ttl: item.defaultTTL)) } label: {
+                                Image(systemName: item.gate.isBiometric ? "touchid" : "checkmark")
+                            }
+                            .buttonStyle(.borderless).foregroundStyle(.green)
+                            Button { state.onApprovalDecide?(req, ApprovalChoice(decision: .deny)) } label: { Image(systemName: "xmark") }
                                 .buttonStyle(.borderless).foregroundStyle(.red)
                         }
                     }

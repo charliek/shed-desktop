@@ -55,8 +55,9 @@ def test_policy_auto_deny(shed, fake):
 def test_session_grant_auto_approves_next(shed, fake):
     rid1 = fake.emit_request("ssh-agent", "sign", "grant-shed")
     shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
-    shed.approval_decide(rid1, "approve", grant_session=True)
-    assert fake.wait_response(rid1)["decision"] == "approve"
+    shed.approval_decide(rid1, "approve", scope="per-session", ttl="1h")
+    r1 = fake.wait_response(rid1)
+    assert r1["decision"] == "approve" and r1.get("scope") == "per-session" and r1.get("ttl") == "1h"
     # A second request for the same namespace+shed is auto-approved by the grant.
     rid2 = fake.emit_request("ssh-agent", "sign", "grant-shed")
     resp2 = fake.wait_response(rid2)
@@ -83,8 +84,9 @@ def test_always_allow_persists_per_shed_rule(shed, fake):
     # next request for that shed is auto-approved by policy (no prompt).
     rid1 = fake.emit_request("ssh-agent", "sign", "always-shed", "ssh-ed25519")
     shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
-    shed.approval_decide(rid1, "approve", always=True)
-    assert fake.wait_response(rid1)["decision"] == "approve"
+    shed.approval_decide(rid1, "approve", persist=True)
+    r1 = fake.wait_response(rid1)
+    assert r1["decision"] == "approve" and r1.get("scope") == "always"
     assert any(r.get("scope") == "shed" and r.get("shed") == "always-shed" and r.get("action") == "approve"
                for r in shed.policy_list())
     rid2 = fake.emit_request("ssh-agent", "sign", "always-shed")
@@ -123,11 +125,48 @@ def test_notification_not_posted_for_auto_policy(shed, fake):
     assert all(n["id"] != rid for n in shed.notifications_list())
 
 
+def test_always_deny_persists_per_shed_rule(shed, fake):
+    # "Always deny" denies now AND installs a per-shed deny rule, so the next
+    # request for that shed is auto-denied by policy (no prompt).
+    rid1 = fake.emit_request("ssh-agent", "sign", "deny-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
+    shed.approval_decide(rid1, "deny", persist=True)
+    assert fake.wait_response(rid1)["decision"] == "deny"
+    assert any(r.get("scope") == "shed" and r.get("shed") == "deny-shed" and r.get("action") == "deny"
+               for r in shed.policy_list())
+    rid2 = fake.emit_request("ssh-agent", "sign", "deny-shed")
+    resp2 = fake.wait_response(rid2)
+    assert resp2 and resp2["decision"] == "deny" and resp2["decided_by"] == "policy"
+    assert rid2 not in _pending_ids(shed)
+
+
+def test_pending_item_exposes_gate_and_defaults(shed, fake):
+    # The pending item carries the decided gate (which drives the fingerprint
+    # icon) plus the SSH scope/TTL defaults the card pre-fills — observable over
+    # IPC, so the no-fingerprint-for-prompt path is assertable without pixels.
+    shed.policy_set([{"scope": "default", "action": "prompt", "gate": "none"}])
+    rid = fake.emit_request("ssh-agent", "sign", "gate-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid in _pending_ids(shed), what="request queued")
+    item = next(a for a in shed.approvals_list() if a["id"] == rid)
+    # gate "none" → the card shows a plain Approve (no Touch ID / fingerprint).
+    assert item["gate"] == "none"
+    assert "default_scope" in item and "default_ttl" in item
+    shed.approval_decide(rid, "approve")
+
+    # A biometric gate is surfaced too.
+    shed.policy_set([{"scope": "default", "action": "prompt", "gate": "biometrics-or-password"}])
+    rid2 = fake.emit_request("ssh-agent", "sign", "gate-shed2", "ssh-ed25519")
+    shed.wait_until(lambda: rid2 in _pending_ids(shed), what="request queued")
+    item2 = next(a for a in shed.approvals_list() if a["id"] == rid2)
+    assert item2["gate"] == "biometrics-or-password"
+    shed.approval_decide(rid2, "approve")
+
+
 def test_per_server_shed_isolation(shed, fake):
     # #21: a per-(server,shed) rule applies only to its own server, even when
     # the shed name is identical on another server.
     shed.policy_set([
-        {"scope": "default", "action": "prompt", "gate": "touchid"},
+        {"scope": "default", "action": "prompt", "gate": "biometrics-or-password"},
         {"scope": "shed", "server": "mini3", "shed": "dual", "action": "approve", "gate": "none"},
     ])
     rid_a = fake.emit_request("ssh-agent", "sign", "dual", server="mini3")

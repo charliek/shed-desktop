@@ -182,9 +182,14 @@ class ShedDesktop:
     def approvals_list(self) -> list[dict]:
         return self.call("approvals.list")["approvals"]
 
-    def approval_decide(self, id: str, decision: str, grant_session: bool = False, always: bool = False) -> None:
-        self.call("approval.decide",
-                  {"id": id, "decision": decision, "grant_session": grant_session, "always": always})
+    def approval_decide(self, id: str, decision: str, scope: str | None = None,
+                        ttl: str | None = None, persist: bool = False) -> None:
+        params: dict = {"id": id, "decision": decision, "persist": persist}
+        if scope is not None:
+            params["scope"] = scope
+        if ttl is not None:
+            params["ttl"] = ttl
+        self.call("approval.decide", params)
 
     def activity_list(self, limit: int = 200) -> list[dict]:
         return self.call("activity.list", {"limit": limit})["entries"]

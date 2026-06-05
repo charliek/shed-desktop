@@ -85,10 +85,10 @@ public protocol UiBridge: AnyObject {
 
     // MARK: - M3: credential approvals + activity
 
-    func approvalsList() -> [ApprovalRequest]
-    /// Resolve a pending approval. `grantSession` adds a 4h session grant;
-    /// `always` persists a per-(server,shed) approve rule ("always allow").
-    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool, always: Bool) async throws
+    func approvalsList() -> [PendingApprovalItem]
+    /// Resolve a pending approval. `choice` carries the SSH scope/TTL and whether
+    /// to persist a per-shed rule (always-allow / always-deny).
+    func decideApproval(id: String, choice: ApprovalChoice) async throws
     func activityList(limit: Int) -> [AuditEntry]
     /// Filesystem path of the append-only audit log (FR-6 export).
     func auditLogPath() -> String

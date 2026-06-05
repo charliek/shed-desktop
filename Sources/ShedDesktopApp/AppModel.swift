@@ -97,9 +97,15 @@ final class AppModel: NSObject, UiBridge {
         let testMode = ShedBackend.shared.testMode
         prefs.launchAtLogin = testMode ? false : LoginItem.isEnabled
         prefs.terminalTemplate = prefsStore.terminalTemplate
-        prefs.defaultApprovalMode = prefsStore.defaultApprovalMode
-        // Apply the stored default mode + persisted per-namespace/per-shed rules.
-        extraRules = prefsStore.policyRules
+        prefs.sshMethod = prefsStore.sshMethod
+        prefs.sshScope = prefsStore.sshScope
+        prefs.sshTTL = prefsStore.sshTTL
+        prefs.awsMode = prefsStore.providerMode("aws-credentials")
+        prefs.dockerMode = prefsStore.providerMode("docker-credentials")
+        // Apply the per-provider settings + persisted per-shed rules. Only
+        // per-shed rules are persisted now; drop any legacy namespace-scope rules
+        // from the old model (clean break, no migration).
+        extraRules = prefsStore.policyRules.filter { $0.scope == .shed }
         rebuildPolicy()
         publishPolicyPrefs()
 
@@ -123,19 +129,33 @@ final class AppModel: NSObject, UiBridge {
         prefs.onTerminalTemplate = { [weak self] template in
             self?.prefsStore.terminalTemplate = template
         }
-        prefs.onDefaultMode = { [weak self] mode in
+        prefs.onSSHMethod = { [weak self] m in
             guard let self else { return }
-            self.prefsStore.defaultApprovalMode = mode
+            self.prefsStore.sshMethod = m
             self.rebuildPolicy()
         }
-        prefs.onNamespaceMode = { [weak self] ns, mode in self?.setNamespaceMode(ns, mode: mode) }
+        prefs.onSSHScope = { [weak self] s in self?.prefsStore.sshScope = s }
+        prefs.onSSHTTL = { [weak self] t in self?.prefsStore.sshTTL = t }
+        prefs.onProviderMode = { [weak self] ns, mode in self?.setProviderMode(ns, mode) }
         prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
     }
 
-    // MARK: - policy rules (default + per-namespace + per-shed)
+    // MARK: - policy rules (per-provider namespace rules + per-shed overrides)
 
     private func rebuildPolicy() {
-        policyEngine = PolicyEngine(rules: [prefsStore.defaultApprovalMode.rule] + extraRules)
+        // One namespace rule per provider, derived from the per-provider prefs:
+        // SSH prompts with the chosen method; AWS/Docker apply their live mode.
+        let rules: [PolicyRule] = [
+            PolicyRule(scope: .namespace, namespace: "ssh-agent", action: .prompt, gate: prefsStore.sshMethod.gate),
+            PolicyRule(scope: .namespace, namespace: "aws-credentials", action: prefsStore.providerMode("aws-credentials").policyAction, gate: .none),
+            PolicyRule(scope: .namespace, namespace: "docker-credentials", action: prefsStore.providerMode("docker-credentials").policyAction, gate: .none),
+        ]
+        policyEngine = PolicyEngine(rules: rules + extraRules)
+    }
+
+    private func setProviderMode(_ ns: String, _ mode: ApprovalDecision) {
+        prefsStore.setProviderMode(ns, mode)
+        rebuildPolicy()
     }
 
     private func persistAndRebuild() {
@@ -144,35 +164,24 @@ final class AppModel: NSObject, UiBridge {
         publishPolicyPrefs()
     }
 
-    /// Mirror the current extra rules into the preferences view-model.
+    /// Mirror the per-shed rules into the preferences view-model.
     private func publishPolicyPrefs() {
-        var modes: [String: ApprovalMode] = [:]
-        for r in extraRules where r.scope == .namespace {
-            if let ns = r.namespace, let m = ApprovalMode(action: r.action, gate: r.gate) { modes[ns] = m }
-        }
-        prefs.namespaceModes = modes
         prefs.shedRules = extraRules
             .filter { $0.scope == .shed }
-            .map { ShedRuleRow(server: $0.server ?? "", shed: $0.shed ?? "") }
+            .map { ShedRuleRow(server: $0.server ?? "", shed: $0.shed ?? "", action: $0.action == .deny ? .deny : .approve) }
     }
 
-    private func addShedRule(server: String, shed: String) {
+    private func addShedRule(server: String, shed: String, action: ApprovalDecision) {
         // Store the server verbatim ("" = the single/unnamed server) rather than
         // collapsing "" → nil: nil is reserved for an explicit any-server rule,
         // so a single-server grant never silently widens to other servers.
         extraRules.removeAll { $0.scope == .shed && $0.shed == shed && ($0.server ?? "") == server }
-        extraRules.append(PolicyRule(scope: .shed, server: server, shed: shed, action: .approve, gate: .none))
+        extraRules.append(PolicyRule(scope: .shed, server: server, shed: shed, action: action.policyAction, gate: .none))
         persistAndRebuild()
     }
 
     private func removeShedRule(server: String, shed: String) {
         extraRules.removeAll { $0.scope == .shed && $0.shed == shed && ($0.server ?? "") == server }
-        persistAndRebuild()
-    }
-
-    private func setNamespaceMode(_ ns: String, mode: ApprovalMode?) {
-        extraRules.removeAll { $0.scope == .namespace && $0.namespace == ns }
-        if let mode { extraRules.append(mode.rule(forNamespace: ns)) }
         persistAndRebuild()
     }
 
@@ -226,18 +235,11 @@ final class AppModel: NSObject, UiBridge {
         state.onOpenURL = { url in
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         }
-        state.onApprovalDecide = { [weak self] req, decision, grant in
+        state.onApprovalDecide = { [weak self] req, choice in
             Task { [weak self] in
                 guard let self else { return }
-                do { try await self.decideApproval(id: req.id, decision: decision, grantSession: grant, always: false) }
+                do { try await self.decideApproval(id: req.id, choice: choice) }
                 catch { self.state.lastError = "approval \(req.id): \(error)" }
-            }
-        }
-        state.onApprovalAlwaysAllow = { [weak self] req in
-            Task { [weak self] in
-                guard let self else { return }
-                do { try await self.decideApproval(id: req.id, decision: .approve, grantSession: false, always: true) }
-                catch { self.state.lastError = "always-allow \(req.id): \(error)" }
             }
         }
         state.onRevealAuditLog = { [weak self] in
@@ -821,7 +823,7 @@ final class AppModel: NSObject, UiBridge {
             ? FakeNotificationPresenter() : SystemNotificationPresenter()
         notifier.onAction = { [weak self] id, decision in
             // Already on the main actor (the presenter is @MainActor).
-            Task { [weak self] in try? await self?.decideApproval(id: id, decision: decision, grantSession: false) }
+            Task { [weak self] in try? await self?.decideApproval(id: id, choice: ApprovalChoice(decision: decision)) }
         }
         if !ShedBackend.shared.testMode { notifier.requestAuthorization() }
         self.notifier = notifier
@@ -845,8 +847,10 @@ final class AppModel: NSObject, UiBridge {
 
     private func handleHostAgentEvent(_ event: HostAgentEvent) {
         switch event {
-        case .connected:
+        case .connected(let ack):
             state.hostAgentConnected = true
+            // Show the approval prefs only for the providers the agent delegates.
+            prefs.gatedNamespaces = ack.gateNamespaces
         case .disconnected:
             state.hostAgentConnected = false
             // In-flight requests are dead: the agent fails closed on its side
@@ -878,29 +882,43 @@ final class AppModel: NSObject, UiBridge {
         }
     }
 
-    func decideApproval(id: String, decision: ApprovalDecision, grantSession: Bool, always: Bool = false) async throws {
+    func decideApproval(id: String, choice: ApprovalChoice) async throws {
         guard let item = pending[id] else { throw IPCHandlerError.notFound("no pending approval \(id)") }
         let req = item.request
+        let decision = choice.decision
         var decidedBy: DecidedBy = .user
-        if decision == .approve, item.gate == .touchid, !ShedBackend.shared.testMode {
-            let ok = await TouchID.authenticate(reason: "Approve \(req.namespace) \(req.op) for shed \(req.shed)")
+        if decision == .approve, item.gate.isBiometric, !ShedBackend.shared.testMode {
+            let ok = await TouchID.authenticate(
+                reason: "Approve \(req.namespace) \(req.op) for shed \(req.shed)",
+                biometricsOnly: item.gate == .biometrics)
             guard ok else {
                 state.lastError = "Touch ID not confirmed for \(req.shed)"
                 return  // stay pending; user can retry or it expires
             }
-            // The request may have expired (and been denied) while the
-            // biometric prompt was up — don't send a late, contradictory
-            // approve or grant a session for a dead request.
+            // The request may have expired (and been denied) while the biometric
+            // prompt was up — don't send a late, contradictory decision.
             guard pending[id] != nil else { return }
             decidedBy = .touchid
         }
-        if decision == .approve, always {
-            // "Always allow" — persist a per-(server,shed) approve rule.
-            addShedRule(server: req.server, shed: req.shed)
-        } else if grantSession, decision == .approve {
-            sessionGrants[SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)] = Date().addingTimeInterval(grantTTL)
+
+        // Persistence / grant + the scope/ttl we report to the host for its audit.
+        var sentScope = choice.scope?.rawValue ?? "per-request"
+        var sentTTL = ""
+        var policyLabel = "manual"
+        if choice.persist {
+            // Always-allow (approve) or always-deny (deny) — a per-shed rule.
+            addShedRule(server: req.server, shed: req.shed, action: decision)
+            sentScope = "always"
+            policyLabel = decision == .approve ? "shed-rule" : "deny-rule"
+        } else if decision == .approve, let scope = choice.scope, scope != .perRequest {
+            let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
+            sessionGrants[SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)] =
+                Date().addingTimeInterval(TimeInterval(secs))
+            sentTTL = choice.ttl ?? ""
+            policyLabel = "session-grant"
         }
-        respondAndAudit(req, decision, decidedBy: decidedBy, policy: always ? "shed-rule" : (grantSession ? "session-grant" : "manual"))
+
+        respondAndAudit(req, decision, decidedBy: decidedBy, policy: policyLabel, scope: sentScope, ttl: sentTTL)
         pending[id] = nil
         notifier?.withdraw(id: id)
         publishApprovals()
@@ -917,7 +935,7 @@ final class AppModel: NSObject, UiBridge {
         if !expired.isEmpty { publishApprovals() }
     }
 
-    private func respondAndAudit(_ req: ApprovalRequest, _ decision: ApprovalDecision, decidedBy: DecidedBy, policy: String) {
+    private func respondAndAudit(_ req: ApprovalRequest, _ decision: ApprovalDecision, decidedBy: DecidedBy, policy: String, scope: String = "", ttl: String = "") {
         // Record the decision before transmitting it, so there's always an
         // app-side trail for an approve we sent.
         auditStore?.append(AuditEntry(
@@ -925,7 +943,9 @@ final class AppModel: NSObject, UiBridge {
             shed: req.shed, ns: req.namespace, op: req.op,
             result: decision == .approve ? "ok" : "denied", detail: req.detail, approval: "shed-desktop", policy: policy))
         publishActivity()
-        hostAgent?.respond(requestID: req.id, decision: decision, decidedBy: decidedBy)
+        // Report scope/ttl to the host so its durable audit records how we decided.
+        hostAgent?.respond(requestID: req.id, decision: decision, decidedBy: decidedBy,
+                           scope: scope.isEmpty ? nil : scope, ttl: ttl.isEmpty ? nil : ttl)
     }
 
     private func ingestEvent(_ evt: AuditEventFrame) {
@@ -944,8 +964,15 @@ final class AppModel: NSObject, UiBridge {
         pending.values.map(\.request).sorted { $0.expiresAt < $1.expiresAt }
     }
 
+    /// Pending requests as UI items: each carries its decided gate (for the
+    /// fingerprint icon) + the SSH scope/TTL defaults to pre-fill the card.
+    private var sortedItems: [PendingApprovalItem] {
+        pending.values.sorted { $0.request.expiresAt < $1.request.expiresAt }
+            .map { PendingApprovalItem(request: $0.request, gate: $0.gate, defaultScope: prefsStore.sshScope, defaultTTL: prefsStore.sshTTL) }
+    }
+
     private func publishApprovals() {
-        state.approvals = sortedPending
+        state.approvals = sortedItems
     }
 
     private func publishActivity() {
@@ -954,7 +981,7 @@ final class AppModel: NSObject, UiBridge {
 
     // MARK: - UiBridge (M3)
 
-    func approvalsList() -> [ApprovalRequest] { sortedPending }
+    func approvalsList() -> [PendingApprovalItem] { sortedItems }
 
     func activityList(limit: Int) -> [AuditEntry] {
         auditStore?.recent(limit: limit) ?? []

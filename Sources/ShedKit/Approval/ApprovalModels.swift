@@ -55,6 +55,9 @@ public struct ApprovalRequest: Codable, Sendable, Equatable, Identifiable {
 
 public enum ApprovalDecision: String, Codable, Sendable {
     case approve, deny
+
+    /// The matching policy action (AWS/Docker live mode → a namespace rule).
+    public var policyAction: PolicyAction { self == .approve ? .approve : .deny }
 }
 
 /// The credential namespaces the host agent brokers. Only `ssh-agent` is
@@ -122,8 +125,55 @@ public enum PolicyAction: String, Codable, Sendable {
     case approve, deny, prompt
 }
 
+/// The biometric prompt the app applies before approving (issue: per-provider
+/// approval). `none` = approve straight from the UI with no biometric.
 public enum PolicyGate: String, Codable, Sendable {
-    case touchid, none
+    case biometrics                                          // Touch ID only
+    case biometricsOrPassword = "biometrics-or-password"     // Touch ID / Watch / password
+    case none
+
+    /// Whether this gate shows a biometric prompt (and a fingerprint icon).
+    public var isBiometric: Bool { self != .none }
+}
+
+/// How shed-desktop prompts for an SSH approval when the host-agent delegates
+/// (policy: shed-desktop). The preferences "method" dropdown.
+public enum ApprovalMethod: String, Codable, Sendable, CaseIterable {
+    case biometricsOrPassword = "biometrics-or-password"
+    case biometrics
+    case prompt   // no biometric — a plain Approve button
+
+    public var gate: PolicyGate {
+        switch self {
+        case .biometricsOrPassword: return .biometricsOrPassword
+        case .biometrics: return .biometrics
+        case .prompt: return .none
+        }
+    }
+
+    public var label: String {
+        switch self {
+        case .biometricsOrPassword: return "Touch ID or password"
+        case .biometrics: return "Touch ID only"
+        case .prompt: return "Prompt (no Touch ID)"
+        }
+    }
+}
+
+/// The scope/duration a user picks when approving an SSH request, and the
+/// per-provider default pre-filled into the card.
+public enum ApprovalScope: String, Codable, Sendable, CaseIterable {
+    case perRequest = "per-request"
+    case perSession = "per-session"
+    case perShed = "per-shed"
+
+    public var label: String {
+        switch self {
+        case .perRequest: return "This request only"
+        case .perSession: return "This session"
+        case .perShed: return "This shed"
+        }
+    }
 }
 
 public enum PolicyScope: String, Codable, Sendable {
@@ -142,13 +192,85 @@ public struct PolicyRule: Codable, Sendable, Equatable {
     public var action: PolicyAction
     public var gate: PolicyGate
 
-    public init(scope: PolicyScope, server: String? = nil, namespace: String? = nil, shed: String? = nil, action: PolicyAction, gate: PolicyGate = .touchid) {
+    public init(scope: PolicyScope, server: String? = nil, namespace: String? = nil, shed: String? = nil, action: PolicyAction, gate: PolicyGate = .biometricsOrPassword) {
         self.scope = scope
         self.server = server
         self.namespace = namespace
         self.shed = shed
         self.action = action
         self.gate = gate
+    }
+}
+
+/// A pending approval as published to the UI: the request plus the decided gate
+/// (drives the fingerprint icon) and the per-provider scope/TTL defaults the
+/// card pre-fills. SSH-only details; AWS/Docker decide via policy without prompting.
+public struct PendingApprovalItem: Sendable, Equatable, Identifiable, Encodable {
+    public let request: ApprovalRequest
+    public let gate: PolicyGate
+    public let defaultScope: ApprovalScope
+    public let defaultTTL: String
+    public var id: String { request.id }
+
+    public init(request: ApprovalRequest, gate: PolicyGate, defaultScope: ApprovalScope = .perSession, defaultTTL: String = "1h") {
+        self.request = request
+        self.gate = gate
+        self.defaultScope = defaultScope
+        self.defaultTTL = defaultTTL
+    }
+
+    // Encode the request fields inline (so `approvals.list` keeps id/server/…)
+    // plus the decided gate + scope/TTL defaults, for IPC drivability.
+    enum CodingKeys: String, CodingKey {
+        case id, ts, server, namespace, op, shed, detail
+        case expiresAt = "expires_at"
+        case gate
+        case defaultScope = "default_scope"
+        case defaultTTL = "default_ttl"
+    }
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(request.id, forKey: .id)
+        try c.encode(request.ts, forKey: .ts)
+        try c.encode(request.server, forKey: .server)
+        try c.encode(request.namespace, forKey: .namespace)
+        try c.encode(request.op, forKey: .op)
+        try c.encode(request.shed, forKey: .shed)
+        try c.encode(request.detail, forKey: .detail)
+        try c.encode(request.expiresAt, forKey: .expiresAt)
+        try c.encode(gate, forKey: .gate)
+        try c.encode(defaultScope, forKey: .defaultScope)
+        try c.encode(defaultTTL, forKey: .defaultTTL)
+    }
+}
+
+/// What the user chose on an SSH approval card (or a quick approve/deny). For
+/// AWS/Docker the decision comes from policy, not a card.
+public struct ApprovalChoice: Sendable, Equatable {
+    public var decision: ApprovalDecision
+    /// Approve only: per-request (once) vs a timed grant (per-session/per-shed).
+    public var scope: ApprovalScope?
+    /// TTL shorthand for a timed grant (e.g. "1h").
+    public var ttl: String?
+    /// Persist a per-shed rule (always-allow when approve, always-deny when deny).
+    public var persist: Bool
+
+    public init(decision: ApprovalDecision, scope: ApprovalScope? = nil, ttl: String? = nil, persist: Bool = false) {
+        self.decision = decision
+        self.scope = scope
+        self.ttl = ttl
+        self.persist = persist
+    }
+}
+
+/// Parse a TTL shorthand like `45s`, `4m`, `3h`, `1d` into seconds. Returns nil
+/// for empty/invalid input so the UI can fall back to a default.
+public enum TTLShorthand {
+    public static func seconds(_ raw: String) -> Int? {
+        let s = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let last = s.last, let unit = ["s": 1, "m": 60, "h": 3600, "d": 86400][String(last)] else { return nil }
+        guard let n = Int(s.dropLast()), n > 0 else { return nil }
+        return n * unit
     }
 }
 

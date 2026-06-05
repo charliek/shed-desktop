@@ -63,8 +63,8 @@ These drive the credential-approval gate (see [Credential approvals](approvals.m
 
 | op | params | result |
 |----|--------|--------|
-| `approvals.list` | — | `approvals[]` (each carries `server?`, `namespace`, `op`, `shed`, `detail`, `expires_at`) |
-| `approval.decide` | `id`, `decision` (approve\|deny), `grant_session?`, `always?` | `{}` |
+| `approvals.list` | — | `approvals[]` (each carries `server?`, `namespace`, `op`, `shed`, `detail`, `expires_at`, `gate`, `default_scope`, `default_ttl`) |
+| `approval.decide` | `id`, `decision` (approve\|deny), `scope?` (per-request\|per-session\|per-shed), `ttl?` (e.g. `1h`), `persist?` | `{}` |
 | `activity.list` | `limit?` (default 200) | `entries[]` (audit feed) |
 | `activity.log_path` | — | `path` (the append-only audit log) |
 | `policy.list` | — | `rules[]` (effective: default + per-namespace + per-shed) |
@@ -72,8 +72,11 @@ These drive the credential-approval gate (see [Credential approvals](approvals.m
 | `notifications.list` | — | `notifications[]` (test mode: what the gate posted) |
 | `notification.invoke` | `id`, `action` (approve\|deny) | `{}` (test mode: drive a notification action) |
 
-`approval.decide` with `always:true` persists a per-`(server,shed)` auto-approve rule;
-`grant_session:true` adds a 4-hour in-memory grant.
+`approval.decide` with `persist:true` saves a per-`(server,shed)` rule (always-allow
+when `decision:approve`, always-deny when `decision:deny`). For an approve, `scope`
+controls the grant: `per-request` (once), or `per-session`/`per-shed` add an in-memory
+grant lasting `ttl` (e.g. `1h`). `scope`/`ttl`/`persist` are reported to the host agent
+so its durable audit records how the decision was made.
 
 ## Test mode
 

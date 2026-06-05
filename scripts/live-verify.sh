@@ -92,12 +92,15 @@ discovery:
   watch: fsnotify
 ssh:
   approval:
-    enabled: true
-    method: shed-desktop
+    policy: shed-desktop
 aws:
   source_profile: default
+  approval:
+    policy: shed-desktop
 docker:
   registries: []
+  approval:
+    policy: shed-desktop
 desktop:
   enabled: true
   socket_path: ${AGENT_SOCK}
