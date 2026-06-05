@@ -100,8 +100,8 @@ final class AppModel: NSObject, UiBridge {
         prefs.sshMethod = prefsStore.sshMethod
         prefs.sshScope = prefsStore.sshScope
         prefs.sshTTL = prefsStore.sshTTL
-        prefs.awsMode = prefsStore.providerMode("aws-credentials")
-        prefs.dockerMode = prefsStore.providerMode("docker-credentials")
+        prefs.awsMode = prefsStore.providerMode(CredentialNamespace.aws)
+        prefs.dockerMode = prefsStore.providerMode(CredentialNamespace.docker)
         // Apply the per-provider settings + persisted per-shed rules. Only
         // per-shed rules are persisted now; drop any legacy namespace-scope rules
         // from the old model (clean break, no migration).
@@ -146,9 +146,9 @@ final class AppModel: NSObject, UiBridge {
         // One namespace rule per provider, derived from the per-provider prefs:
         // SSH prompts with the chosen method; AWS/Docker apply their live mode.
         let rules: [PolicyRule] = [
-            PolicyRule(scope: .namespace, namespace: "ssh-agent", action: .prompt, gate: prefsStore.sshMethod.gate),
-            PolicyRule(scope: .namespace, namespace: "aws-credentials", action: prefsStore.providerMode("aws-credentials").policyAction, gate: .none),
-            PolicyRule(scope: .namespace, namespace: "docker-credentials", action: prefsStore.providerMode("docker-credentials").policyAction, gate: .none),
+            PolicyRule(scope: .namespace, namespace: CredentialNamespace.ssh, action: .prompt, gate: prefsStore.sshMethod.gate),
+            PolicyRule(scope: .namespace, namespace: CredentialNamespace.aws, action: prefsStore.providerMode(CredentialNamespace.aws).policyAction, gate: .none),
+            PolicyRule(scope: .namespace, namespace: CredentialNamespace.docker, action: prefsStore.providerMode(CredentialNamespace.docker).policyAction, gate: .none),
         ]
         policyEngine = PolicyEngine(rules: rules + extraRules)
     }
@@ -896,12 +896,20 @@ final class AppModel: NSObject, UiBridge {
                 return  // stay pending; user can retry or it expires
             }
             // The request may have expired (and been denied) while the biometric
-            // prompt was up — don't send a late, contradictory decision.
-            guard pending[id] != nil else { return }
+            // prompt was up — don't send a late, contradictory decision or grant
+            // a session for a dead request. Check both presence AND expiry (the
+            // 1s expiry task may not have fired yet).
+            guard pending[id] != nil,
+                  (req.expiresAtDate ?? .distantPast) > Date() else { return }
             decidedBy = .touchid
         }
 
         // Persistence / grant + the scope/ttl we report to the host for its audit.
+        let grantKey = SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)
+        // Any deny supersedes a live "approve for this session" grant — otherwise
+        // the grant (highest precedence) would keep auto-approving past the deny.
+        if decision == .deny { sessionGrants.removeValue(forKey: grantKey) }
+
         var sentScope = choice.scope?.rawValue ?? "per-request"
         var sentTTL = ""
         var policyLabel = "manual"
@@ -912,8 +920,7 @@ final class AppModel: NSObject, UiBridge {
             policyLabel = decision == .approve ? "shed-rule" : "deny-rule"
         } else if decision == .approve, let scope = choice.scope, scope != .perRequest {
             let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
-            sessionGrants[SessionGrantKey(server: req.server, namespace: req.namespace, shed: req.shed)] =
-                Date().addingTimeInterval(TimeInterval(secs))
+            sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
             sentTTL = choice.ttl ?? ""
             policyLabel = "session-grant"
         }

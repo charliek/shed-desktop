@@ -63,7 +63,10 @@ public enum ApprovalDecision: String, Codable, Sendable {
 /// The credential namespaces the host agent brokers. Only `ssh-agent` is
 /// gated today; the rest are audit-only (visible in the activity feed).
 public enum CredentialNamespace {
-    public static let all = ["ssh-agent", "aws-credentials", "docker-credentials"]
+    public static let ssh = "ssh-agent"
+    public static let aws = "aws-credentials"
+    public static let docker = "docker-credentials"
+    public static let all = [ssh, aws, docker]
 }
 
 public enum DecidedBy: String, Codable, Sendable {

@@ -40,7 +40,7 @@ public struct PreferencesView: View {
                 }
             }
 
-            if prefs.gatedNamespaces.contains("ssh-agent") {
+            if prefs.gatedNamespaces.contains(CredentialNamespace.ssh) {
                 Section("SSH approvals") {
                     Picker("Method", selection: $prefs.sshMethod) {
                         ForEach(ApprovalMethod.allCases, id: \.self) { Text($0.label).tag($0) }
@@ -57,11 +57,11 @@ public struct PreferencesView: View {
                 }
             }
 
-            if prefs.gatedNamespaces.contains("aws-credentials") {
-                providerSection("AWS credentials", ns: "aws-credentials", mode: $prefs.awsMode)
+            if prefs.gatedNamespaces.contains(CredentialNamespace.aws) {
+                providerSection("AWS credentials", ns: CredentialNamespace.aws, mode: $prefs.awsMode)
             }
-            if prefs.gatedNamespaces.contains("docker-credentials") {
-                providerSection("Docker credentials", ns: "docker-credentials", mode: $prefs.dockerMode)
+            if prefs.gatedNamespaces.contains(CredentialNamespace.docker) {
+                providerSection("Docker credentials", ns: CredentialNamespace.docker, mode: $prefs.dockerMode)
             }
 
             if !prefs.shedRules.isEmpty {

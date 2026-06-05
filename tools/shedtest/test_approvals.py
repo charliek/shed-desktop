@@ -140,6 +140,25 @@ def test_always_deny_persists_per_shed_rule(shed, fake):
     assert rid2 not in _pending_ids(shed)
 
 
+def test_deny_evicts_live_session_grant(shed, fake):
+    # A deny must supersede a live "approve for this session" grant — otherwise
+    # the grant (highest precedence) would keep auto-approving past the deny.
+    rid1 = fake.emit_request("ssh-agent", "sign", "evict-shed", "ssh-ed25519")
+    rid2 = fake.emit_request("ssh-agent", "sign", "evict-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid1 in _pending_ids(shed) and rid2 in _pending_ids(shed),
+                    what="both requests queued")
+    # Approve rid1 with a session grant; rid2 stays pending (queued before the grant).
+    shed.approval_decide(rid1, "approve", scope="per-session", ttl="1h")
+    assert fake.wait_response(rid1)["decision"] == "approve"
+    # Always-deny rid2 → installs a deny rule AND evicts the grant.
+    shed.approval_decide(rid2, "deny", persist=True)
+    assert fake.wait_response(rid2)["decision"] == "deny"
+    # A fresh request for the shed is now DENIED by policy (grant gone, deny rule wins).
+    rid3 = fake.emit_request("ssh-agent", "sign", "evict-shed")
+    resp3 = fake.wait_response(rid3)
+    assert resp3 and resp3["decision"] == "deny" and resp3["decided_by"] == "policy"
+
+
 def test_pending_item_exposes_gate_and_defaults(shed, fake):
     # The pending item carries the decided gate (which drives the fingerprint
     # icon) plus the SSH scope/TTL defaults the card pre-fills — observable over
