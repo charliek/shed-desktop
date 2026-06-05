@@ -9,6 +9,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job only checks out + builds + tests — no writes.
+permissions:
+  contents: read
+
 jobs:
   swift:
     name: build · test · e2e

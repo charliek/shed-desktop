@@ -23,7 +23,8 @@ path.
 | `shedctl screenshot [--surface window\|menu] [--scale 1\|2] --out FILE` | Capture a PNG |
 | `shedctl call <op> [key=value ...]` | Generic call; values parse as JSON when possible |
 
-The named subcommands cover read-only inspection. Everything else in the
+The named subcommands cover inspection and UI control (including the mutating
+`ui hide-window`). Everything else in the
 [IPC op catalog](ipc.md) — lifecycle (`shed.start` …), create, terminal, remote control
 (`rc.*`), approvals (`approval.decide` …), and `system.df` — is reached through
 `shedctl call <op>`. Panes for `ui navigate` are `sheds | approvals | agents | activity |
