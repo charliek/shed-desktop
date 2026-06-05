@@ -33,7 +33,7 @@ run: bundle  ## Build the bundle and launch it
 
 # ---- test -------------------------------------------------------------
 
-.PHONY: test e2e e2e-ci smoke
+.PHONY: test e2e e2e-ci smoke smoke-real-launch smoke-launch-window
 test:  ## swift test (ShedKit unit tests)
 	swift test
 
@@ -48,6 +48,9 @@ smoke:  ## Drive the app and capture labeled screenshots
 
 smoke-real-launch: bundle  ## Non-test launch survival check (real notification path, issue #2)
 	./scripts/smoke-real-launch.sh
+
+smoke-launch-window: bundle  ## Non-test launch/reopen window behavior (issue #4)
+	./scripts/smoke-launch-window.sh
 
 # ---- docs -------------------------------------------------------------
 

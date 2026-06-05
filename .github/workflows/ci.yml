@@ -9,6 +9,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege: every job only checks out + builds + tests — no writes.
+permissions:
+  contents: read
+
 jobs:
   swift:
     name: build · test · e2e
@@ -35,6 +39,10 @@ jobs:
         # exercises the real SystemNotificationPresenter path the hermetic suite
         # can't reach. Regression guard for the v0.0.2 SIGTRAP (issue #2).
         run: ./scripts/smoke-real-launch.sh
+      - name: Launch/reopen window smoke
+        # Real launch path the hermetic suite gates off: a user launch opens the
+        # dashboard and reopening the running app reaches it. Guards issue #4.
+        run: ./scripts/smoke-launch-window.sh
 
   docs:
     name: docs build

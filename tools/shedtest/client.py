@@ -98,6 +98,9 @@ class ShedDesktop:
     def show_window(self) -> None:
         self.call("ui.show_window")
 
+    def hide_window(self) -> None:
+        self.call("ui.hide_window")
+
     def show_create(self) -> None:
         self.call("ui.show_create")
 
@@ -204,6 +207,10 @@ class ShedDesktop:
 
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
+
+    def window_state(self) -> dict:
+        """Dashboard visibility + activation policy (issue #4 launch/reopen)."""
+        return self.call("ui.window_state")
 
     def screenshot(self, surface: str = "window", scale: int = 1) -> tuple[bytes, int, int]:
         r = self.call("app.screenshot", {"surface": surface, "scale": scale})

@@ -19,6 +19,11 @@ public protocol UiBridge: AnyObject {
     /// it closed). Used by `ui.showWindow` before a window screenshot.
     func showWindow()
 
+    /// Close the dashboard window (reverting to a menu-bar-only accessory via
+    /// `windowWillClose`). The inverse of `showWindow`; lets a driver model a
+    /// user closing the window so the reopen escape hatch can be exercised.
+    func hideWindow()
+
     /// Open (and front) the preferences window.
     func openPreferences()
 
@@ -34,6 +39,10 @@ public protocol UiBridge: AnyObject {
 
     /// Logical window measurements for `app.window_metrics`.
     func windowMetrics() -> WindowMetrics
+
+    /// Dashboard visibility + activation policy for `ui.window_state` — the
+    /// observable surface of the launch/reopen behavior (issue #4).
+    func windowState() -> WindowState
 
     /// Force an immediate poll of all hosts (`sheds.refresh`); returns once
     /// the refresh has completed so tests can assert without waiting for the

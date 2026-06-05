@@ -14,6 +14,8 @@ path.
 | `shedctl ui state` | Dump the current view-model (panes, hosts, sheds) |
 | `shedctl ui navigate <pane>` | Switch the dashboard pane |
 | `shedctl ui show-window` | Bring the dashboard window front |
+| `shedctl ui hide-window` | Close the dashboard (revert to menu-bar-only) |
+| `shedctl ui window-state` | Report dashboard visibility + activation policy |
 | `shedctl ui open-menu <true\|false>` | Open/close the menu-bar popover |
 | `shedctl host list` | List configured hosts + reachability |
 | `shedctl sheds list [--host NAME]` | List sheds (optionally one host) |
@@ -21,7 +23,8 @@ path.
 | `shedctl screenshot [--surface window\|menu] [--scale 1\|2] --out FILE` | Capture a PNG |
 | `shedctl call <op> [key=value ...]` | Generic call; values parse as JSON when possible |
 
-The named subcommands cover read-only inspection. Everything else in the
+The named subcommands cover inspection and UI control (including the mutating
+`ui hide-window`). Everything else in the
 [IPC op catalog](ipc.md) — lifecycle (`shed.start` …), create, terminal, remote control
 (`rc.*`), approvals (`approval.decide` …), and `system.df` — is reached through
 `shedctl call <op>`. Panes for `ui navigate` are `sheds | approvals | agents | activity |

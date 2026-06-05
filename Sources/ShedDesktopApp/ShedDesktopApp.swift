@@ -34,5 +34,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appModel.start(profile: .mac())
+
+        let event = NSAppleEventManager.shared().currentAppleEvent
+        let loginProp = event?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        let userLaunch = LaunchClassifier.isUserInitiated(eventID: event?.eventID, loginItemProp: loginProp)
+        // Logged so a real login launch (only verifiable on a reboot) can be
+        // confirmed in Console: a quiet login launch should read userInitiated=0.
+        NSLog("shed-desktop launch: userInitiated=\(userLaunch ? 1 : 0) eventID=\(Self.fourCC(event?.eventID)) loginFlag=\(Self.fourCC(loginProp))")
+
+        // An active user launch (Finder double-click, Launchpad, Spotlight,
+        // `open`) opens the dashboard; a quiet login-item launch stays
+        // menu-bar-only. Gated off under the harness so the hermetic suite
+        // keeps its hidden-start / accessory policy.
+        if userLaunch && !ShedBackend.shared.testMode {
+            appModel.showWindow()
+        }
+    }
+
+    // Re-opening an already-running instance (double-click / ⌘-Space) reaches
+    // the dashboard. This is also the escape hatch when the status-item icon
+    // is hidden under the notch and unclickable (issue #4).
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        appModel.showWindow()
+        return true
+    }
+
+    /// Render a FourCharCode for the launch log (e.g. `oapp`), `nil` when absent.
+    private static func fourCC(_ code: OSType?) -> String {
+        guard let code, code != 0 else { return "nil" }
+        let bytes = [UInt8((code >> 24) & 0xff), UInt8((code >> 16) & 0xff),
+                     UInt8((code >> 8) & 0xff), UInt8(code & 0xff)]
+        return String(bytes: bytes, encoding: .ascii) ?? "\(code)"
     }
 }

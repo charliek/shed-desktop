@@ -300,6 +300,26 @@ public struct WindowMetrics: Codable, Sendable, Equatable {
     }
 }
 
+/// Whether the dashboard window is on screen and the app's current
+/// activation policy, for the `ui.window_state` op. Lets the launch/reopen
+/// behavior (issue #4) be asserted over IPC: an active user launch shows the
+/// window and goes `.regular`; a quiet login launch stays hidden/`.accessory`.
+public struct WindowState: Codable, Sendable, Equatable {
+    public var visible: Bool
+    /// `"regular"` (Dock icon) or `"accessory"` (menu-bar only).
+    public var activationPolicy: String
+
+    enum CodingKeys: String, CodingKey {
+        case visible
+        case activationPolicy = "activation_policy"
+    }
+
+    public init(visible: Bool, activationPolicy: String) {
+        self.visible = visible
+        self.activationPolicy = activationPolicy
+    }
+}
+
 /// The sidebar panes the dashboard exposes; also the `ui.navigate` target
 /// vocabulary.
 public enum DashboardPane: String, Codable, Sendable, CaseIterable {

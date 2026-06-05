@@ -23,6 +23,8 @@ Request structs reject unknown fields. Errors use stable codes: `unknown-op`,
 | `ui.state` | — | `pane`, `hosts[]`, `sheds[]`, `host_agent_connected`, `last_error?` |
 | `ui.navigate` | `pane` (sheds\|approvals\|agents\|activity\|system) | `pane` |
 | `ui.show_window` | — | `{}` |
+| `ui.hide_window` | — | `{}` (closes the dashboard → menu-bar-only accessory) |
+| `ui.window_state` | — | `visible` (bool), `activation_policy` (regular\|accessory) |
 | `ui.open_preferences` | — | `{}` |
 | `ui.open_menu` | `open` (bool) | `open` |
 | `host.list` | — | `hosts[]` |

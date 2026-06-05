@@ -32,6 +32,9 @@ actor IPCHandlerImpl: IPCHandler {
         case "app.window_metrics":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(windowMetricsOp())
+        case "ui.window_state":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            return try await encodeResult(windowStateOp())
         case "ui.state":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(uiStateOp())
@@ -41,6 +44,10 @@ actor IPCHandlerImpl: IPCHandler {
         case "ui.show_window":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await showWindowOp()
+            return emptyResult
+        case "ui.hide_window":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await hideWindowOp()
             return emptyResult
         case "ui.show_create":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
@@ -161,8 +168,10 @@ actor IPCHandlerImpl: IPCHandler {
     }
 
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
+    @MainActor private func windowStateOp() throws -> WindowState { try uiBridge().windowState() }
     @MainActor private func uiStateOp() throws -> UIState { try uiBridge().uiState() }
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
+    @MainActor private func hideWindowOp() throws { try uiBridge().hideWindow() }
     @MainActor private func showCreateSheetOp() throws { try uiBridge().showCreateSheet() }
     @MainActor private func openPreferencesOp() throws { try uiBridge().openPreferences() }
     @MainActor private func openMenuOp(_ open: Bool) throws { try uiBridge().setMenuOpen(open) }
