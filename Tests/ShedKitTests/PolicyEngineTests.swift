@@ -9,7 +9,7 @@ final class PolicyEngineTests: XCTestCase {
     }
 
     func testDefaultRuleApplies() {
-        let e = PolicyEngine(rules: [PolicyRule(scope: .default, action: .prompt, gate: .touchid)])
+        let e = PolicyEngine(rules: [PolicyRule(scope: .default, action: .prompt, gate: .biometricsOrPassword)])
         let d = e.decide(for: req(), sessionGrants: [])
         XCTAssertEqual(d.action, .prompt)
         XCTAssertEqual(d.appliedScope, .default)
@@ -17,7 +17,7 @@ final class PolicyEngineTests: XCTestCase {
 
     func testNamespaceOverridesDefault() {
         let e = PolicyEngine(rules: [
-            PolicyRule(scope: .default, action: .prompt, gate: .touchid),
+            PolicyRule(scope: .default, action: .prompt, gate: .biometricsOrPassword),
             PolicyRule(scope: .namespace, namespace: "ssh-agent", action: .deny, gate: .none),
         ])
         let d = e.decide(for: req(ns: "ssh-agent"), sessionGrants: [])
@@ -73,6 +73,6 @@ final class PolicyEngineTests: XCTestCase {
         let e = PolicyEngine(rules: [])
         let d = e.decide(for: req(), sessionGrants: [])
         XCTAssertEqual(d.action, .prompt)
-        XCTAssertEqual(d.gate, .touchid)
+        XCTAssertEqual(d.gate, .biometricsOrPassword)
     }
 }

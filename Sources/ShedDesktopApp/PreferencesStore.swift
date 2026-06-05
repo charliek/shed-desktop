@@ -25,16 +25,33 @@ struct PreferencesStore {
         nonmutating set { defaults.set(newValue, forKey: "terminalTemplate") }
     }
 
-    /// The default approval mode (ApprovalMode lives in ShedKit), mapped to
-    /// the default-scope policy rule.
-    var defaultApprovalMode: ApprovalMode {
-        get { ApprovalMode(rawValue: defaults.string(forKey: "defaultApprovalMode") ?? "") ?? .touchID }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: "defaultApprovalMode") }
+    // Per-provider approval config (issue: per-provider approval). SSH gets a
+    // method + default scope + default TTL; AWS/Docker get a live Allow/Deny mode.
+    var sshMethod: ApprovalMethod {
+        get { ApprovalMethod(rawValue: defaults.string(forKey: "sshMethod") ?? "") ?? .biometricsOrPassword }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "sshMethod") }
+    }
+    var sshScope: ApprovalScope {
+        get { ApprovalScope(rawValue: defaults.string(forKey: "sshScope") ?? "") ?? .perSession }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "sshScope") }
+    }
+    var sshTTL: String {
+        get { defaults.string(forKey: "sshTTL") ?? "1h" }
+        nonmutating set { defaults.set(newValue, forKey: "sshTTL") }
     }
 
-    /// Per-namespace + per-shed policy rules (the default-scope rule is
-    /// `defaultApprovalMode`). JSON-encoded in the defaults suite so per-shed
-    /// "always allow" grants and per-namespace overrides survive relaunch.
+    /// Live Allow/Deny mode for a credential namespace (aws/docker). Defaults to
+    /// deny (safe) until the user opts in.
+    func providerMode(_ ns: String) -> ApprovalDecision {
+        ApprovalDecision(rawValue: defaults.string(forKey: "mode.\(ns)") ?? "") ?? .deny
+    }
+    func setProviderMode(_ ns: String, _ mode: ApprovalDecision) {
+        defaults.set(mode.rawValue, forKey: "mode.\(ns)")
+    }
+
+    /// Per-shed "always allow / always deny" rules. JSON-encoded in the defaults
+    /// suite so they survive relaunch. (Per-provider defaults live in the keys
+    /// above; the namespace rules are derived from those at policy-build time.)
     var policyRules: [PolicyRule] {
         get {
             guard let data = defaults.data(forKey: "policyRules"),

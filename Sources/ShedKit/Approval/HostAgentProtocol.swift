@@ -7,7 +7,7 @@
 
 import Foundation
 
-public let hostAgentProtocolVersion = 1
+public let hostAgentProtocolVersion = 2
 
 /// A frame from the host agent (or the fake), decoded by `type`.
 public enum HostAgentInbound: Sendable {
@@ -82,11 +82,14 @@ public enum HostAgentProtocol {
         ])
     }
 
-    public static func approvalResponse(id: String, ts: String, requestID: String, decision: ApprovalDecision, decidedBy: DecidedBy) throws -> Data {
-        try line([
+    public static func approvalResponse(id: String, ts: String, requestID: String, decision: ApprovalDecision, decidedBy: DecidedBy, scope: String? = nil, ttl: String? = nil) throws -> Data {
+        var obj: [String: Any] = [
             "v": hostAgentProtocolVersion, "type": "approval_response", "id": id, "ts": ts,
             "request_id": requestID, "decision": decision.rawValue, "decided_by": decidedBy.rawValue,
-        ])
+        ]
+        if let scope { obj["scope"] = scope }
+        if let ttl { obj["ttl"] = ttl }
+        return try line(obj)
     }
 
     public static func pong(id: String, ts: String) throws -> Data {

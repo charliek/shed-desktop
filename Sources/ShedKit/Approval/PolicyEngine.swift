@@ -33,6 +33,6 @@ public struct PolicyEngine: Sendable {
             return PolicyDecision(action: r.action, gate: r.gate, appliedScope: .default)
         }
         // No rule at all → fail safe to a Touch ID prompt.
-        return PolicyDecision(action: .prompt, gate: .touchid, appliedScope: .default)
+        return PolicyDecision(action: .prompt, gate: .biometricsOrPassword, appliedScope: .default)
     }
 }

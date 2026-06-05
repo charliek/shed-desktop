@@ -27,8 +27,9 @@ public final class AppState: ObservableObject {
     @Published public var showLaunchSheet: Bool = false
     /// Remote-control sessions across sheds (the Agents pane).
     @Published public var rcSessions: [RcSession] = []
-    /// Pending credential-approval requests (the Approvals pane + menu bar).
-    @Published public var approvals: [ApprovalRequest] = []
+    /// Pending credential-approval requests (the Approvals pane + menu bar),
+    /// each with its decided gate + SSH scope/TTL defaults for the card.
+    @Published public var approvals: [PendingApprovalItem] = []
     /// Merged activity feed (host-agent audit + lifecycle + RC).
     @Published public var activity: [AuditEntry] = []
     /// Per-host disk usage (the System pane).
@@ -58,10 +59,9 @@ public final class AppState: ObservableObject {
     /// Refresh per-host installed images (the New-Shed picker).
     public var onImagesRefresh: (() -> Void)?
     public var onOpenURL: ((String) -> Void)?
-    /// Decide a pending approval: (request, decision, grantSession).
-    public var onApprovalDecide: ((ApprovalRequest, ApprovalDecision, Bool) -> Void)?
-    /// "Always allow" — approve now and persist a per-(server,shed) rule.
-    public var onApprovalAlwaysAllow: ((ApprovalRequest) -> Void)?
+    /// Decide a pending approval: (request, choice). The choice carries scope/
+    /// TTL and whether to persist a per-shed always-allow / always-deny rule.
+    public var onApprovalDecide: ((ApprovalRequest, ApprovalChoice) -> Void)?
     /// Reveal the audit log file in Finder (FR-6).
     public var onRevealAuditLog: (() -> Void)?
 

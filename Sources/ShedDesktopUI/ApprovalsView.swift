@@ -25,8 +25,8 @@ struct ApprovalsView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 10) {
-                        ForEach(state.approvals) { req in
-                            ApprovalCard(req: req, state: state)
+                        ForEach(state.approvals) { item in
+                            ApprovalCard(item: item, state: state)
                         }
                     }
                     .padding(.horizontal, 18).padding(.bottom, 16)
@@ -49,8 +49,19 @@ struct ApprovalsView: View {
 }
 
 struct ApprovalCard: View {
-    let req: ApprovalRequest
+    let item: PendingApprovalItem
     @ObservedObject var state: AppState
+    @State private var scope: ApprovalScope
+    @State private var ttl: String
+
+    init(item: PendingApprovalItem, state: AppState) {
+        self.item = item
+        self.state = state
+        _scope = State(initialValue: item.defaultScope)
+        _ttl = State(initialValue: item.defaultTTL)
+    }
+
+    private var req: ApprovalRequest { item.request }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -64,24 +75,49 @@ struct ApprovalCard: View {
                 countdown
             }
             HStack(spacing: 8) {
-                Button { state.onApprovalDecide?(req, .approve, false) } label: {
-                    Label("Approve (Touch ID)", systemImage: "touchid").font(.system(size: 13))
+                Picker("", selection: $scope) {
+                    ForEach(ApprovalScope.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().frame(maxWidth: 170)
+                if scope != .perRequest {
+                    TextField("", text: $ttl, prompt: Text("1h")).frame(width: 54)
+                }
+                Spacer()
+            }
+            HStack(spacing: 8) {
+                Button { decide(.approve, persist: false) } label: {
+                    // Fingerprint icon only when a biometric prompt will be shown.
+                    if item.gate.isBiometric {
+                        Label("Approve (Touch ID)", systemImage: "touchid").font(.system(size: 13))
+                    } else {
+                        Text("Approve").font(.system(size: 13))
+                    }
                 }
                 .buttonStyle(.borderedProminent).tint(.green)
-                Button { state.onApprovalDecide?(req, .deny, false) } label: {
+                Button { decide(.deny, persist: false) } label: {
                     Label("Deny", systemImage: "xmark").font(.system(size: 13))
                 }
                 .buttonStyle(.bordered)
                 Spacer()
-                Button("Always allow for \(req.qualifiedShed)") {
-                    state.onApprovalAlwaysAllow?(req)
+                Menu("Always…") {
+                    Button("Always allow \(req.qualifiedShed)") { decide(.approve, persist: true) }
+                    Button("Always deny \(req.qualifiedShed)") { decide(.deny, persist: true) }
                 }
-                .buttonStyle(.borderless).font(.system(size: 12))
-                .help("Approve now and auto-approve future requests for this shed (manage in Preferences).")
+                .menuStyle(.borderlessButton).fixedSize().font(.system(size: 12))
+                .help("Persist a per-shed rule (manage in Preferences).")
             }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
+    }
+
+    private func decide(_ decision: ApprovalDecision, persist: Bool) {
+        let choice = ApprovalChoice(
+            decision: decision,
+            scope: decision == .approve ? scope : nil,
+            ttl: (decision == .approve && scope != .perRequest) ? ttl : nil,
+            persist: persist)
+        state.onApprovalDecide?(req, choice)
     }
 
     private var countdown: some View {

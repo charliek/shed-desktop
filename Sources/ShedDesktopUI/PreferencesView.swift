@@ -1,4 +1,7 @@
-// PreferencesView.swift — the preferences window content (M4).
+// PreferencesView.swift — the preferences window content.
+//
+// The approval sections are per-provider and appear only for the credential
+// namespaces the host agent delegates to shed-desktop (gate_namespaces).
 
 import ShedKit
 import SwiftUI
@@ -10,6 +13,10 @@ public struct PreferencesView: View {
     public init(prefs: Preferences, state: AppState) {
         self.prefs = prefs
         self.state = state
+    }
+
+    private var anyGated: Bool {
+        CredentialNamespace.all.contains { prefs.gatedNamespaces.contains($0) }
     }
 
     public var body: some View {
@@ -26,35 +33,39 @@ public struct PreferencesView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
             }
 
-            Section("Approval policy") {
-                Picker("Default mode", selection: $prefs.defaultApprovalMode) {
-                    ForEach(ApprovalMode.allCases, id: \.self) { mode in
-                        Text(mode.label).tag(mode)
-                    }
-                }
-                .onChange(of: prefs.defaultApprovalMode) { _, v in prefs.onDefaultMode?(v) }
-                Text("How shed-desktop responds when the host agent delegates a credential request.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-
-            Section("Per-namespace overrides") {
-                ForEach(CredentialNamespace.all, id: \.self) { ns in
-                    Picker(ns, selection: namespaceBinding(ns)) {
-                        Text("Inherit default").tag(ApprovalMode?.none)
-                        ForEach(ApprovalMode.allCases, id: \.self) { mode in
-                            Text(mode.label).tag(ApprovalMode?.some(mode))
-                        }
-                    }
-                }
-                Text("Only ssh-agent is gated today; aws-credentials and docker-credentials are audit-only.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-            }
-
-            Section("Per-shed overrides") {
-                if prefs.shedRules.isEmpty {
-                    Text("None. Use “Always allow” on an approval to auto-approve a shed.")
+            if !anyGated {
+                Section("Approvals") {
+                    Text("No extensions are delegated to shed-desktop. Set an extension's `approval.policy` to `shed-desktop` in extensions.yaml to manage it here.")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
-                } else {
+                }
+            }
+
+            if prefs.gatedNamespaces.contains(CredentialNamespace.ssh) {
+                Section("SSH approvals") {
+                    Picker("Method", selection: $prefs.sshMethod) {
+                        ForEach(ApprovalMethod.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .onChange(of: prefs.sshMethod) { _, v in prefs.onSSHMethod?(v) }
+                    Picker("Default scope", selection: $prefs.sshScope) {
+                        ForEach(ApprovalScope.allCases, id: \.self) { Text($0.label).tag($0) }
+                    }
+                    .onChange(of: prefs.sshScope) { _, v in prefs.onSSHScope?(v) }
+                    TextField("Default duration", text: $prefs.sshTTL, prompt: Text("1h"))
+                        .onChange(of: prefs.sshTTL) { _, v in prefs.onSSHTTL?(v) }
+                    Text("The approval card pre-fills these; you can change them per request. “Method” controls the Touch ID prompt (no prompt for “Prompt”).")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+
+            if prefs.gatedNamespaces.contains(CredentialNamespace.aws) {
+                providerSection("AWS credentials", ns: CredentialNamespace.aws, mode: $prefs.awsMode)
+            }
+            if prefs.gatedNamespaces.contains(CredentialNamespace.docker) {
+                providerSection("Docker credentials", ns: CredentialNamespace.docker, mode: $prefs.dockerMode)
+            }
+
+            if !prefs.shedRules.isEmpty {
+                Section("Per-shed overrides") {
                     ForEach(prefs.shedRules) { row in
                         HStack(spacing: 8) {
                             Text(row.shed)
@@ -62,7 +73,8 @@ public struct PreferencesView: View {
                                 Text(row.server).foregroundStyle(.secondary).font(.system(size: 11))
                             }
                             Spacer()
-                            Text("auto-approve").foregroundStyle(.secondary).font(.system(size: 11))
+                            Text(row.action == .deny ? "auto-deny" : "auto-approve")
+                                .foregroundStyle(row.action == .deny ? .red : .secondary).font(.system(size: 11))
                             Button { prefs.onRemoveShedRule?(row.server, row.shed) } label: {
                                 Image(systemName: "xmark.circle")
                             }
@@ -72,32 +84,21 @@ public struct PreferencesView: View {
                     }
                 }
             }
-
-            Section("Hosts") {
-                if state.hosts.isEmpty {
-                    Text("No hosts in ~/.shed/config.yaml").foregroundStyle(.secondary)
-                } else {
-                    ForEach(state.hosts, id: \.name) { host in
-                        HStack(spacing: 8) {
-                            Circle().fill(host.reachable ? Color.green : Color.secondary).frame(width: 7, height: 7)
-                            Text(host.name)
-                            Spacer()
-                            Text("\(host.host):\(host.httpPort)").foregroundStyle(.secondary).font(.system(size: 11))
-                        }
-                    }
-                    Text("Read-only — manage hosts with the shed CLI.")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
-                }
-            }
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 560)
     }
 
-    /// Two-way binding for a namespace override (nil = inherit the default).
-    private func namespaceBinding(_ ns: String) -> Binding<ApprovalMode?> {
-        Binding(
-            get: { prefs.namespaceModes[ns] },
-            set: { prefs.onNamespaceMode?(ns, $0) })
+    private func providerSection(_ title: String, ns: String, mode: Binding<ApprovalDecision>) -> some View {
+        Section(title) {
+            Picker("Mode", selection: mode) {
+                Text("Allow").tag(ApprovalDecision.approve)
+                Text("Deny").tag(ApprovalDecision.deny)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: mode.wrappedValue) { _, v in prefs.onProviderMode?(ns, v) }
+            Text("Live — takes effect immediately. Credentials fail closed (deny) when shed-desktop isn't running.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+        }
     }
 }

@@ -1,18 +1,25 @@
 # Credential approvals
 
-The headline feature: `shed-host-agent` delegates SSH-signing approval decisions to
+The headline feature: `shed-host-agent` delegates credential-approval decisions to
 shed-desktop over a local Unix-domain socket, and streams an all-namespace audit feed
 the app surfaces in **Activity**. The app holds no credentials — only request metadata
 crosses the socket, and the agent stays the sole credential holder.
 
-## Enabling it
+## Configuring for shed-desktop
 
-In the host agent's `~/.config/shed/extensions.yaml`:
+In the host agent's `~/.config/shed/extensions.yaml`, set the `approval.policy` of each
+extension you want the app to decide to `shed-desktop`, and turn the channel on:
 
 ```yaml
 ssh:
   approval:
-    method: shed-desktop      # route SSH-sign approvals to the app
+    policy: shed-desktop      # SSH approvals decided in the app (interactive)
+aws:
+  approval:
+    policy: shed-desktop      # optional — a live Allow/Deny toggle in the app
+docker:
+  approval:
+    policy: shed-desktop      # optional — a live Allow/Deny toggle in the app
 desktop:
   enabled: true               # serve the local UDS the app connects to
   socket_path: ~/Library/Application Support/shed/host-agent.sock
@@ -21,34 +28,38 @@ desktop:
 
 Restart the host agent, then launch shed-desktop. The **Approvals** pane header shows
 `gate: shed-desktop` once connected; if the agent is down it shows
-`host agent not connected`. The same state is observable over IPC as
-`ui.state.host_agent_connected`.
+`host agent not connected` (also observable over IPC as `ui.state.host_agent_connected`).
 
-It is **default-off**: with no `desktop:` block (or `enabled: false`) the agent behaves
-exactly as before — no socket, no behavior change. AWS and Docker credentials are
-**audit-only** (auto-vended, streamed to Activity); only `ssh-agent` is gated.
+It is **default-off**: an extension whose policy isn't `shed-desktop` is handled by the
+agent itself (`deny-all`, `approve-all`, or native Touch ID for SSH) and is **audit-only**
+to the app — its events still stream to Activity. The agent advertises which extensions it
+delegates in `hello_ack.gate_namespaces`; Preferences shows an approval section for exactly
+those.
 
-## Policy
+## Policy (per provider)
 
 Each request is decided by the [`PolicyEngine`](architecture.md), most-specific match first:
 
 ```
-session grant  >  per-(server,shed) rule  >  per-namespace rule  >  default mode
+session grant  >  per-(server,shed) rule  >  per-provider rule
 ```
 
-- **Default mode** — Preferences → Approval policy: *Touch ID each time* (default),
-  *Prompt*, *Auto-approve*, or *Auto-deny*.
-- **Per-namespace overrides** — Preferences → Per-namespace overrides. Inherit the default
-  or pin a mode per namespace.
-- **Per-shed "always allow"** — the *Always allow for `<server>/<shed>`* button on an
-  approval card persists a per-`(server, shed)` auto-approve rule (managed under
-  Preferences → Per-shed overrides). Identical shed names on different servers don't
-  collide — rules are keyed by `(server, shed)`, matching the agent's own isolation.
-- **Session grants** — a 4-hour in-memory grant (not persisted).
+Configured in **Preferences**, per delegated provider:
 
-When the gate prompts, an actionable **Approve / Deny** notification is posted so the
-decision is reachable without the dashboard. With no matching rule the engine fails safe to
-a Touch ID prompt.
+- **SSH** — a **Method** (Touch ID or password / Touch ID only / Prompt), a default
+  **Scope** (per-request / per-session / per-shed) and **Duration**. An incoming SSH sign
+  shows an approval card pre-filled with these; you can change scope/duration per request,
+  approve/deny, or **Always allow / Always deny** the shed. The fingerprint icon appears
+  only for the biometric methods.
+- **AWS / Docker** — a live **Allow / Deny** toggle (no prompt). Changing it takes effect
+  immediately; no restart.
+- **Per-shed rules** — *Always allow* / *Always deny* on a card persists a per-`(server,
+  shed)` rule (managed under Preferences → Per-shed overrides). Identical shed names on
+  different servers don't collide — rules are keyed by `(server, shed)`.
+- **Session grants** — an in-memory grant for the chosen duration (not persisted).
+
+When SSH prompts, an actionable **Approve / Deny** notification is posted so the decision is
+reachable without the dashboard.
 
 ## Fail-closed
 

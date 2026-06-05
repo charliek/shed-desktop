@@ -17,19 +17,22 @@ shed config and the host-agent rather than configured here.
 Open with the menu-bar dropdown → **Preferences…** (or IPC `ui.open_preferences`). Exactly
 three values persist, under the standard suite `ai.stridelabs.ShedDesktop`:
 
+The approval sections appear only for the providers the host agent delegates to shed-desktop
+(`hello_ack.gate_namespaces`).
+
 | Section | Setting | Stored as | What it does |
 |---|---|---|---|
 | **General** | Launch at login | OS login-item registration (`SMAppService`), *not* UserDefaults | Registers/unregisters the app as a login item. |
 | **Terminal** | Command template (`{cmd}` placeholder) | `terminalTemplate` | Template for the terminal launch command; empty ⇒ Terminal.app. E.g. `ghostty -e {cmd}`. |
-| **Approval policy** | Default mode | `defaultApprovalMode` | Default response when the host agent delegates a request: `touchid` (Touch ID each time, default), `prompt`, `approve` (auto), `deny` (auto). |
-| **Per-namespace overrides** | ssh-agent / aws-credentials / docker-credentials → Inherit \| a mode | folded into `policyRules` (JSON) | Pins an approval mode for one namespace (only `ssh-agent` is gated today; the rest are audit-only). |
-| **Per-shed overrides** | list of `(server, shed)` auto-approve rows | folded into `policyRules` (JSON) | Per-`(server, shed)` "always allow" grants (added by the **Always allow** button on an approval card); remove with the ✕. |
-| **Hosts** | read-only list with reachability + `host:port` | — (reflects live state) | Read-only mirror of `~/.shed/config.yaml` — manage hosts with the `shed` CLI. |
+| **SSH approvals** | Method / Default scope / Duration | `sshMethod`, `sshScope`, `sshTTL` | Method: `biometrics-or-password` (default), `biometrics`, `prompt` (no Touch ID). Default scope (`per-request`/`per-session`/`per-shed`) + duration pre-fill the approval card. |
+| **AWS / Docker credentials** | Allow / Deny | `mode.aws-credentials`, `mode.docker-credentials` | A live Allow/Deny toggle (default Deny). No prompt; takes effect immediately. |
+| **Per-shed overrides** | list of `(server, shed)` allow/deny rows | `policyRules` (JSON) | Per-`(server, shed)` *always-allow* / *always-deny* rules (added by **Always allow / Always deny** on an approval card); remove with the ✕. |
 
-So there are exactly **three** persisted keys: `terminalTemplate`, `defaultApprovalMode`,
-and `policyRules` (a JSON blob holding all per-namespace + per-shed rules). The full policy
-model is in [Credential approvals](approvals.md). The `policyRules` blob is only written on a
-successful encode (never wiped), so overrides survive relaunch.
+The persisted keys are `terminalTemplate`, the SSH defaults (`sshMethod`/`sshScope`/`sshTTL`),
+the AWS/Docker `mode.<namespace>` toggles, and `policyRules` (the per-shed rules). The full
+policy model is in [Credential approvals](approvals.md). Registries (Docker) and roles (AWS)
+are **not** configurable here — they live in the host agent's `extensions.yaml`. Hosts are
+managed with the `shed` CLI (no Preferences UI).
 
 ## Host list (`~/.shed/config.yaml`)
 

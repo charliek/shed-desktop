@@ -59,7 +59,7 @@ def _reset_policy(_app_session):
     is app state that persists across tests)."""
     c = ShedDesktop(ui.socket_path())
     try:
-        c.policy_set([{"scope": "default", "action": "prompt", "gate": "touchid"}])
+        c.policy_set([{"scope": "default", "action": "prompt", "gate": "biometrics-or-password"}])
     finally:
         c.close()
     yield

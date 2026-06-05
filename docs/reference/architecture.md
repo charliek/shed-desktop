@@ -93,11 +93,12 @@ further.
 
 ### The host agent (Unix-domain socket)
 
-The headline feature. When `shed-host-agent` is configured with
-`ssh.approval.method: shed-desktop` + `desktop.enabled: true`, it serves a local
-Unix-domain socket and delegates **SSH-sign approval** decisions to the app, while streaming
-an **all-namespace audit feed** (ssh-agent + aws-credentials + docker-credentials) that the
-app surfaces in **Activity**. See [Credential approvals](approvals.md) for the policy model.
+The headline feature. When an extension is configured with `approval.policy: shed-desktop`
++ `desktop.enabled: true`, `shed-host-agent` serves a local Unix-domain socket and delegates
+that extension's **approval** decisions to the app (SSH interactively; AWS/Docker as a live
+Allow/Deny), while streaming an **all-namespace audit feed** (ssh-agent + aws-credentials +
+docker-credentials) that the app surfaces in **Activity**. See [Credential
+approvals](approvals.md) for the policy model.
 
 - **Socket:** `~/Library/Application Support/shed/host-agent.sock` (override
   `SHED_DESKTOP_HOST_AGENT_SOCKET`). `HostAgentClient` dials it, auto-reconnecting with
