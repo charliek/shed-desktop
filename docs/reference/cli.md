@@ -14,6 +14,8 @@ path.
 | `shedctl ui state` | Dump the current view-model (panes, hosts, sheds) |
 | `shedctl ui navigate <pane>` | Switch the dashboard pane |
 | `shedctl ui show-window` | Bring the dashboard window front |
+| `shedctl ui hide-window` | Close the dashboard (revert to menu-bar-only) |
+| `shedctl ui window-state` | Report dashboard visibility + activation policy |
 | `shedctl ui open-menu <true\|false>` | Open/close the menu-bar popover |
 | `shedctl host list` | List configured hosts + reachability |
 | `shedctl sheds list [--host NAME]` | List sheds (optionally one host) |

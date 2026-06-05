@@ -445,6 +445,10 @@ final class AppModel: NSObject, UiBridge {
 
     private func buildStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // Persist the icon's menu-bar position across launches and ⌘-drag
+        // reordering, so a user who drags it clear of the notch keeps it there
+        // (issue #4 — mitigates the icon landing under the notch unclickable).
+        item.autosaveName = "ShedDesktopStatusItem"
         if let button = item.button {
             button.image = NSImage(systemSymbolName: "shippingbox.fill", accessibilityDescription: "shed desktop")
             button.imagePosition = .imageLeading
@@ -524,6 +528,13 @@ final class AppModel: NSObject, UiBridge {
         }
     }
 
+    func hideWindow() {
+        // close() (not orderOut) so the existing windowWillClose handler runs
+        // and reverts to a menu-bar-only accessory — the same path as the user
+        // closing the window. isReleasedWhenClosed is false, so it can reopen.
+        mainWindow?.close()
+    }
+
     func showWindow() {
         guard let window = mainWindow else { return }
         // Becoming a regular app (Dock icon + ⌘-Tab + the top-left app menu)
@@ -568,6 +579,12 @@ final class AppModel: NSObject, UiBridge {
             windowHeight: Double(content.height),
             sidebarWidth: Double(Theme.sidebarWidth),
             visiblePane: state.pane.rawValue)
+    }
+
+    func windowState() -> WindowState {
+        WindowState(
+            visible: mainWindow?.isVisible ?? false,
+            activationPolicy: NSApp.activationPolicy() == .regular ? "regular" : "accessory")
     }
 
     // MARK: - UiBridge (M1)

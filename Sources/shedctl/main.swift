@@ -74,8 +74,10 @@ func usage() -> Never {
       shedctl ui state
       shedctl ui navigate <sheds|approvals|agents|activity|system>
       shedctl ui show-window
+      shedctl ui hide-window
       shedctl ui show-create
       shedctl ui open-menu <true|false>
+      shedctl ui window-state
       shedctl host list
       shedctl sheds list [--host NAME]
       shedctl sheds refresh
@@ -138,11 +140,15 @@ do {
         printJSON(try client.call(op: "ui.navigate", params: ["pane": argv[2]]))
     case ("ui", "show-window"):
         printJSON(try client.call(op: "ui.show_window", params: [:]))
+    case ("ui", "hide-window"):
+        printJSON(try client.call(op: "ui.hide_window", params: [:]))
     case ("ui", "show-create"):
         printJSON(try client.call(op: "ui.show_create", params: [:]))
     case ("ui", "open-menu"):
         let open = (argv.count >= 3 ? argv[2] : "true") == "true"
         printJSON(try client.call(op: "ui.open_menu", params: ["open": open]))
+    case ("ui", "window-state"):
+        printJSON(try client.call(op: "ui.window_state", params: [:]))
     case ("host", "list"):
         printJSON(try client.call(op: "host.list", params: [:]))
     case ("sheds", "list"):
