@@ -201,6 +201,21 @@ public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable 
     /// Always Deny is the one deny row (red Apply, no biometric prompt).
     public var isDeny: Bool { self == .alwaysDeny }
 
+    /// The provider-level (namespace) action this policy installs: the two
+    /// "Always" options decide outright with no prompt; the rest prompt (and
+    /// the chosen scope governs the grant created when the user approves).
+    public var namespaceAction: PolicyAction {
+        switch self {
+        case .alwaysAllow: return .approve
+        case .alwaysDeny: return .deny
+        case .perShedAllow, .timeBasedAllow, .alwaysAsk: return .prompt
+        }
+    }
+
+    /// Whether this policy prompts the user — so Method (Touch ID) and the
+    /// Duration field are relevant only for these.
+    public var prompts: Bool { namespaceAction == .prompt }
+
     public func choice(ttl: String) -> ApprovalChoice {
         switch self {
         case .alwaysAllow: return ApprovalChoice(decision: .approve, persist: true)
@@ -210,10 +225,6 @@ public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable 
         case .alwaysDeny: return ApprovalChoice(decision: .deny, persist: true)
         }
     }
-
-    /// The subset valid as a per-provider DEFAULT (a persistent always-rule isn't
-    /// a sensible default; the default just pre-selects the card).
-    public static let defaults: [CardDecision] = [.perShedAllow, .timeBasedAllow, .alwaysAsk]
 
     /// Map a stored default `ApprovalScope` to its card decision (and back).
     public init(defaultScope: ApprovalScope) {

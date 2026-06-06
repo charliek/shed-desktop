@@ -36,7 +36,7 @@ public protocol UiBridge: AnyObject {
 
     /// Apply SSH approval preferences (any subset) and reset live SSH grants so
     /// the change takes effect on the next request (`ui.set_ssh_approval`).
-    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?)
+    func setSshApproval(method: ApprovalMethod?, policy: CardDecision?, ttl: String?)
 
     /// Snapshot of the view-model for `ui.state`.
     func uiState() -> UIState

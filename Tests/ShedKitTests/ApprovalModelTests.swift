@@ -58,10 +58,23 @@ final class ApprovalModelTests: XCTestCase {
         XCTAssertTrue(CardDecision.allCases.filter(\.isDeny) == [.alwaysDeny])
     }
 
+    func testCardDecisionNamespaceActionAndPrompts() {
+        // The two "Always" options decide outright (no prompt); the rest prompt
+        // and grant per their scope. Drives the SSH namespace rule + which
+        // Preferences controls (Method/Duration) are shown.
+        XCTAssertEqual(CardDecision.alwaysAllow.namespaceAction, .approve)
+        XCTAssertEqual(CardDecision.alwaysDeny.namespaceAction, .deny)
+        XCTAssertFalse(CardDecision.alwaysAllow.prompts)
+        XCTAssertFalse(CardDecision.alwaysDeny.prompts)
+        for d in [CardDecision.perShedAllow, .timeBasedAllow, .alwaysAsk] {
+            XCTAssertEqual(d.namespaceAction, .prompt)
+            XCTAssertTrue(d.prompts)
+        }
+    }
+
     func testCardDecisionDefaultScopeRoundTrip() {
-        // The default-eligible subset maps 1:1 to ApprovalScope (no always-rules).
-        XCTAssertEqual(CardDecision.defaults, [.perShedAllow, .timeBasedAllow, .alwaysAsk])
-        for d in CardDecision.defaults {
+        // The prompting subset maps 1:1 to ApprovalScope (no always-rules).
+        for d in [CardDecision.perShedAllow, .timeBasedAllow, .alwaysAsk] {
             XCTAssertEqual(CardDecision(defaultScope: d.defaultScope!), d)
         }
         XCTAssertNil(CardDecision.alwaysAllow.defaultScope)
