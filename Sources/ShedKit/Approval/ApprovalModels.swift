@@ -172,11 +172,13 @@ public enum ApprovalScope: String, Codable, Sendable, CaseIterable {
 
 }
 
-/// The single approval-card dropdown, ordered most→least permissive. Each maps
-/// to an `ApprovalChoice`. `perShedAllow` grants until the app restarts (sticky,
-/// no TTL); `timeBasedAllow` grants for the duration; `alwaysAllow`/`alwaysDeny`
-/// persist a per-shed rule; `alwaysAsk` approves once and re-asks next time.
-public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable {
+/// The SSH approval policy, ordered most → least permissive. Configured in
+/// Preferences (it also labels that picker) and applied by the policy engine:
+/// `alwaysAllow`/`alwaysDeny` decide every sign outright (no prompt);
+/// `perShedAllow` prompts once per shed then grants until restart;
+/// `timeBasedAllow` prompts then grants for the duration; `alwaysAsk` prompts
+/// every time.
+public enum SSHApprovalPolicy: String, Codable, Sendable, CaseIterable, Identifiable {
     case alwaysAllow = "always-allow"
     case perShedAllow = "per-shed-allow"
     case timeBasedAllow = "time-based-allow"
@@ -195,11 +197,8 @@ public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable 
         }
     }
 
-    /// Only the time-based grant uses the duration field.
+    /// Only the time-based policy uses the duration field.
     public var usesDuration: Bool { self == .timeBasedAllow }
-
-    /// Always Deny is the one deny row (red Apply, no biometric prompt).
-    public var isDeny: Bool { self == .alwaysDeny }
 
     /// The provider-level (namespace) action this policy installs: the two
     /// "Always" options decide outright with no prompt; the rest prompt (and
@@ -216,24 +215,8 @@ public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable 
     /// Duration field are relevant only for these.
     public var prompts: Bool { namespaceAction == .prompt }
 
-    public func choice(ttl: String) -> ApprovalChoice {
-        switch self {
-        case .alwaysAllow: return ApprovalChoice(decision: .approve, persist: true)
-        case .perShedAllow: return ApprovalChoice(decision: .approve, scope: .perShed)
-        case .timeBasedAllow: return ApprovalChoice(decision: .approve, scope: .perSession, ttl: ttl)
-        case .alwaysAsk: return ApprovalChoice(decision: .approve, scope: .perRequest)
-        case .alwaysDeny: return ApprovalChoice(decision: .deny, persist: true)
-        }
-    }
-
-    /// Map a stored default `ApprovalScope` to its card decision (and back).
-    public init(defaultScope: ApprovalScope) {
-        switch defaultScope {
-        case .perShed: self = .perShedAllow
-        case .perSession: self = .timeBasedAllow
-        case .perRequest: self = .alwaysAsk
-        }
-    }
+    /// The default grant scope this policy applies when the user approves a
+    /// prompt (nil for the non-prompting Always rules, which never reach a card).
     public var defaultScope: ApprovalScope? {
         switch self {
         case .perShedAllow: return .perShed
@@ -286,6 +269,15 @@ public struct PendingApprovalItem: Sendable, Equatable, Identifiable, Encodable 
         self.defaultScope = defaultScope
         self.defaultTTL = defaultTTL
     }
+
+    /// What an Approve tap sends — applies the configured policy's grant
+    /// scope/TTL. Shared by the dashboard card and the menu-bar mini-card so the
+    /// two surfaces can't drift on what "Approve" means.
+    public var approveChoice: ApprovalChoice {
+        ApprovalChoice(decision: .approve, scope: defaultScope, ttl: defaultTTL)
+    }
+    /// What a Deny tap sends — this request only (never persists a rule).
+    public var denyChoice: ApprovalChoice { ApprovalChoice(decision: .deny) }
 
     // Encode the request fields inline (so `approvals.list` keeps id/server/…)
     // plus the decided gate + scope/TTL defaults, for IPC drivability.

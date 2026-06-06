@@ -43,7 +43,7 @@ public struct PreferencesView: View {
             if prefs.gatedNamespaces.contains(CredentialNamespace.ssh) {
                 Section("SSH approvals") {
                     Picker("Approval policy", selection: $prefs.sshPolicy) {
-                        ForEach(CardDecision.allCases) { Text($0.label).tag($0) }
+                        ForEach(SSHApprovalPolicy.allCases) { Text($0.label).tag($0) }
                     }
                     .onChange(of: prefs.sshPolicy) { _, v in prefs.onSSHPolicy?(v) }
                     if prefs.sshPolicy.usesDuration {

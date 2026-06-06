@@ -191,7 +191,7 @@ final class AppModel: NSObject, UiBridge {
 
     /// Apply SSH approval preferences (any subset) and reset live SSH grants so
     /// the change takes effect immediately. Drives the same path as the UI.
-    func setSshApproval(method: ApprovalMethod?, policy: CardDecision?, ttl: String?) {
+    func setSshApproval(method: ApprovalMethod?, policy: SSHApprovalPolicy?, ttl: String?) {
         if let method { prefsStore.sshMethod = method; prefs.sshMethod = method }
         if let policy { prefsStore.sshPolicy = policy; prefs.sshPolicy = policy }
         if let ttl { prefsStore.sshTTL = ttl; prefs.sshTTL = ttl }

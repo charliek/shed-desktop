@@ -29,7 +29,7 @@ public struct ShedRuleRow: Identifiable, Equatable, Sendable {
 
     // SSH (shown when "ssh-agent" is gated): full interactive approval.
     @Published public var sshMethod: ApprovalMethod = .biometricsOrPassword
-    @Published public var sshPolicy: CardDecision = .timeBasedAllow
+    @Published public var sshPolicy: SSHApprovalPolicy = .timeBasedAllow
     @Published public var sshTTL: String = defaultApprovalTTL
 
     // AWS / Docker (shown when gated): a live Allow/Deny toggle.
@@ -42,7 +42,7 @@ public struct ShedRuleRow: Identifiable, Equatable, Sendable {
     public var onLaunchAtLogin: ((Bool) -> Void)?
     public var onTerminalTemplate: ((String) -> Void)?
     public var onSSHMethod: ((ApprovalMethod) -> Void)?
-    public var onSSHPolicy: ((CardDecision) -> Void)?
+    public var onSSHPolicy: ((SSHApprovalPolicy) -> Void)?
     public var onSSHTTL: ((String) -> Void)?
     /// Set the live Allow/Deny mode for a credential namespace (aws/docker).
     public var onProviderMode: ((String, ApprovalDecision) -> Void)?

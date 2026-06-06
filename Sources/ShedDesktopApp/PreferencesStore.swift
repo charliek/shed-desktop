@@ -34,8 +34,8 @@ struct PreferencesStore {
     /// The SSH approval policy (5 options). `alwaysAllow`/`alwaysDeny` decide
     /// every sign outright; the rest prompt and grant per their scope. Default
     /// is Time Based Allow (prompt once, grant for the duration).
-    var sshPolicy: CardDecision {
-        get { CardDecision(rawValue: defaults.string(forKey: "sshPolicy") ?? "") ?? .timeBasedAllow }
+    var sshPolicy: SSHApprovalPolicy {
+        get { SSHApprovalPolicy(rawValue: defaults.string(forKey: "sshPolicy") ?? "") ?? .timeBasedAllow }
         nonmutating set { defaults.set(newValue.rawValue, forKey: "sshPolicy") }
     }
     var sshTTL: String {

@@ -383,13 +383,13 @@ private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let u
 
 private struct SetSshApprovalParams: Decodable {
     let method: ApprovalMethod?
-    let policy: CardDecision?
+    let policy: SSHApprovalPolicy?
     let ttl: String?
     enum CodingKeys: String, CodingKey { case method, policy, ttl }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.method = try c.decodeIfPresent(ApprovalMethod.self, forKey: .method)
-        self.policy = try c.decodeIfPresent(CardDecision.self, forKey: .policy)
+        self.policy = try c.decodeIfPresent(SSHApprovalPolicy.self, forKey: .policy)
         self.ttl = try c.decodeIfPresent(String.self, forKey: .ttl)
     }
 }
