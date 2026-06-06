@@ -338,6 +338,11 @@ final class AppModel: NSObject, UiBridge {
                 try? await Task.sleep(for: interval)
             }
         }
+        // Seed image data for the Sheds pane's repo:tag labels, concurrently so a
+        // slow image endpoint never delays the first shed render. Images change
+        // rarely and are also refreshed when the New-Shed sheet opens; until this
+        // lands, the badge falls back to the short digest.
+        Task { [weak self] in await self?.refreshImages() }
     }
 
     // MARK: - polling (UiBridge.refreshSheds)
