@@ -36,7 +36,7 @@ struct PreferencesStore {
         nonmutating set { defaults.set(newValue.rawValue, forKey: "sshScope") }
     }
     var sshTTL: String {
-        get { defaults.string(forKey: "sshTTL") ?? "1h" }
+        get { defaults.string(forKey: "sshTTL") ?? defaultApprovalTTL }
         nonmutating set { defaults.set(newValue, forKey: "sshTTL") }
     }
 

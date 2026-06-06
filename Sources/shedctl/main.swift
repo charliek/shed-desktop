@@ -73,6 +73,7 @@ func usage() -> Never {
       shedctl identify
       shedctl ui state
       shedctl ui navigate <sheds|approvals|agents|activity|system>
+      shedctl ui set-ssh-approval [--method M] [--scope S] [--ttl T]
       shedctl ui show-window
       shedctl ui hide-window
       shedctl ui show-create
@@ -138,6 +139,12 @@ do {
     case ("ui", "navigate"):
         guard argv.count >= 3 else { usage() }
         printJSON(try client.call(op: "ui.navigate", params: ["pane": argv[2]]))
+    case ("ui", "set-ssh-approval"):
+        var params: [String: Any] = [:]
+        if let m = flag(argv, "--method") { params["method"] = m }
+        if let s = flag(argv, "--scope") { params["scope"] = s }
+        if let t = flag(argv, "--ttl") { params["ttl"] = t }
+        printJSON(try client.call(op: "ui.set_ssh_approval", params: params))
     case ("ui", "show-window"):
         printJSON(try client.call(op: "ui.show_window", params: [:]))
     case ("ui", "hide-window"):

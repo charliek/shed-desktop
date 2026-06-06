@@ -39,6 +39,10 @@ final class AppModel: NSObject, UiBridge {
     /// persisted via PreferencesStore.policyRules.
     private var extraRules: [PolicyRule] = []
     private var auditStore: AuditStore?
+    // In-memory approval grants keyed by (server, namespace, shed) → expiry. A
+    // Date.distantFuture value is the sentinel for a *sticky* (Per Shed) grant
+    // that never time-expires — it lives until the app restarts or an SSH setting
+    // changes; validGrants() (value > now) treats it as always valid by design.
     private var sessionGrants: [SessionGrantKey: Date] = [:]
     /// A queued prompt: the request plus the gate to apply when the user acts.
     private struct PendingApproval { let request: ApprovalRequest; let gate: PolicyGate }
@@ -48,7 +52,9 @@ final class AppModel: NSObject, UiBridge {
     /// Actionable Approve/Deny notifications (Fake under the harness).
     private var notifier: (any NotificationPresenter)?
 
-    private let grantTTL: TimeInterval = 4 * 3600
+    /// Fallback grant duration (seconds) — used only if even the default TTL
+    /// string can't be parsed. Mirrors defaultApprovalTTL ("2h").
+    private let grantTTL: TimeInterval = 2 * 3600
 
     // M4: preferences
     private let prefsStore = PreferencesStore()
@@ -129,13 +135,13 @@ final class AppModel: NSObject, UiBridge {
         prefs.onTerminalTemplate = { [weak self] template in
             self?.prefsStore.terminalTemplate = template
         }
-        prefs.onSSHMethod = { [weak self] m in
-            guard let self else { return }
-            self.prefsStore.sshMethod = m
-            self.rebuildPolicy()
-        }
-        prefs.onSSHScope = { [weak self] s in self?.prefsStore.sshScope = s }
-        prefs.onSSHTTL = { [weak self] t in self?.prefsStore.sshTTL = t }
+        // Changing any SSH approval setting clears live in-memory SSH grants, so
+        // the new policy takes effect on the very next request (a grant from an
+        // earlier per-session/per-shed approval no longer auto-approves past the
+        // change). Explicit per-shed always-allow/deny rules are left untouched.
+        prefs.onSSHMethod = { [weak self] m in self?.setSshApproval(method: m, scope: nil, ttl: nil) }
+        prefs.onSSHScope = { [weak self] s in self?.setSshApproval(method: nil, scope: s, ttl: nil) }
+        prefs.onSSHTTL = { [weak self] t in self?.setSshApproval(method: nil, scope: nil, ttl: t) }
         prefs.onProviderMode = { [weak self] ns, mode in self?.setProviderMode(ns, mode) }
         prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
     }
@@ -156,6 +162,22 @@ final class AppModel: NSObject, UiBridge {
     private func setProviderMode(_ ns: String, _ mode: ApprovalDecision) {
         prefsStore.setProviderMode(ns, mode)
         rebuildPolicy()
+    }
+
+    /// Drop the in-memory SSH session grants (the always-allow/deny per-shed
+    /// rules in `extraRules` are persistent and left untouched).
+    private func resetSshGrants() {
+        sessionGrants = sessionGrants.filter { $0.key.namespace != CredentialNamespace.ssh }
+    }
+
+    /// Apply SSH approval preferences (any subset) and reset live SSH grants so
+    /// the change takes effect immediately. Drives the same path as the UI.
+    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?) {
+        if let method { prefsStore.sshMethod = method; prefs.sshMethod = method }
+        if let scope { prefsStore.sshScope = scope; prefs.sshScope = scope }
+        if let ttl { prefsStore.sshTTL = ttl; prefs.sshTTL = ttl }
+        rebuildPolicy()
+        resetSshGrants()
     }
 
     private func persistAndRebuild() {
@@ -885,6 +907,10 @@ final class AppModel: NSObject, UiBridge {
     func decideApproval(id: String, choice: ApprovalChoice) async throws {
         guard let item = pending[id] else { throw IPCHandlerError.notFound("no pending approval \(id)") }
         let req = item.request
+        // Don't act on an already-expired request — the 1s expiry task may not have
+        // fired yet, but acting now would persist a rule / create a (possibly sticky)
+        // grant and send a late decision for a request the agent has already denied.
+        guard (req.expiresAtDate ?? .distantPast) > Date() else { return }
         let decision = choice.decision
         var decidedBy: DecidedBy = .user
         if decision == .approve, item.gate.isBiometric, !ShedBackend.shared.testMode {
@@ -919,9 +945,20 @@ final class AppModel: NSObject, UiBridge {
             sentScope = "always"
             policyLabel = decision == .approve ? "shed-rule" : "deny-rule"
         } else if decision == .approve, let scope = choice.scope, scope != .perRequest {
-            let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
-            sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
-            sentTTL = choice.ttl ?? ""
+            if scope == .perShed {
+                // Per Shed: a sticky grant — asks once per shed, then auto-approves
+                // until the app restarts (in-memory) or an SSH setting changes. TTL
+                // is irrelevant here.
+                sessionGrants[grantKey] = .distantFuture
+            } else {  // per-session: time-bounded by the duration
+                // Resolve one validated TTL — empty/invalid input falls back to the
+                // default — and use it for BOTH the grant expiry and the value we
+                // report to the host (never the raw, possibly-invalid, input).
+                let ttlText = choice.ttl.flatMap { TTLShorthand.seconds($0) != nil ? $0 : nil } ?? defaultApprovalTTL
+                let secs = TTLShorthand.seconds(ttlText) ?? Int(grantTTL)
+                sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
+                sentTTL = ttlText
+            }
             policyLabel = "session-grant"
         }
 

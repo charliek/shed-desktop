@@ -32,6 +32,43 @@ final class ApprovalModelTests: XCTestCase {
         XCTAssertNil(TTLShorthand.seconds("abc"))
     }
 
+    func testCardDecisionMapsToChoice() {
+        let always = CardDecision.alwaysAllow.choice(ttl: "2h")
+        XCTAssertEqual(always.decision, .approve); XCTAssertTrue(always.persist); XCTAssertNil(always.scope)
+
+        let perShed = CardDecision.perShedAllow.choice(ttl: "2h")
+        XCTAssertEqual(perShed.decision, .approve); XCTAssertEqual(perShed.scope, .perShed)
+        XCTAssertFalse(perShed.persist); XCTAssertNil(perShed.ttl)
+
+        let timed = CardDecision.timeBasedAllow.choice(ttl: "3h")
+        XCTAssertEqual(timed.decision, .approve); XCTAssertEqual(timed.scope, .perSession); XCTAssertEqual(timed.ttl, "3h")
+
+        let ask = CardDecision.alwaysAsk.choice(ttl: "2h")
+        XCTAssertEqual(ask.decision, .approve); XCTAssertEqual(ask.scope, .perRequest); XCTAssertFalse(ask.persist)
+
+        let deny = CardDecision.alwaysDeny.choice(ttl: "2h")
+        XCTAssertEqual(deny.decision, .deny); XCTAssertTrue(deny.persist)
+    }
+
+    func testCardDecisionOrderingAndFlags() {
+        // allCases is the dropdown order: most → least permissive.
+        XCTAssertEqual(CardDecision.allCases,
+                       [.alwaysAllow, .perShedAllow, .timeBasedAllow, .alwaysAsk, .alwaysDeny])
+        XCTAssertTrue(CardDecision.allCases.filter(\.usesDuration) == [.timeBasedAllow])
+        XCTAssertTrue(CardDecision.allCases.filter(\.isDeny) == [.alwaysDeny])
+    }
+
+    func testCardDecisionDefaultScopeRoundTrip() {
+        // The default-eligible subset maps 1:1 to ApprovalScope (no always-rules).
+        XCTAssertEqual(CardDecision.defaults, [.perShedAllow, .timeBasedAllow, .alwaysAsk])
+        for d in CardDecision.defaults {
+            XCTAssertEqual(CardDecision(defaultScope: d.defaultScope!), d)
+        }
+        XCTAssertNil(CardDecision.alwaysAllow.defaultScope)
+        XCTAssertNil(CardDecision.alwaysDeny.defaultScope)
+        XCTAssertEqual(CardDecision(defaultScope: .perSession), .timeBasedAllow)
+    }
+
     // The gate enum's wire values pin the protocol contract.
     func testGateWireValues() {
         XCTAssertEqual(PolicyGate.biometricsOrPassword.rawValue, "biometrics-or-password")

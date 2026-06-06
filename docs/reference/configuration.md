@@ -24,7 +24,7 @@ The approval sections appear only for the providers the host agent delegates to 
 |---|---|---|---|
 | **General** | Launch at login | OS login-item registration (`SMAppService`), *not* UserDefaults | Registers/unregisters the app as a login item. |
 | **Terminal** | Command template (`{cmd}` placeholder) | `terminalTemplate` | Template for the terminal launch command; empty ⇒ Terminal.app. E.g. `ghostty -e {cmd}`. |
-| **SSH approvals** | Method / Default scope / Duration | `sshMethod`, `sshScope`, `sshTTL` | Method: `biometrics-or-password` (default), `biometrics`, `prompt` (no Touch ID). Default scope (`per-request`/`per-session`/`per-shed`) + duration pre-fill the approval card. |
+| **SSH approvals** | Method / Default decision / Duration | `sshMethod`, `sshScope`, `sshTTL` | Method: `biometrics-or-password` (default), `biometrics`, `prompt` (no Touch ID). Default decision (Per Shed Allow / **Time Based Allow** (default) / Always Ask) + duration (default `2h`, shown for Time Based) pre-fill the approval card. (Always Allow / Always Deny are per-decision card actions that persist a rule — not available as a default.) Changing any of these clears live SSH grants. |
 | **AWS / Docker credentials** | Allow / Deny | `mode.aws-credentials`, `mode.docker-credentials` | A live Allow/Deny toggle (default Deny). No prompt; takes effect immediately. |
 | **Per-shed overrides** | list of `(server, shed)` allow/deny rows | `policyRules` (JSON) | Per-`(server, shed)` *always-allow* / *always-deny* rules (added by **Always allow / Always deny** on an approval card); remove with the ✕. |
 

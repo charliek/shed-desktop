@@ -170,11 +170,65 @@ public enum ApprovalScope: String, Codable, Sendable, CaseIterable {
     case perSession = "per-session"
     case perShed = "per-shed"
 
+}
+
+/// The single approval-card dropdown, ordered most→least permissive. Each maps
+/// to an `ApprovalChoice`. `perShedAllow` grants until the app restarts (sticky,
+/// no TTL); `timeBasedAllow` grants for the duration; `alwaysAllow`/`alwaysDeny`
+/// persist a per-shed rule; `alwaysAsk` approves once and re-asks next time.
+public enum CardDecision: String, Codable, Sendable, CaseIterable, Identifiable {
+    case alwaysAllow = "always-allow"
+    case perShedAllow = "per-shed-allow"
+    case timeBasedAllow = "time-based-allow"
+    case alwaysAsk = "always-ask"
+    case alwaysDeny = "always-deny"
+
+    public var id: String { rawValue }
+
     public var label: String {
         switch self {
-        case .perRequest: return "This request only"
-        case .perSession: return "This session"
-        case .perShed: return "This shed"
+        case .alwaysAllow: return "Always Allow"
+        case .perShedAllow: return "Per Shed Allow"
+        case .timeBasedAllow: return "Time Based Allow"
+        case .alwaysAsk: return "Always Ask"
+        case .alwaysDeny: return "Always Deny"
+        }
+    }
+
+    /// Only the time-based grant uses the duration field.
+    public var usesDuration: Bool { self == .timeBasedAllow }
+
+    /// Always Deny is the one deny row (red Apply, no biometric prompt).
+    public var isDeny: Bool { self == .alwaysDeny }
+
+    public func choice(ttl: String) -> ApprovalChoice {
+        switch self {
+        case .alwaysAllow: return ApprovalChoice(decision: .approve, persist: true)
+        case .perShedAllow: return ApprovalChoice(decision: .approve, scope: .perShed)
+        case .timeBasedAllow: return ApprovalChoice(decision: .approve, scope: .perSession, ttl: ttl)
+        case .alwaysAsk: return ApprovalChoice(decision: .approve, scope: .perRequest)
+        case .alwaysDeny: return ApprovalChoice(decision: .deny, persist: true)
+        }
+    }
+
+    /// The subset valid as a per-provider DEFAULT (a persistent always-rule isn't
+    /// a sensible default; the default just pre-selects the card).
+    public static let defaults: [CardDecision] = [.perShedAllow, .timeBasedAllow, .alwaysAsk]
+
+    /// Map a stored default `ApprovalScope` to its card decision (and back).
+    public init(defaultScope: ApprovalScope) {
+        switch defaultScope {
+        case .perShed: self = .perShedAllow
+        case .perSession: self = .timeBasedAllow
+        case .perRequest: self = .alwaysAsk
+        }
+    }
+    public var defaultScope: ApprovalScope? {
+        switch self {
+        case .perShedAllow: return .perShed
+        case .timeBasedAllow: return .perSession
+        case .alwaysAsk: return .perRequest
+        case .alwaysAllow, .alwaysDeny: return nil
         }
     }
 }
@@ -215,7 +269,7 @@ public struct PendingApprovalItem: Sendable, Equatable, Identifiable, Encodable 
     public let defaultTTL: String
     public var id: String { request.id }
 
-    public init(request: ApprovalRequest, gate: PolicyGate, defaultScope: ApprovalScope = .perSession, defaultTTL: String = "1h") {
+    public init(request: ApprovalRequest, gate: PolicyGate, defaultScope: ApprovalScope = .perSession, defaultTTL: String = defaultApprovalTTL) {
         self.request = request
         self.gate = gate
         self.defaultScope = defaultScope
@@ -265,6 +319,10 @@ public struct ApprovalChoice: Sendable, Equatable {
         self.persist = persist
     }
 }
+
+/// The default approval grant duration — used when the duration field is empty
+/// or unparseable, and as the pre-fill default.
+public let defaultApprovalTTL = "2h"
 
 /// Parse a TTL shorthand like `45s`, `4m`, `3h`, `1d` into seconds. Returns nil
 /// for empty/invalid input so the UI can fall back to a default.
