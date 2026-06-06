@@ -39,6 +39,10 @@ final class AppModel: NSObject, UiBridge {
     /// persisted via PreferencesStore.policyRules.
     private var extraRules: [PolicyRule] = []
     private var auditStore: AuditStore?
+    // In-memory approval grants keyed by (server, namespace, shed) → expiry. A
+    // Date.distantFuture value is the sentinel for a *sticky* (Per Shed) grant
+    // that never time-expires — it lives until the app restarts or an SSH setting
+    // changes; validGrants() (value > now) treats it as always valid by design.
     private var sessionGrants: [SessionGrantKey: Date] = [:]
     /// A queued prompt: the request plus the gate to apply when the user acts.
     private struct PendingApproval { let request: ApprovalRequest; let gate: PolicyGate }
@@ -133,22 +137,9 @@ final class AppModel: NSObject, UiBridge {
         // the new policy takes effect on the very next request (a grant from an
         // earlier per-session/per-shed approval no longer auto-approves past the
         // change). Explicit per-shed always-allow/deny rules are left untouched.
-        prefs.onSSHMethod = { [weak self] m in
-            guard let self else { return }
-            self.prefsStore.sshMethod = m
-            self.rebuildPolicy()
-            self.resetSshGrants()
-        }
-        prefs.onSSHScope = { [weak self] s in
-            guard let self else { return }
-            self.prefsStore.sshScope = s
-            self.resetSshGrants()
-        }
-        prefs.onSSHTTL = { [weak self] t in
-            guard let self else { return }
-            self.prefsStore.sshTTL = t
-            self.resetSshGrants()
-        }
+        prefs.onSSHMethod = { [weak self] m in self?.setSshApproval(method: m, scope: nil, ttl: nil) }
+        prefs.onSSHScope = { [weak self] s in self?.setSshApproval(method: nil, scope: s, ttl: nil) }
+        prefs.onSSHTTL = { [weak self] t in self?.setSshApproval(method: nil, scope: nil, ttl: t) }
         prefs.onProviderMode = { [weak self] ns, mode in self?.setProviderMode(ns, mode) }
         prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
     }
@@ -914,6 +905,10 @@ final class AppModel: NSObject, UiBridge {
     func decideApproval(id: String, choice: ApprovalChoice) async throws {
         guard let item = pending[id] else { throw IPCHandlerError.notFound("no pending approval \(id)") }
         let req = item.request
+        // Don't act on an already-expired request — the 1s expiry task may not have
+        // fired yet, but acting now would persist a rule / create a (possibly sticky)
+        // grant and send a late decision for a request the agent has already denied.
+        guard (req.expiresAtDate ?? .distantPast) > Date() else { return }
         let decision = choice.decision
         var decidedBy: DecidedBy = .user
         if decision == .approve, item.gate.isBiometric, !ShedBackend.shared.testMode {
