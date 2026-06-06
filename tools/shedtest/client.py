@@ -226,6 +226,10 @@ class ShedDesktop:
     def notification_invoke(self, id: str, action: str) -> None:
         self.call("notification.invoke", {"id": id, "action": action})
 
+    def notification_open(self) -> None:
+        """Drive a notification-body tap → opens the dashboard on Approvals."""
+        self.call("notification.open")
+
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 

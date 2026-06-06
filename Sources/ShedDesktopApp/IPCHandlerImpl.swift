@@ -143,6 +143,10 @@ actor IPCHandlerImpl: IPCHandler {
             let p = try decodeParams(params, as: NotificationInvokeParams.self, expected: ["id", "action"])
             try await notificationInvokeOp(p)
             return emptyResult
+        case "notification.open":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await notificationOpenOp()
+            return emptyResult
         default:
             throw IPCHandlerError.unknownOp(op)
         }
@@ -261,6 +265,10 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func notificationInvokeOp(_ p: NotificationInvokeParams) throws {
         try uiBridge().invokeNotification(id: p.id, decision: p.action)
+    }
+
+    @MainActor private func notificationOpenOp() throws {
+        try uiBridge().invokeNotificationOpen()
     }
 
     @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {

@@ -107,4 +107,6 @@ public protocol UiBridge: AnyObject {
     func postedNotifications() -> [PostedNotification]
     /// Drive a posted notification's Approve/Deny action (test presenter only).
     func invokeNotification(id: String, decision: ApprovalDecision) throws
+    /// Drive a notification-body tap → open the Approvals pane (test presenter only).
+    func invokeNotificationOpen() throws
 }

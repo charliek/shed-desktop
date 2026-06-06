@@ -156,6 +156,20 @@ def test_notification_posted_and_invoked(shed, fake):
     assert rid not in _pending_ids(shed)
 
 
+def test_notification_open_navigates_to_approvals(shed, fake):
+    # Tapping the banner body (not Approve/Deny) opens the dashboard on the
+    # Approvals pane and leaves the request pending.
+    shed.navigate("sheds")
+    rid = fake.emit_request("ssh-agent", "sign", "open-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid in _pending_ids(shed), what="request queued")
+    shed.notification_open()
+    shed.wait_until(lambda: shed.ui_state().get("pane") == "approvals", what="navigated to approvals")
+    assert shed.window_state().get("visible") is True
+    assert rid in _pending_ids(shed)  # default tap doesn't decide it
+    shed.approval_decide(rid, "deny")  # cleanup
+    shed.wait_until(lambda: rid not in _pending_ids(shed), what="cleanup resolved")
+
+
 def test_notification_not_posted_for_auto_policy(shed, fake):
     # An auto-approve never prompts, so it never posts a notification.
     shed.policy_set([{"scope": "default", "action": "approve", "gate": "none"}])

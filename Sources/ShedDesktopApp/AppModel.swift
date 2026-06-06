@@ -867,6 +867,11 @@ final class AppModel: NSObject, UiBridge {
             // Already on the main actor (the presenter is @MainActor).
             Task { [weak self] in try? await self?.decideApproval(id: id, choice: ApprovalChoice(decision: decision)) }
         }
+        // Tapping the banner body opens the dashboard on the Approvals pane.
+        notifier.onOpen = { [weak self] in
+            self?.showWindow()
+            _ = self?.navigate(toPane: DashboardPane.approvals.rawValue)
+        }
         if !ShedBackend.shared.testMode { notifier.requestAuthorization() }
         self.notifier = notifier
 
@@ -1075,6 +1080,13 @@ final class AppModel: NSObject, UiBridge {
         guard fake.invoke(id: id, decision: decision) else {
             throw IPCHandlerError.notFound("no posted notification \(id)")
         }
+    }
+
+    func invokeNotificationOpen() throws {
+        guard let fake = notifier as? FakeNotificationPresenter else {
+            throw IPCHandlerError.notEnabled("notification.open requires the test presenter")
+        }
+        fake.triggerOpen()
     }
 }
 

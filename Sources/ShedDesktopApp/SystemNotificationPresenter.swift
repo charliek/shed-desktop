@@ -13,6 +13,7 @@ import UserNotifications
 @MainActor
 final class SystemNotificationPresenter: NSObject, NotificationPresenter, UNUserNotificationCenterDelegate {
     var onAction: ((String, ApprovalDecision) -> Void)?
+    var onOpen: (() -> Void)?
 
     private static let categoryID = "approval"
     private static let approveAction = "approve"
@@ -76,14 +77,15 @@ final class SystemNotificationPresenter: NSObject, NotificationPresenter, UNUser
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
         let id = response.notification.request.identifier
-        let decision: ApprovalDecision?
         switch response.actionIdentifier {
-        case Self.approveAction: decision = .approve
-        case Self.denyAction: decision = .deny
-        default: decision = nil   // default tap / dismiss → leave it pending
-        }
-        if let decision {
-            Task { @MainActor in self.onAction?(id, decision) }
+        case Self.approveAction: Task { @MainActor in self.onAction?(id, .approve) }
+        case Self.denyAction: Task { @MainActor in self.onAction?(id, .deny) }
+        case UNNotificationDefaultActionIdentifier:
+            // Tapping the banner body leaves the request pending and opens the
+            // dashboard on the Approvals pane.
+            Task { @MainActor in self.onOpen?() }
+        default:
+            break   // dismiss / unknown → leave it pending, no UI
         }
         completionHandler()
     }
