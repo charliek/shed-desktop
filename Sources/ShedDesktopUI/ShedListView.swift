@@ -89,7 +89,7 @@ struct ShedRow: View {
                 HStack(spacing: 6) {
                     Text(shed.name).font(.system(size: 14, weight: .medium))
                     if let backend = shed.backend { Badge(backend, prominent: true) }
-                    if let image = shed.imageDisplay { Badge(image) }
+                    if let image = state.imageLabel(for: shed) { Badge(image) }
                 }
                 Text(metaLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
             }

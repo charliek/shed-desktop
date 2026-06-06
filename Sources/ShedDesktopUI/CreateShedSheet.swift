@@ -45,7 +45,7 @@ public struct CreateShedSheet: View {
 
     /// Images for the currently selected host (the fan-out loads every host).
     private var hostImages: [ShedImage] {
-        state.imagesByHost.first { $0.host == host }?.images ?? []
+        state.images(forHost: host)
     }
 
     /// Config images with a friendly alias — the selectable presets, sorted.

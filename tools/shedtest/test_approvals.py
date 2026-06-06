@@ -52,6 +52,45 @@ def test_policy_auto_deny(shed, fake):
     assert resp and resp["decision"] == "deny" and resp["decided_by"] == "policy"
 
 
+def test_ssh_policy_always_allow_auto_approves(shed, fake):
+    # SSH "Always Allow" policy decides every sign with no prompt (a namespace
+    # rule), not a per-shed grant — so the request is never queued.
+    shed.set_ssh_approval(policy="always-allow")
+    try:
+        rid = fake.emit_request("ssh-agent", "sign", "pol-allow-shed", "ssh-ed25519")
+        resp = fake.wait_response(rid)
+        assert resp and resp["decision"] == "approve" and resp["decided_by"] == "policy"
+        assert rid not in _pending_ids(shed)  # never prompted
+    finally:
+        shed.set_ssh_approval(policy="time-based-allow")  # restore the prompting default
+
+
+def test_ssh_policy_always_deny_auto_denies(shed, fake):
+    # SSH "Always Deny" policy denies every sign with no prompt.
+    shed.set_ssh_approval(policy="always-deny")
+    try:
+        rid = fake.emit_request("ssh-agent", "sign", "pol-deny-shed", "ssh-ed25519")
+        resp = fake.wait_response(rid)
+        assert resp and resp["decision"] == "deny" and resp["decided_by"] == "policy"
+        assert rid not in _pending_ids(shed)
+    finally:
+        shed.set_ssh_approval(policy="time-based-allow")
+
+
+def test_ssh_policy_change_resolves_pending(shed, fake):
+    # A card queued under a prompting policy must resolve when the policy flips
+    # to a non-prompting one (Always Deny) — it can't linger and stay actionable.
+    rid = fake.emit_request("ssh-agent", "sign", "flip-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid in _pending_ids(shed), what="request queued")
+    shed.set_ssh_approval(policy="always-deny")
+    try:
+        resp = fake.wait_response(rid)
+        assert resp and resp["decision"] == "deny" and resp["decided_by"] == "policy"
+        shed.wait_until(lambda: rid not in _pending_ids(shed), what="pending resolved by policy change")
+    finally:
+        shed.set_ssh_approval(policy="time-based-allow")
+
+
 def test_session_grant_auto_approves_next(shed, fake):
     rid1 = fake.emit_request("ssh-agent", "sign", "grant-shed")
     shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
@@ -115,6 +154,20 @@ def test_notification_posted_and_invoked(shed, fake):
     shed.wait_until(lambda: all(n["id"] != rid for n in shed.notifications_list()),
                     what="notification withdrawn")
     assert rid not in _pending_ids(shed)
+
+
+def test_notification_open_navigates_to_approvals(shed, fake):
+    # Tapping the banner body (not Approve/Deny) opens the dashboard on the
+    # Approvals pane and leaves the request pending.
+    shed.navigate("sheds")
+    rid = fake.emit_request("ssh-agent", "sign", "open-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid in _pending_ids(shed), what="request queued")
+    shed.notification_open()
+    shed.wait_until(lambda: shed.ui_state().get("pane") == "approvals", what="navigated to approvals")
+    assert shed.window_state().get("visible") is True
+    assert rid in _pending_ids(shed)  # default tap doesn't decide it
+    shed.approval_decide(rid, "deny")  # cleanup
+    shed.wait_until(lambda: rid not in _pending_ids(shed), what="cleanup resolved")
 
 
 def test_notification_not_posted_for_auto_policy(shed, fake):
@@ -183,7 +236,7 @@ def test_ssh_pref_change_resets_session_grant(shed, fake):
     assert r2 and r2["decision"] == "approve" and r2["decided_by"] == "policy"
     assert rid2 not in _pending_ids(shed)
     # Change an SSH approval setting → clears the live grant.
-    shed.set_ssh_approval(scope="per-request")
+    shed.set_ssh_approval(policy="always-ask")
     # Now the same shed PROMPTS again (grant gone), rather than auto-approving.
     rid3 = fake.emit_request("ssh-agent", "sign", "reset-shed", "ssh-ed25519")
     shed.wait_until(lambda: rid3 in _pending_ids(shed), what="re-prompts after pref change")

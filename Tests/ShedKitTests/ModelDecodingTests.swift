@@ -62,6 +62,33 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(img.sizeBytes, 1073741824)
     }
 
+    func testShedImageShortRef() {
+        // Registry/namespace stripped → repo:tag.
+        XCTAssertEqual(ShedImage(name: "ghcr.io/charliek/shed-vz-full:v0.6.2",
+                                 dockerRef: "ghcr.io/charliek/shed-vz-full:v0.6.2").shortRef,
+                       "shed-vz-full:v0.6.2")
+        // No registry/namespace → unchanged.
+        XCTAssertEqual(ShedImage(name: "base:latest").shortRef, "base:latest")
+        // Empty docker_ref falls back to name.
+        XCTAssertEqual(ShedImage(name: "ghcr.io/x/img:tag", dockerRef: "").shortRef, "img:tag")
+    }
+
+    func testShedImageLabelResolvesDigestToRepoTag() {
+        let images = [
+            ShedImage(name: "ghcr.io/x/shed-vz-full:v0.6.2", dockerRef: "ghcr.io/x/shed-vz-full:v0.6.2",
+                      digest: "sha256:2d9669bcf0cd25ef"),
+        ]
+        // A digest match resolves to the image's repo:tag (not the bare sha).
+        let matched = Shed(host: "h", name: "a", status: .running, imageDigest: "sha256:2d9669bcf0cd25ef")
+        XCTAssertEqual(matched.imageLabel(in: images), "shed-vz-full:v0.6.2")
+        // No matching image → fall back to the short digest.
+        let unmatched = Shed(host: "h", name: "b", status: .running,
+                             imageDigest: "sha256:abcdef0123456789abcdef")
+        XCTAssertEqual(unmatched.imageLabel(in: images), "sha256:abcdef012345")
+        // Empty image list → fall back too.
+        XCTAssertEqual(matched.imageLabel(in: []), "sha256:2d9669bcf0cd")
+    }
+
     func testShedImageLenientForPreV061Server() throws {
         // Older server: no alias / is_default — must default cleanly, not throw.
         let img = try JSONDecoder().decode(ShedImage.self, from: Data(#"{"name":"base","source":"config","cached":true}"#.utf8))

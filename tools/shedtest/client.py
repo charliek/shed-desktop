@@ -95,14 +95,18 @@ class ShedDesktop:
     def navigate(self, pane: str) -> dict:
         return self.call("ui.navigate", {"pane": pane})
 
-    def set_ssh_approval(self, method: str | None = None, scope: str | None = None,
+    def set_ssh_approval(self, method: str | None = None, policy: str | None = None,
                          ttl: str | None = None) -> None:
-        """Set SSH approval prefs (any subset) and reset live SSH grants."""
+        """Set SSH approval prefs (any subset) and reset live SSH grants.
+
+        `policy` is a CardDecision value: always-allow | per-shed-allow |
+        time-based-allow | always-ask | always-deny.
+        """
         params: dict = {}
         if method is not None:
             params["method"] = method
-        if scope is not None:
-            params["scope"] = scope
+        if policy is not None:
+            params["policy"] = policy
         if ttl is not None:
             params["ttl"] = ttl
         self.call("ui.set_ssh_approval", params)
@@ -221,6 +225,10 @@ class ShedDesktop:
 
     def notification_invoke(self, id: str, action: str) -> None:
         self.call("notification.invoke", {"id": id, "action": action})
+
+    def notification_open(self) -> None:
+        """Drive a notification-body tap → opens the dashboard on Approvals."""
+        self.call("notification.open")
 
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")

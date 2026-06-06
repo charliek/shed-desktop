@@ -104,7 +104,7 @@ final class AppModel: NSObject, UiBridge {
         prefs.launchAtLogin = testMode ? false : LoginItem.isEnabled
         prefs.terminalTemplate = prefsStore.terminalTemplate
         prefs.sshMethod = prefsStore.sshMethod
-        prefs.sshScope = prefsStore.sshScope
+        prefs.sshPolicy = prefsStore.sshPolicy
         prefs.sshTTL = prefsStore.sshTTL
         prefs.awsMode = prefsStore.providerMode(CredentialNamespace.aws)
         prefs.dockerMode = prefsStore.providerMode(CredentialNamespace.docker)
@@ -139,9 +139,9 @@ final class AppModel: NSObject, UiBridge {
         // the new policy takes effect on the very next request (a grant from an
         // earlier per-session/per-shed approval no longer auto-approves past the
         // change). Explicit per-shed always-allow/deny rules are left untouched.
-        prefs.onSSHMethod = { [weak self] m in self?.setSshApproval(method: m, scope: nil, ttl: nil) }
-        prefs.onSSHScope = { [weak self] s in self?.setSshApproval(method: nil, scope: s, ttl: nil) }
-        prefs.onSSHTTL = { [weak self] t in self?.setSshApproval(method: nil, scope: nil, ttl: t) }
+        prefs.onSSHMethod = { [weak self] m in self?.setSshApproval(method: m, policy: nil, ttl: nil) }
+        prefs.onSSHPolicy = { [weak self] p in self?.setSshApproval(method: nil, policy: p, ttl: nil) }
+        prefs.onSSHTTL = { [weak self] t in self?.setSshApproval(method: nil, policy: nil, ttl: t) }
         prefs.onProviderMode = { [weak self] ns, mode in self?.setProviderMode(ns, mode) }
         prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
     }
@@ -149,10 +149,12 @@ final class AppModel: NSObject, UiBridge {
     // MARK: - policy rules (per-provider namespace rules + per-shed overrides)
 
     private func rebuildPolicy() {
-        // One namespace rule per provider, derived from the per-provider prefs:
-        // SSH prompts with the chosen method; AWS/Docker apply their live mode.
+        // One namespace rule per provider, derived from the per-provider prefs.
+        // SSH's action comes from its policy (Always Allow/Deny decide outright;
+        // the rest prompt with the chosen method); AWS/Docker apply their live mode.
+        let sshPolicy = prefsStore.sshPolicy
         let rules: [PolicyRule] = [
-            PolicyRule(scope: .namespace, namespace: CredentialNamespace.ssh, action: .prompt, gate: prefsStore.sshMethod.gate),
+            PolicyRule(scope: .namespace, namespace: CredentialNamespace.ssh, action: sshPolicy.namespaceAction, gate: sshPolicy.prompts ? prefsStore.sshMethod.gate : .none),
             PolicyRule(scope: .namespace, namespace: CredentialNamespace.aws, action: prefsStore.providerMode(CredentialNamespace.aws).policyAction, gate: .none),
             PolicyRule(scope: .namespace, namespace: CredentialNamespace.docker, action: prefsStore.providerMode(CredentialNamespace.docker).policyAction, gate: .none),
         ]
@@ -170,14 +172,32 @@ final class AppModel: NSObject, UiBridge {
         sessionGrants = sessionGrants.filter { $0.key.namespace != CredentialNamespace.ssh }
     }
 
+    /// Re-decide queued prompts against the current policy. After an SSH policy
+    /// change to Always Allow/Deny, a card queued under the old prompting policy
+    /// must resolve now rather than linger (and stay actionable) under a
+    /// non-prompting policy. Requests the policy still decides to prompt stay put.
+    private func reevaluatePending() {
+        let grants = validGrants()
+        for (id, item) in Array(pending) {
+            let decision = policyEngine.decide(for: item.request, sessionGrants: grants)
+            guard decision.action != .prompt else { continue }
+            respondAndAudit(item.request, decision.action == .approve ? .approve : .deny,
+                            decidedBy: .policy, policy: decision.appliedScope.rawValue)
+            pending[id] = nil
+            notifier?.withdraw(id: id)
+        }
+        publishApprovals()
+    }
+
     /// Apply SSH approval preferences (any subset) and reset live SSH grants so
     /// the change takes effect immediately. Drives the same path as the UI.
-    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?) {
+    func setSshApproval(method: ApprovalMethod?, policy: SSHApprovalPolicy?, ttl: String?) {
         if let method { prefsStore.sshMethod = method; prefs.sshMethod = method }
-        if let scope { prefsStore.sshScope = scope; prefs.sshScope = scope }
+        if let policy { prefsStore.sshPolicy = policy; prefs.sshPolicy = policy }
         if let ttl { prefsStore.sshTTL = ttl; prefs.sshTTL = ttl }
         rebuildPolicy()
         resetSshGrants()
+        reevaluatePending()
     }
 
     private func persistAndRebuild() {
@@ -318,6 +338,11 @@ final class AppModel: NSObject, UiBridge {
                 try? await Task.sleep(for: interval)
             }
         }
+        // Seed image data for the Sheds pane's repo:tag labels, concurrently so a
+        // slow image endpoint never delays the first shed render. Images change
+        // rarely and are also refreshed when the New-Shed sheet opens; until this
+        // lands, the badge falls back to the short digest.
+        Task { [weak self] in await self?.refreshImages() }
     }
 
     // MARK: - polling (UiBridge.refreshSheds)
@@ -847,6 +872,11 @@ final class AppModel: NSObject, UiBridge {
             // Already on the main actor (the presenter is @MainActor).
             Task { [weak self] in try? await self?.decideApproval(id: id, choice: ApprovalChoice(decision: decision)) }
         }
+        // Tapping the banner body opens the dashboard on the Approvals pane.
+        notifier.onOpen = { [weak self] in
+            self?.showWindow()
+            _ = self?.navigate(toPane: DashboardPane.approvals.rawValue)
+        }
         if !ShedBackend.shared.testMode { notifier.requestAuthorization() }
         self.notifier = notifier
 
@@ -1011,8 +1041,11 @@ final class AppModel: NSObject, UiBridge {
     /// Pending requests as UI items: each carries its decided gate (for the
     /// fingerprint icon) + the SSH scope/TTL defaults to pre-fill the card.
     private var sortedItems: [PendingApprovalItem] {
-        pending.values.sorted { $0.request.expiresAt < $1.request.expiresAt }
-            .map { PendingApprovalItem(request: $0.request, gate: $0.gate, defaultScope: prefsStore.sshScope, defaultTTL: prefsStore.sshTTL) }
+        // The SSH defaults are identical for every item in a pass — read once.
+        let scope = prefsStore.sshPolicy.defaultScope ?? .perRequest
+        let ttl = prefsStore.sshTTL
+        return pending.values.sorted { $0.request.expiresAt < $1.request.expiresAt }
+            .map { PendingApprovalItem(request: $0.request, gate: $0.gate, defaultScope: scope, defaultTTL: ttl) }
     }
 
     private func publishApprovals() {
@@ -1052,6 +1085,13 @@ final class AppModel: NSObject, UiBridge {
         guard fake.invoke(id: id, decision: decision) else {
             throw IPCHandlerError.notFound("no posted notification \(id)")
         }
+    }
+
+    func invokeNotificationOpen() throws {
+        guard let fake = notifier as? FakeNotificationPresenter else {
+            throw IPCHandlerError.notEnabled("notification.open requires the test presenter")
+        }
+        fake.triggerOpen()
     }
 }
 

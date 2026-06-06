@@ -25,6 +25,9 @@ public struct PostedNotification: Codable, Sendable, Equatable, Identifiable {
 public protocol NotificationPresenter: AnyObject {
     /// The sink invoked when the user acts on a notification (Approve/Deny).
     var onAction: ((String, ApprovalDecision) -> Void)? { get set }
+    /// Invoked when the user taps the notification body (not an action button) —
+    /// the app opens the dashboard on the Approvals pane.
+    var onOpen: (() -> Void)? { get set }
     /// Ask the OS for permission to post notifications (real impl); no-op fake.
     func requestAuthorization()
     /// Post (or replace) an actionable approval notification.
@@ -45,10 +48,14 @@ public enum ApprovalNotificationText {
 @MainActor
 public final class FakeNotificationPresenter: NotificationPresenter {
     public var onAction: ((String, ApprovalDecision) -> Void)?
+    public var onOpen: (() -> Void)?
     public private(set) var posted: [PostedNotification] = []
 
     public init() {}
     public func requestAuthorization() {}
+
+    /// Drive a notification-body tap from the harness (the default action).
+    public func triggerOpen() { onOpen?() }
 
     public func post(_ req: ApprovalRequest) {
         posted.removeAll { $0.id == req.id }

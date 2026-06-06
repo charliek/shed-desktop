@@ -36,7 +36,7 @@ public protocol UiBridge: AnyObject {
 
     /// Apply SSH approval preferences (any subset) and reset live SSH grants so
     /// the change takes effect on the next request (`ui.set_ssh_approval`).
-    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?)
+    func setSshApproval(method: ApprovalMethod?, policy: SSHApprovalPolicy?, ttl: String?)
 
     /// Snapshot of the view-model for `ui.state`.
     func uiState() -> UIState
@@ -107,4 +107,6 @@ public protocol UiBridge: AnyObject {
     func postedNotifications() -> [PostedNotification]
     /// Drive a posted notification's Approve/Deny action (test presenter only).
     func invokeNotification(id: String, decision: ApprovalDecision) throws
+    /// Drive a notification-body tap → open the Approvals pane (test presenter only).
+    func invokeNotificationOpen() throws
 }

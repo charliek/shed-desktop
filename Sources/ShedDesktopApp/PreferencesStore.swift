@@ -26,14 +26,17 @@ struct PreferencesStore {
     }
 
     // Per-provider approval config (issue: per-provider approval). SSH gets a
-    // method + default scope + default TTL; AWS/Docker get a live Allow/Deny mode.
+    // policy + method + default TTL; AWS/Docker get a live Allow/Deny mode.
     var sshMethod: ApprovalMethod {
         get { ApprovalMethod(rawValue: defaults.string(forKey: "sshMethod") ?? "") ?? .biometricsOrPassword }
         nonmutating set { defaults.set(newValue.rawValue, forKey: "sshMethod") }
     }
-    var sshScope: ApprovalScope {
-        get { ApprovalScope(rawValue: defaults.string(forKey: "sshScope") ?? "") ?? .perSession }
-        nonmutating set { defaults.set(newValue.rawValue, forKey: "sshScope") }
+    /// The SSH approval policy (5 options). `alwaysAllow`/`alwaysDeny` decide
+    /// every sign outright; the rest prompt and grant per their scope. Default
+    /// is Time Based Allow (prompt once, grant for the duration).
+    var sshPolicy: SSHApprovalPolicy {
+        get { SSHApprovalPolicy(rawValue: defaults.string(forKey: "sshPolicy") ?? "") ?? .timeBasedAllow }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "sshPolicy") }
     }
     var sshTTL: String {
         get { defaults.string(forKey: "sshTTL") ?? defaultApprovalTTL }

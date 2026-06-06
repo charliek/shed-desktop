@@ -72,6 +72,7 @@ These drive the credential-approval gate (see [Credential approvals](approvals.m
 | `policy.set` | `rules[]` | `{}` (test mode only) |
 | `notifications.list` | — | `notifications[]` (test mode: what the gate posted) |
 | `notification.invoke` | `id`, `action` (approve\|deny) | `{}` (test mode: drive a notification action) |
+| `notification.open` | — | `{}` (test mode: drive a banner-body tap → opens the Approvals pane) |
 
 `approval.decide` with `persist:true` saves a per-`(server,shed)` rule (always-allow
 when `decision:approve`, always-deny when `decision:deny`). For an approve, `scope`

@@ -51,15 +51,6 @@ struct ApprovalsView: View {
 struct ApprovalCard: View {
     let item: PendingApprovalItem
     @ObservedObject var state: AppState
-    @State private var decision: CardDecision
-    @State private var ttl: String
-
-    init(item: PendingApprovalItem, state: AppState) {
-        self.item = item
-        self.state = state
-        _decision = State(initialValue: CardDecision(defaultScope: item.defaultScope))
-        _ttl = State(initialValue: item.defaultTTL)
-    }
 
     private var req: ApprovalRequest { item.request }
 
@@ -75,31 +66,38 @@ struct ApprovalCard: View {
                 countdown
             }
             HStack(spacing: 8) {
-                // One dropdown, most → least permissive. Duration shows for Time Based only.
-                Picker("", selection: $decision) {
-                    ForEach(CardDecision.allCases) { Text($0.label).tag($0) }
-                }
-                .labelsHidden().frame(maxWidth: 190)
-                if decision.usesDuration {
-                    Text("for").font(.system(size: 12)).foregroundStyle(.secondary)
-                    TextField("", text: $ttl, prompt: Text("2h")).frame(width: 54)
-                }
+                // The card applies the configured SSH policy — it notifies, it
+                // doesn't change policy. The subtitle says what Approve will do.
+                Text(approveEffect).font(.system(size: 11)).foregroundStyle(.tertiary)
                 Spacer()
-                Button { state.onApprovalDecide?(req, decision.choice(ttl: ttl)) } label: {
-                    if decision.isDeny {
-                        Label("Deny", systemImage: "xmark").font(.system(size: 13))
-                    } else if item.gate.isBiometric {
+                Button { state.onApprovalDecide?(req, item.denyChoice) } label: {
+                    Text("Deny").font(.system(size: 13))
+                }
+                .buttonStyle(.bordered).tint(.red)
+                Button {
+                    state.onApprovalDecide?(req, item.approveChoice)
+                } label: {
+                    if item.gate.isBiometric {
                         // Fingerprint only when a biometric prompt will be shown.
                         Label("Approve (Touch ID)", systemImage: "touchid").font(.system(size: 13))
                     } else {
                         Text("Approve").font(.system(size: 13))
                     }
                 }
-                .buttonStyle(.borderedProminent).tint(decision.isDeny ? .red : .green)
+                .buttonStyle(.borderedProminent).tint(.green)
             }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
+    }
+
+    /// One line describing what Approve will do under the configured policy.
+    private var approveEffect: String {
+        switch item.defaultScope {
+        case .perShed: return "Approve allows this shed until restart"
+        case .perSession: return "Approve allows this shed for \(item.defaultTTL)"
+        case .perRequest: return "Approve allows this request only"
+        }
     }
 
     private var countdown: some View {

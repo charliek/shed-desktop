@@ -67,6 +67,17 @@ public final class AppState: ObservableObject {
 
     public init() {}
 
+    /// Installed images for a host (the per-host fan-out lives in `imagesByHost`).
+    public func images(forHost host: String) -> [ShedImage] {
+        imagesByHost.first { $0.host == host }?.images ?? []
+    }
+
+    /// Display label for a shed's image — `repo:tag` resolved from the host's
+    /// image list (`imagesByHost`), falling back to the short digest.
+    public func imageLabel(for shed: Shed) -> String? {
+        shed.imageLabel(in: images(forHost: shed.host))
+    }
+
     /// Sheds grouped by host config name, in host order, for the dashboard.
     public func shedsByHost() -> [(host: ShedHost, sheds: [Shed])] {
         hosts.map { host in

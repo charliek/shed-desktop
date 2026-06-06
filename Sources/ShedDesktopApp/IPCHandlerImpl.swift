@@ -42,7 +42,7 @@ actor IPCHandlerImpl: IPCHandler {
             let p = try decodeParams(params, as: PaneParams.self, expected: ["pane"])
             return try await uiNavigate(pane: p.pane)
         case "ui.set_ssh_approval":
-            let p = try decodeParams(params, as: SetSshApprovalParams.self, expected: ["method", "scope", "ttl"])
+            let p = try decodeParams(params, as: SetSshApprovalParams.self, expected: ["method", "policy", "ttl"])
             try await setSshApprovalOp(p)
             return emptyResult
         case "ui.show_window":
@@ -143,6 +143,10 @@ actor IPCHandlerImpl: IPCHandler {
             let p = try decodeParams(params, as: NotificationInvokeParams.self, expected: ["id", "action"])
             try await notificationInvokeOp(p)
             return emptyResult
+        case "notification.open":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await notificationOpenOp()
+            return emptyResult
         default:
             throw IPCHandlerError.unknownOp(op)
         }
@@ -174,7 +178,7 @@ actor IPCHandlerImpl: IPCHandler {
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
     @MainActor private func windowStateOp() throws -> WindowState { try uiBridge().windowState() }
     @MainActor private func setSshApprovalOp(_ p: SetSshApprovalParams) throws {
-        try uiBridge().setSshApproval(method: p.method, scope: p.scope, ttl: p.ttl)
+        try uiBridge().setSshApproval(method: p.method, policy: p.policy, ttl: p.ttl)
     }
     @MainActor private func uiStateOp() throws -> UIState { try uiBridge().uiState() }
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
@@ -261,6 +265,10 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func notificationInvokeOp(_ p: NotificationInvokeParams) throws {
         try uiBridge().invokeNotification(id: p.id, decision: p.action)
+    }
+
+    @MainActor private func notificationOpenOp() throws {
+        try uiBridge().invokeNotificationOpen()
     }
 
     @MainActor private func terminalOpenOp(_ p: TerminalParams) throws -> TerminalCommand {
@@ -383,13 +391,13 @@ private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let u
 
 private struct SetSshApprovalParams: Decodable {
     let method: ApprovalMethod?
-    let scope: ApprovalScope?
+    let policy: SSHApprovalPolicy?
     let ttl: String?
-    enum CodingKeys: String, CodingKey { case method, scope, ttl }
+    enum CodingKeys: String, CodingKey { case method, policy, ttl }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.method = try c.decodeIfPresent(ApprovalMethod.self, forKey: .method)
-        self.scope = try c.decodeIfPresent(ApprovalScope.self, forKey: .scope)
+        self.policy = try c.decodeIfPresent(SSHApprovalPolicy.self, forKey: .policy)
         self.ttl = try c.decodeIfPresent(String.self, forKey: .ttl)
     }
 }

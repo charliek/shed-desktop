@@ -32,41 +32,35 @@ final class ApprovalModelTests: XCTestCase {
         XCTAssertNil(TTLShorthand.seconds("abc"))
     }
 
-    func testCardDecisionMapsToChoice() {
-        let always = CardDecision.alwaysAllow.choice(ttl: "2h")
-        XCTAssertEqual(always.decision, .approve); XCTAssertTrue(always.persist); XCTAssertNil(always.scope)
-
-        let perShed = CardDecision.perShedAllow.choice(ttl: "2h")
-        XCTAssertEqual(perShed.decision, .approve); XCTAssertEqual(perShed.scope, .perShed)
-        XCTAssertFalse(perShed.persist); XCTAssertNil(perShed.ttl)
-
-        let timed = CardDecision.timeBasedAllow.choice(ttl: "3h")
-        XCTAssertEqual(timed.decision, .approve); XCTAssertEqual(timed.scope, .perSession); XCTAssertEqual(timed.ttl, "3h")
-
-        let ask = CardDecision.alwaysAsk.choice(ttl: "2h")
-        XCTAssertEqual(ask.decision, .approve); XCTAssertEqual(ask.scope, .perRequest); XCTAssertFalse(ask.persist)
-
-        let deny = CardDecision.alwaysDeny.choice(ttl: "2h")
-        XCTAssertEqual(deny.decision, .deny); XCTAssertTrue(deny.persist)
-    }
-
-    func testCardDecisionOrderingAndFlags() {
-        // allCases is the dropdown order: most → least permissive.
-        XCTAssertEqual(CardDecision.allCases,
+    func testSSHApprovalPolicyOrderingAndFlags() {
+        // allCases is the picker order: most → least permissive.
+        XCTAssertEqual(SSHApprovalPolicy.allCases,
                        [.alwaysAllow, .perShedAllow, .timeBasedAllow, .alwaysAsk, .alwaysDeny])
-        XCTAssertTrue(CardDecision.allCases.filter(\.usesDuration) == [.timeBasedAllow])
-        XCTAssertTrue(CardDecision.allCases.filter(\.isDeny) == [.alwaysDeny])
+        XCTAssertTrue(SSHApprovalPolicy.allCases.filter(\.usesDuration) == [.timeBasedAllow])
     }
 
-    func testCardDecisionDefaultScopeRoundTrip() {
-        // The default-eligible subset maps 1:1 to ApprovalScope (no always-rules).
-        XCTAssertEqual(CardDecision.defaults, [.perShedAllow, .timeBasedAllow, .alwaysAsk])
-        for d in CardDecision.defaults {
-            XCTAssertEqual(CardDecision(defaultScope: d.defaultScope!), d)
+    func testSSHApprovalPolicyNamespaceActionAndPrompts() {
+        // The two "Always" options decide outright (no prompt); the rest prompt
+        // and grant per their scope. Drives the SSH namespace rule + which
+        // Preferences controls (Method/Duration) are shown.
+        XCTAssertEqual(SSHApprovalPolicy.alwaysAllow.namespaceAction, .approve)
+        XCTAssertEqual(SSHApprovalPolicy.alwaysDeny.namespaceAction, .deny)
+        XCTAssertFalse(SSHApprovalPolicy.alwaysAllow.prompts)
+        XCTAssertFalse(SSHApprovalPolicy.alwaysDeny.prompts)
+        for d in [SSHApprovalPolicy.perShedAllow, .timeBasedAllow, .alwaysAsk] {
+            XCTAssertEqual(d.namespaceAction, .prompt)
+            XCTAssertTrue(d.prompts)
         }
-        XCTAssertNil(CardDecision.alwaysAllow.defaultScope)
-        XCTAssertNil(CardDecision.alwaysDeny.defaultScope)
-        XCTAssertEqual(CardDecision(defaultScope: .perSession), .timeBasedAllow)
+    }
+
+    func testSSHApprovalPolicyDefaultScope() {
+        // The prompting policies expose their grant scope; the Always rules
+        // never reach a card, so they have none.
+        XCTAssertEqual(SSHApprovalPolicy.perShedAllow.defaultScope, .perShed)
+        XCTAssertEqual(SSHApprovalPolicy.timeBasedAllow.defaultScope, .perSession)
+        XCTAssertEqual(SSHApprovalPolicy.alwaysAsk.defaultScope, .perRequest)
+        XCTAssertNil(SSHApprovalPolicy.alwaysAllow.defaultScope)
+        XCTAssertNil(SSHApprovalPolicy.alwaysDeny.defaultScope)
     }
 
     // The gate enum's wire values pin the protocol contract.

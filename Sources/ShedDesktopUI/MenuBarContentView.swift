@@ -52,11 +52,11 @@ public struct MenuBarContentView: View {
                                 Text(req.qualifiedShed).font(.system(size: 11)).foregroundStyle(.secondary)
                             }
                             Spacer()
-                            Button { state.onApprovalDecide?(req, ApprovalChoice(decision: .approve, scope: item.defaultScope, ttl: item.defaultTTL)) } label: {
+                            Button { state.onApprovalDecide?(req, item.approveChoice) } label: {
                                 Image(systemName: item.gate.isBiometric ? "touchid" : "checkmark")
                             }
                             .buttonStyle(.borderless).foregroundStyle(.green)
-                            Button { state.onApprovalDecide?(req, ApprovalChoice(decision: .deny)) } label: { Image(systemName: "xmark") }
+                            Button { state.onApprovalDecide?(req, item.denyChoice) } label: { Image(systemName: "xmark") }
                                 .buttonStyle(.borderless).foregroundStyle(.red)
                         }
                     }

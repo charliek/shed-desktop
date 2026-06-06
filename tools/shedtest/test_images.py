@@ -48,6 +48,26 @@ def test_image_digest_round_trips(shed):
     assert hello["image_digest"].startswith("sha256:")
 
 
+def test_image_digest_resolves_to_repo_tag(shed):
+    """The Sheds badge shows repo:tag, resolved by joining a shed's image_digest
+    against the host's image list (the new ref-keyed image model). Validates the
+    image-API integration end to end with the data the resolver consumes."""
+    by_digest = {i["digest"]: i
+                 for hl in shed.images_list() for i in (hl.get("images") or [])
+                 if i.get("digest")}
+    assert by_digest, "images.list returned no digested images (new-model decode failed?)"
+    shed.refresh()
+    sheds = {s["name"]: s for s in shed.sheds_list()}
+
+    # hello-world's digest matches an image → shown as repo:tag, not the bare sha.
+    hello = sheds["hello-world"]
+    img = by_digest.get(hello["image_digest"])
+    assert img and img["docker_ref"].rsplit("/", 1)[-1] == "shed-vz-full:v0.6.0"
+
+    # callbell's default-image digest has no match → the badge falls back to the digest.
+    assert sheds["callbell"]["image_digest"] not in by_digest
+
+
 def test_create_with_chosen_image(shed, mock):
     cid = shed.create_start("picked", image="base")
     shed.wait_until(

@@ -154,6 +154,18 @@ public struct Shed: Codable, Sendable, Equatable, Identifiable {
         guard let label else { return short }
         return "\(label) (\(short))"
     }
+
+    /// The image label for the dashboard: the matching image's `repo:tag` ref,
+    /// resolved by digest against the host's image list (shed-server returns only
+    /// a digest on a shed, not the name). Falls back to `imageDisplay` (any label
+    /// and/or the short digest) when there's no match.
+    public func imageLabel(in images: [ShedImage]) -> String? {
+        if let d = imageDigest, !d.isEmpty,
+           let match = images.first(where: { $0.digest == d }) {
+            return match.shortRef
+        }
+        return imageDisplay
+    }
 }
 
 /// Body for `POST /api/sheds`. `repo` and `localDir` are mutually
@@ -445,6 +457,13 @@ public struct ShedImage: Codable, Sendable, Equatable, Identifiable {
     public var sizeBytes: Int64
 
     public var id: String { digest ?? dockerRef ?? name }
+
+    /// The ref minus its registry/namespace, for compact display, e.g.
+    /// "ghcr.io/charliek/shed-vz-full:v0.6.2" → "shed-vz-full:v0.6.2".
+    public var shortRef: String {
+        let ref = (dockerRef?.isEmpty == false ? dockerRef : nil) ?? name
+        return ref.split(separator: "/").last.map(String.init) ?? ref
+    }
 
     enum CodingKeys: String, CodingKey {
         case name
