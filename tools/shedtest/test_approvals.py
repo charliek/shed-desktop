@@ -140,6 +140,16 @@ def test_always_deny_persists_per_shed_rule(shed, fake):
     assert rid2 not in _pending_ids(shed)
 
 
+def test_time_based_allow_invalid_ttl_falls_back_to_default(shed, fake):
+    # An empty/invalid duration on a Time Based grant falls back to the 2h default,
+    # and that applied value (not the raw input) is what's reported to the host.
+    rid = fake.emit_request("ssh-agent", "sign", "ttl-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid in _pending_ids(shed), what="request queued")
+    shed.approval_decide(rid, "approve", scope="per-session", ttl="garbage")
+    r = fake.wait_response(rid)
+    assert r["decision"] == "approve" and r.get("scope") == "per-session" and r.get("ttl") == "2h"
+
+
 def test_per_shed_sticky_grant(shed, fake):
     # Per Shed: approve once, then auto-approve repeats for that shed (a sticky
     # grant with no TTL); a different shed still prompts.
@@ -157,6 +167,7 @@ def test_per_shed_sticky_grant(shed, fake):
     rid3 = fake.emit_request("ssh-agent", "sign", "other-sticky-shed", "ssh-ed25519")
     shed.wait_until(lambda: rid3 in _pending_ids(shed), what="a different shed still prompts")
     shed.approval_decide(rid3, "deny")  # cleanup
+    shed.wait_until(lambda: rid3 not in _pending_ids(shed), what="cleanup denial resolved")
 
 
 def test_ssh_pref_change_resets_session_grant(shed, fake):
@@ -177,6 +188,7 @@ def test_ssh_pref_change_resets_session_grant(shed, fake):
     rid3 = fake.emit_request("ssh-agent", "sign", "reset-shed", "ssh-ed25519")
     shed.wait_until(lambda: rid3 in _pending_ids(shed), what="re-prompts after pref change")
     shed.approval_decide(rid3, "deny")  # cleanup
+    shed.wait_until(lambda: rid3 not in _pending_ids(shed), what="cleanup denial resolved")
 
 
 def test_deny_evicts_live_session_grant(shed, fake):

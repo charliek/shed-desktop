@@ -269,7 +269,7 @@ public struct PendingApprovalItem: Sendable, Equatable, Identifiable, Encodable 
     public let defaultTTL: String
     public var id: String { request.id }
 
-    public init(request: ApprovalRequest, gate: PolicyGate, defaultScope: ApprovalScope = .perSession, defaultTTL: String = "2h") {
+    public init(request: ApprovalRequest, gate: PolicyGate, defaultScope: ApprovalScope = .perSession, defaultTTL: String = defaultApprovalTTL) {
         self.request = request
         self.gate = gate
         self.defaultScope = defaultScope
@@ -319,6 +319,10 @@ public struct ApprovalChoice: Sendable, Equatable {
         self.persist = persist
     }
 }
+
+/// The default approval grant duration — used when the duration field is empty
+/// or unparseable, and as the pre-fill default.
+public let defaultApprovalTTL = "2h"
 
 /// Parse a TTL shorthand like `45s`, `4m`, `3h`, `1d` into seconds. Returns nil
 /// for empty/invalid input so the UI can fall back to a default.

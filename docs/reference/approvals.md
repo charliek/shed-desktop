@@ -50,7 +50,7 @@ Configured in **Preferences**, per delegated provider:
   **decision** (pre-fills the card) and **Duration**. An incoming SSH sign shows a card with
   one **decision dropdown**, ordered most → least permissive:
     - **Always Allow** — persistent auto-approve rule for the shed (survives restart).
-    - **Per Shed Allow** — auto-approve the shed until the app restarts (so it asks ~once per shed).
+    - **Per Shed Allow** — auto-approve the shed until the app restarts (so each shed prompts once, until you restart).
     - **Time Based Allow** — auto-approve for the duration (default 2h).
     - **Always Ask** — approve this request and prompt again next time.
     - **Always Deny** — persistent auto-deny rule.

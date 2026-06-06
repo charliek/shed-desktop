@@ -52,7 +52,9 @@ final class AppModel: NSObject, UiBridge {
     /// Actionable Approve/Deny notifications (Fake under the harness).
     private var notifier: (any NotificationPresenter)?
 
-    private let grantTTL: TimeInterval = 4 * 3600
+    /// Fallback grant duration (seconds) — used only if even the default TTL
+    /// string can't be parsed. Mirrors defaultApprovalTTL ("2h").
+    private let grantTTL: TimeInterval = 2 * 3600
 
     // M4: preferences
     private let prefsStore = PreferencesStore()
@@ -949,9 +951,13 @@ final class AppModel: NSObject, UiBridge {
                 // is irrelevant here.
                 sessionGrants[grantKey] = .distantFuture
             } else {  // per-session: time-bounded by the duration
-                let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
+                // Resolve one validated TTL — empty/invalid input falls back to the
+                // default — and use it for BOTH the grant expiry and the value we
+                // report to the host (never the raw, possibly-invalid, input).
+                let ttlText = choice.ttl.flatMap { TTLShorthand.seconds($0) != nil ? $0 : nil } ?? defaultApprovalTTL
+                let secs = TTLShorthand.seconds(ttlText) ?? Int(grantTTL)
                 sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
-                sentTTL = choice.ttl ?? ""
+                sentTTL = ttlText
             }
             policyLabel = "session-grant"
         }
