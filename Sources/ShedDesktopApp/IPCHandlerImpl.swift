@@ -41,6 +41,10 @@ actor IPCHandlerImpl: IPCHandler {
         case "ui.navigate":
             let p = try decodeParams(params, as: PaneParams.self, expected: ["pane"])
             return try await uiNavigate(pane: p.pane)
+        case "ui.set_ssh_approval":
+            let p = try decodeParams(params, as: SetSshApprovalParams.self, expected: ["method", "scope", "ttl"])
+            try await setSshApprovalOp(p)
+            return emptyResult
         case "ui.show_window":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await showWindowOp()
@@ -169,6 +173,9 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
     @MainActor private func windowStateOp() throws -> WindowState { try uiBridge().windowState() }
+    @MainActor private func setSshApprovalOp(_ p: SetSshApprovalParams) throws {
+        try uiBridge().setSshApproval(method: p.method, scope: p.scope, ttl: p.ttl)
+    }
     @MainActor private func uiStateOp() throws -> UIState { try uiBridge().uiState() }
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
     @MainActor private func hideWindowOp() throws { try uiBridge().hideWindow() }
@@ -373,6 +380,19 @@ private struct RcLaunchParams: Decodable {
 
 private struct RcListResult: Encodable, Sendable { let sessions: [RcSession] }
 private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let url: String? }
+
+private struct SetSshApprovalParams: Decodable {
+    let method: ApprovalMethod?
+    let scope: ApprovalScope?
+    let ttl: String?
+    enum CodingKeys: String, CodingKey { case method, scope, ttl }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.method = try c.decodeIfPresent(ApprovalMethod.self, forKey: .method)
+        self.scope = try c.decodeIfPresent(ApprovalScope.self, forKey: .scope)
+        self.ttl = try c.decodeIfPresent(String.self, forKey: .ttl)
+    }
+}
 
 private struct ApprovalDecideParams: Decodable {
     let id: String

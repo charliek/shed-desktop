@@ -140,6 +140,45 @@ def test_always_deny_persists_per_shed_rule(shed, fake):
     assert rid2 not in _pending_ids(shed)
 
 
+def test_per_shed_sticky_grant(shed, fake):
+    # Per Shed: approve once, then auto-approve repeats for that shed (a sticky
+    # grant with no TTL); a different shed still prompts.
+    rid1 = fake.emit_request("ssh-agent", "sign", "sticky-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
+    shed.approval_decide(rid1, "approve", scope="per-shed")  # no ttl
+    r1 = fake.wait_response(rid1)
+    assert r1["decision"] == "approve" and r1.get("scope") == "per-shed" and not r1.get("ttl")
+    # A second request for the same shed is auto-approved by the sticky grant.
+    rid2 = fake.emit_request("ssh-agent", "sign", "sticky-shed")
+    r2 = fake.wait_response(rid2)
+    assert r2 and r2["decision"] == "approve" and r2["decided_by"] == "policy"
+    assert rid2 not in _pending_ids(shed)
+    # A different shed still prompts — the grant is per-(server, shed).
+    rid3 = fake.emit_request("ssh-agent", "sign", "other-sticky-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid3 in _pending_ids(shed), what="a different shed still prompts")
+    shed.approval_decide(rid3, "deny")  # cleanup
+
+
+def test_ssh_pref_change_resets_session_grant(shed, fake):
+    # A live SSH grant auto-approves repeats; changing an SSH approval setting
+    # clears the in-memory grant so the next request prompts again.
+    rid1 = fake.emit_request("ssh-agent", "sign", "reset-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid1 in _pending_ids(shed), what="first request queued")
+    shed.approval_decide(rid1, "approve", scope="per-session", ttl="1h")
+    assert fake.wait_response(rid1)["decision"] == "approve"
+    # Second request for the shed is auto-approved by the grant (no prompt).
+    rid2 = fake.emit_request("ssh-agent", "sign", "reset-shed")
+    r2 = fake.wait_response(rid2)
+    assert r2 and r2["decision"] == "approve" and r2["decided_by"] == "policy"
+    assert rid2 not in _pending_ids(shed)
+    # Change an SSH approval setting → clears the live grant.
+    shed.set_ssh_approval(scope="per-request")
+    # Now the same shed PROMPTS again (grant gone), rather than auto-approving.
+    rid3 = fake.emit_request("ssh-agent", "sign", "reset-shed", "ssh-ed25519")
+    shed.wait_until(lambda: rid3 in _pending_ids(shed), what="re-prompts after pref change")
+    shed.approval_decide(rid3, "deny")  # cleanup
+
+
 def test_deny_evicts_live_session_grant(shed, fake):
     # A deny must supersede a live "approve for this session" grant — otherwise
     # the grant (highest precedence) would keep auto-approving past the deny.

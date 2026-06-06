@@ -95,6 +95,18 @@ class ShedDesktop:
     def navigate(self, pane: str) -> dict:
         return self.call("ui.navigate", {"pane": pane})
 
+    def set_ssh_approval(self, method: str | None = None, scope: str | None = None,
+                         ttl: str | None = None) -> None:
+        """Set SSH approval prefs (any subset) and reset live SSH grants."""
+        params: dict = {}
+        if method is not None:
+            params["method"] = method
+        if scope is not None:
+            params["scope"] = scope
+        if ttl is not None:
+            params["ttl"] = ttl
+        self.call("ui.set_ssh_approval", params)
+
     def show_window(self) -> None:
         self.call("ui.show_window")
 

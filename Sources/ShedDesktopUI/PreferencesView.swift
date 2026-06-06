@@ -46,13 +46,14 @@ public struct PreferencesView: View {
                         ForEach(ApprovalMethod.allCases, id: \.self) { Text($0.label).tag($0) }
                     }
                     .onChange(of: prefs.sshMethod) { _, v in prefs.onSSHMethod?(v) }
-                    Picker("Default scope", selection: $prefs.sshScope) {
-                        ForEach(ApprovalScope.allCases, id: \.self) { Text($0.label).tag($0) }
+                    Picker("Default decision", selection: defaultDecisionBinding) {
+                        ForEach(CardDecision.defaults) { Text($0.label).tag($0) }
                     }
-                    .onChange(of: prefs.sshScope) { _, v in prefs.onSSHScope?(v) }
-                    TextField("Default duration", text: $prefs.sshTTL, prompt: Text("1h"))
-                        .onChange(of: prefs.sshTTL) { _, v in prefs.onSSHTTL?(v) }
-                    Text("The approval card pre-fills these; you can change them per request. “Method” controls the Touch ID prompt (no prompt for “Prompt”).")
+                    if CardDecision(defaultScope: prefs.sshScope).usesDuration {
+                        TextField("Default duration", text: $prefs.sshTTL, prompt: Text("2h"))
+                            .onChange(of: prefs.sshTTL) { _, v in prefs.onSSHTTL?(v) }
+                    }
+                    Text("Pre-fills the approval card; you can pick any option per request. Changing any SSH setting clears live grants. “Method” is the Touch ID prompt (none for “Prompt”).")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
             }
@@ -87,6 +88,19 @@ public struct PreferencesView: View {
         }
         .formStyle(.grouped)
         .frame(width: 460, height: 560)
+    }
+
+    /// The SSH default decision picker is shown as a CardDecision but stored as
+    /// the underlying ApprovalScope (the persistent always-rules aren't defaults).
+    private var defaultDecisionBinding: Binding<CardDecision> {
+        Binding(
+            get: { CardDecision(defaultScope: prefs.sshScope) },
+            set: { newValue in
+                if let scope = newValue.defaultScope {
+                    prefs.sshScope = scope
+                    prefs.onSSHScope?(scope)
+                }
+            })
     }
 
     private func providerSection(_ title: String, ns: String, mode: Binding<ApprovalDecision>) -> some View {

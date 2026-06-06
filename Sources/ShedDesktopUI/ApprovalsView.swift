@@ -51,13 +51,13 @@ struct ApprovalsView: View {
 struct ApprovalCard: View {
     let item: PendingApprovalItem
     @ObservedObject var state: AppState
-    @State private var scope: ApprovalScope
+    @State private var decision: CardDecision
     @State private var ttl: String
 
     init(item: PendingApprovalItem, state: AppState) {
         self.item = item
         self.state = state
-        _scope = State(initialValue: item.defaultScope)
+        _decision = State(initialValue: CardDecision(defaultScope: item.defaultScope))
         _ttl = State(initialValue: item.defaultTTL)
     }
 
@@ -75,49 +75,31 @@ struct ApprovalCard: View {
                 countdown
             }
             HStack(spacing: 8) {
-                Picker("", selection: $scope) {
-                    ForEach(ApprovalScope.allCases, id: \.self) { Text($0.label).tag($0) }
+                // One dropdown, most → least permissive. Duration shows for Time Based only.
+                Picker("", selection: $decision) {
+                    ForEach(CardDecision.allCases) { Text($0.label).tag($0) }
                 }
-                .labelsHidden().frame(maxWidth: 170)
-                if scope != .perRequest {
-                    TextField("", text: $ttl, prompt: Text("1h")).frame(width: 54)
+                .labelsHidden().frame(maxWidth: 190)
+                if decision.usesDuration {
+                    Text("for").font(.system(size: 12)).foregroundStyle(.secondary)
+                    TextField("", text: $ttl, prompt: Text("2h")).frame(width: 54)
                 }
                 Spacer()
-            }
-            HStack(spacing: 8) {
-                Button { decide(.approve, persist: false) } label: {
-                    // Fingerprint icon only when a biometric prompt will be shown.
-                    if item.gate.isBiometric {
+                Button { state.onApprovalDecide?(req, decision.choice(ttl: ttl)) } label: {
+                    if decision.isDeny {
+                        Label("Deny", systemImage: "xmark").font(.system(size: 13))
+                    } else if item.gate.isBiometric {
+                        // Fingerprint only when a biometric prompt will be shown.
                         Label("Approve (Touch ID)", systemImage: "touchid").font(.system(size: 13))
                     } else {
                         Text("Approve").font(.system(size: 13))
                     }
                 }
-                .buttonStyle(.borderedProminent).tint(.green)
-                Button { decide(.deny, persist: false) } label: {
-                    Label("Deny", systemImage: "xmark").font(.system(size: 13))
-                }
-                .buttonStyle(.bordered)
-                Spacer()
-                Menu("Always…") {
-                    Button("Always allow \(req.qualifiedShed)") { decide(.approve, persist: true) }
-                    Button("Always deny \(req.qualifiedShed)") { decide(.deny, persist: true) }
-                }
-                .menuStyle(.borderlessButton).fixedSize().font(.system(size: 12))
-                .help("Persist a per-shed rule (manage in Preferences).")
+                .buttonStyle(.borderedProminent).tint(decision.isDeny ? .red : .green)
             }
         }
         .padding(12)
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.25), lineWidth: 0.5))
-    }
-
-    private func decide(_ decision: ApprovalDecision, persist: Bool) {
-        let choice = ApprovalChoice(
-            decision: decision,
-            scope: decision == .approve ? scope : nil,
-            ttl: (decision == .approve && scope != .perRequest) ? ttl : nil,
-            persist: persist)
-        state.onApprovalDecide?(req, choice)
     }
 
     private var countdown: some View {

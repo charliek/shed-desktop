@@ -46,11 +46,17 @@ session grant  >  per-(server,shed) rule  >  per-provider rule
 
 Configured in **Preferences**, per delegated provider:
 
-- **SSH** — a **Method** (Touch ID or password / Touch ID only / Prompt), a default
-  **Scope** (per-request / per-session / per-shed) and **Duration**. An incoming SSH sign
-  shows an approval card pre-filled with these; you can change scope/duration per request,
-  approve/deny, or **Always allow / Always deny** the shed. The fingerprint icon appears
-  only for the biometric methods.
+- **SSH** — a **Method** (Touch ID or password / Touch ID only / Prompt) plus a default
+  **decision** (pre-fills the card) and **Duration**. An incoming SSH sign shows a card with
+  one **decision dropdown**, ordered most → least permissive:
+    - **Always Allow** — persistent auto-approve rule for the shed (survives restart).
+    - **Per Shed Allow** — auto-approve the shed until the app restarts (so it asks ~once per shed).
+    - **Time Based Allow** — auto-approve for the duration (default 2h).
+    - **Always Ask** — approve this request and prompt again next time.
+    - **Always Deny** — persistent auto-deny rule.
+
+  Changing any SSH setting clears the live in-memory grants, so the new policy takes effect on
+  the next request. The fingerprint icon appears only for the biometric methods (not "Prompt").
 - **AWS / Docker** — a live **Allow / Deny** toggle (no prompt). Changing it takes effect
   immediately; no restart.
 - **Per-shed rules** — *Always allow* / *Always deny* on a card persists a per-`(server,

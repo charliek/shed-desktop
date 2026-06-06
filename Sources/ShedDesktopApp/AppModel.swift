@@ -129,13 +129,26 @@ final class AppModel: NSObject, UiBridge {
         prefs.onTerminalTemplate = { [weak self] template in
             self?.prefsStore.terminalTemplate = template
         }
+        // Changing any SSH approval setting clears live in-memory SSH grants, so
+        // the new policy takes effect on the very next request (a grant from an
+        // earlier per-session/per-shed approval no longer auto-approves past the
+        // change). Explicit per-shed always-allow/deny rules are left untouched.
         prefs.onSSHMethod = { [weak self] m in
             guard let self else { return }
             self.prefsStore.sshMethod = m
             self.rebuildPolicy()
+            self.resetSshGrants()
         }
-        prefs.onSSHScope = { [weak self] s in self?.prefsStore.sshScope = s }
-        prefs.onSSHTTL = { [weak self] t in self?.prefsStore.sshTTL = t }
+        prefs.onSSHScope = { [weak self] s in
+            guard let self else { return }
+            self.prefsStore.sshScope = s
+            self.resetSshGrants()
+        }
+        prefs.onSSHTTL = { [weak self] t in
+            guard let self else { return }
+            self.prefsStore.sshTTL = t
+            self.resetSshGrants()
+        }
         prefs.onProviderMode = { [weak self] ns, mode in self?.setProviderMode(ns, mode) }
         prefs.onRemoveShedRule = { [weak self] server, shed in self?.removeShedRule(server: server, shed: shed) }
     }
@@ -156,6 +169,22 @@ final class AppModel: NSObject, UiBridge {
     private func setProviderMode(_ ns: String, _ mode: ApprovalDecision) {
         prefsStore.setProviderMode(ns, mode)
         rebuildPolicy()
+    }
+
+    /// Drop the in-memory SSH session grants (the always-allow/deny per-shed
+    /// rules in `extraRules` are persistent and left untouched).
+    private func resetSshGrants() {
+        sessionGrants = sessionGrants.filter { $0.key.namespace != CredentialNamespace.ssh }
+    }
+
+    /// Apply SSH approval preferences (any subset) and reset live SSH grants so
+    /// the change takes effect immediately. Drives the same path as the UI.
+    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?) {
+        if let method { prefsStore.sshMethod = method; prefs.sshMethod = method }
+        if let scope { prefsStore.sshScope = scope; prefs.sshScope = scope }
+        if let ttl { prefsStore.sshTTL = ttl; prefs.sshTTL = ttl }
+        rebuildPolicy()
+        resetSshGrants()
     }
 
     private func persistAndRebuild() {
@@ -919,9 +948,16 @@ final class AppModel: NSObject, UiBridge {
             sentScope = "always"
             policyLabel = decision == .approve ? "shed-rule" : "deny-rule"
         } else if decision == .approve, let scope = choice.scope, scope != .perRequest {
-            let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
-            sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
-            sentTTL = choice.ttl ?? ""
+            if scope == .perShed {
+                // Per Shed: a sticky grant — asks once per shed, then auto-approves
+                // until the app restarts (in-memory) or an SSH setting changes. TTL
+                // is irrelevant here.
+                sessionGrants[grantKey] = .distantFuture
+            } else {  // per-session: time-bounded by the duration
+                let secs = choice.ttl.flatMap(TTLShorthand.seconds) ?? Int(grantTTL)
+                sessionGrants[grantKey] = Date().addingTimeInterval(TimeInterval(secs))
+                sentTTL = choice.ttl ?? ""
+            }
             policyLabel = "session-grant"
         }
 

@@ -34,6 +34,10 @@ public protocol UiBridge: AnyObject {
     /// Returns false for an unknown pane name.
     func navigate(toPane pane: String) -> Bool
 
+    /// Apply SSH approval preferences (any subset) and reset live SSH grants so
+    /// the change takes effect on the next request (`ui.set_ssh_approval`).
+    func setSshApproval(method: ApprovalMethod?, scope: ApprovalScope?, ttl: String?)
+
     /// Snapshot of the view-model for `ui.state`.
     func uiState() -> UIState
 
