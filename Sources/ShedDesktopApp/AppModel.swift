@@ -479,7 +479,7 @@ final class AppModel: NSObject, UiBridge {
         let hosting = NSHostingController(rootView: DashboardView(state: state))
         let window = NSWindow(contentViewController: hosting)
         window.title = "shed desktop"
-        window.setContentSize(NSSize(width: 820, height: 520))
+        window.setContentSize(NSSize(width: 860, height: 660))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         // Keep the standard system titlebar with the "shed desktop" title (the
         // content view starts below it). backgroundColor matches the linen canvas
@@ -606,6 +606,12 @@ final class AppModel: NSObject, UiBridge {
         showWindow()
         state.pane = .sheds
         state.showCreateSheet = true
+    }
+
+    func showLaunchSheet() {
+        showWindow()
+        state.pane = .agents
+        state.showLaunchSheet = true
     }
 
     func setMenuOpen(_ open: Bool) {

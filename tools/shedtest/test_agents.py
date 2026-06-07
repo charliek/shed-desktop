@@ -48,3 +48,10 @@ def test_launch_agent_kind_gets_environment_url(shed):
         assert session["url"].startswith("https://claude.ai/code?environment=env_")
     finally:
         shed.rc_kill("hello-world", session["slug"])
+
+
+def test_launch_sheet_is_screenshot_driveable(shed):
+    shed.show_launch()
+    png, w, h = shed.screenshot(surface="window", scale=2)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n", "expected a PNG"
+    assert w > 0 and h > 0

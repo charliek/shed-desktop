@@ -120,6 +120,9 @@ class ShedDesktop:
     def show_create(self) -> None:
         self.call("ui.show_create")
 
+    def show_launch(self) -> None:
+        self.call("ui.show_launch")
+
     def open_menu(self, open_: bool) -> None:
         self.call("ui.open_menu", {"open": open_})
 

@@ -25,10 +25,14 @@ public struct DashboardView: View {
         }
         .frame(minWidth: 760, minHeight: 480)
         .background(Theme.bg)
-        .sheet(isPresented: $state.showCreateSheet) {
+        // Both flows are centered modals (not top-edge .sheets) so they match the
+        // design and render inside the window (screenshot-able via the IPC ops).
+        .modalOverlay(isPresented: state.showCreateSheet,
+                      onDismiss: { state.showCreateSheet = false }) {
             CreateShedSheet(state: state)
         }
-        .sheet(isPresented: $state.showLaunchSheet) {
+        .modalOverlay(isPresented: state.showLaunchSheet,
+                      onDismiss: { state.showLaunchSheet = false }) {
             AgentLaunchSheet(state: state)
         }
     }
