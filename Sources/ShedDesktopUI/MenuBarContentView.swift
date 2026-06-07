@@ -108,8 +108,6 @@ public struct MenuBarContentView: View {
     }
 }
 
-/// A clickable menu row with a blue hover highlight (white glyph + text on
-/// hover) — the standard menu-bar dropdown affordance.
 private struct MenuActionRow: View {
     let title: String
     let systemImage: String
