@@ -549,6 +549,7 @@ final class AppModel: NSObject, UiBridge {
         panel.hasShadow = true
         panel.animationBehavior = .none
         panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.contentView = host
         self.menuPanel = panel

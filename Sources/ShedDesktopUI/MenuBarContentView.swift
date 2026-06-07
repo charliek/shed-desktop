@@ -85,16 +85,15 @@ public struct MenuBarContentView: View {
             .padding(.vertical, 6)
 
             Divider()
-            menuButton("Open dashboard", systemImage: "macwindow", action: onOpenDashboard)
-            menuButton("Preferences…", systemImage: "gearshape", action: onOpenPreferences)
-            menuButton("Check for Updates…", systemImage: "arrow.down.circle", action: onCheckForUpdates)
-            menuButton("Quit", systemImage: "power", action: onQuit)
+            MenuActionRow("Open dashboard", systemImage: "macwindow", action: onOpenDashboard)
+            MenuActionRow("Preferences…", systemImage: "gearshape", action: onOpenPreferences)
+            MenuActionRow("Check for Updates…", systemImage: "arrow.down.circle", action: onCheckForUpdates)
+            MenuActionRow("Quit", systemImage: "power", action: onQuit)
                 .padding(.bottom, 6)
         }
         .frame(width: 300)
-        // The NSPopover otherwise shows its translucent system material through
-        // the (background-less) content; paint an opaque neutral surface so the
-        // popover stays easy to read.
+        // The menu panel is background-less; paint an opaque neutral surface so
+        // the dropdown stays solid and readable.
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -106,17 +105,38 @@ public struct MenuBarContentView: View {
         }
         .padding(.horizontal, 14).padding(.vertical, 4)
     }
+}
 
-    private func menuButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+/// A clickable menu row with a blue hover highlight (white glyph + text on
+/// hover) — the standard menu-bar dropdown affordance.
+private struct MenuActionRow: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    init(_ title: String, systemImage: String, action: @escaping () -> Void) {
+        self.title = title
+        self.systemImage = systemImage
+        self.action = action
+    }
+
+    var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Image(systemName: systemImage).frame(width: 18).foregroundStyle(.secondary)
+                Image(systemName: systemImage).frame(width: 18)
+                    .foregroundStyle(hovering ? Theme.accentFg : Theme.textSecondary)
                 Text(title).font(.system(size: 13))
+                    .foregroundStyle(hovering ? Theme.accentFg : Theme.text)
                 Spacer()
             }
-            .padding(.horizontal, 14).padding(.vertical, 7)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.accent : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .padding(.horizontal, 6)
+        .onHover { hovering = $0 }
     }
 }
