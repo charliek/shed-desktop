@@ -3,6 +3,7 @@
 // screenshot-able). M0 shows running sheds + quick actions; the approval
 // section lands in M3.
 
+import AppKit
 import ShedKit
 import SwiftUI
 
@@ -121,18 +122,24 @@ private struct MenuActionRow: View {
         self.action = action
     }
 
+    // The native menu-highlight blue (matches Docker / Tailscale / cmux) with
+    // its paired text color. controlAccentColor stays vivid even though the
+    // panel isn't key (selectedContentBackgroundColor would fall back to gray).
+    private var highlight: Color { Color(nsColor: .controlAccentColor) }
+    private var highlightFg: Color { Color(nsColor: .alternateSelectedControlTextColor) }
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: systemImage).frame(width: 18)
-                    .foregroundStyle(hovering ? Theme.accentFg : Theme.textSecondary)
+                    .foregroundStyle(hovering ? highlightFg : Theme.textSecondary)
                 Text(title).font(.system(size: 13))
-                    .foregroundStyle(hovering ? Theme.accentFg : Theme.text)
+                    .foregroundStyle(hovering ? highlightFg : Theme.text)
                 Spacer()
             }
             .padding(.horizontal, 8).padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Theme.accent : Color.clear))
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? highlight : Color.clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
