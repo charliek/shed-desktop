@@ -65,6 +65,9 @@ public protocol UiBridge: AnyObject {
     /// so the harness can screenshot the image picker.
     func showCreateSheet()
 
+    /// Open the dashboard and present the Launch-agent sheet (`ui.show_launch`).
+    func showLaunchSheet()
+
     // MARK: - M1: lifecycle, create, terminal
 
     /// Run a lifecycle mutation on a shed, then refresh so the result is

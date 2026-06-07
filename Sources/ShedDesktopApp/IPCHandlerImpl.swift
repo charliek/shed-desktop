@@ -57,6 +57,10 @@ actor IPCHandlerImpl: IPCHandler {
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await showCreateSheetOp()
             return emptyResult
+        case "ui.show_launch":
+            _ = try decodeParams(params, as: EmptyParams.self, expected: [])
+            try await showLaunchSheetOp()
+            return emptyResult
         case "ui.open_preferences":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             try await openPreferencesOp()
@@ -184,6 +188,7 @@ actor IPCHandlerImpl: IPCHandler {
     @MainActor private func showWindowOp() throws { try uiBridge().showWindow() }
     @MainActor private func hideWindowOp() throws { try uiBridge().hideWindow() }
     @MainActor private func showCreateSheetOp() throws { try uiBridge().showCreateSheet() }
+    @MainActor private func showLaunchSheetOp() throws { try uiBridge().showLaunchSheet() }
     @MainActor private func openPreferencesOp() throws { try uiBridge().openPreferences() }
     @MainActor private func openMenuOp(_ open: Bool) throws { try uiBridge().setMenuOpen(open) }
     @MainActor private func hostListOp() throws -> HostListResult { HostListResult(hosts: try uiBridge().uiState().hosts) }

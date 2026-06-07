@@ -77,6 +77,7 @@ func usage() -> Never {
       shedctl ui show-window
       shedctl ui hide-window
       shedctl ui show-create
+      shedctl ui show-launch
       shedctl ui open-menu <true|false>
       shedctl ui window-state
       shedctl host list
@@ -151,6 +152,8 @@ do {
         printJSON(try client.call(op: "ui.hide_window", params: [:]))
     case ("ui", "show-create"):
         printJSON(try client.call(op: "ui.show_create", params: [:]))
+    case ("ui", "show-launch"):
+        printJSON(try client.call(op: "ui.show_launch", params: [:]))
     case ("ui", "open-menu"):
         let open = (argv.count >= 3 ? argv[2] : "true") == "true"
         printJSON(try client.call(op: "ui.open_menu", params: ["open": open]))

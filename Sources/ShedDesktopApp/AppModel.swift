@@ -63,7 +63,9 @@ final class AppModel: NSObject, UiBridge {
 
     private(set) var mainWindow: NSWindow?
     private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
+    private var menuPanel: MenuPanel?
+    private var menuPanelHost: NSHostingView<MenuBarContentView>?
+    private var menuDismissMonitors: [Any] = []
     private var updater: SPUStandardUpdaterController?
 
     private let pollInterval: Duration = .seconds(5)
@@ -479,9 +481,17 @@ final class AppModel: NSObject, UiBridge {
         let hosting = NSHostingController(rootView: DashboardView(state: state))
         let window = NSWindow(contentViewController: hosting)
         window.title = "shed desktop"
-        window.setContentSize(NSSize(width: 820, height: 520))
+        window.setContentSize(NSSize(width: 860, height: 660))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        // Keep the standard system titlebar with the "shed desktop" title (the
+        // content view starts below it). backgroundColor matches the linen canvas
+        // so resize / behind-sheet flashes aren't gray; window.appearance stays
+        // nil so system light/dark drives it.
         window.titlebarAppearsTransparent = false
+        window.backgroundColor = NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(hex: isDark ? 0x100F0C : 0xF1EFE9)
+        }
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()
@@ -506,16 +516,10 @@ final class AppModel: NSObject, UiBridge {
         }
         self.statusItem = item
 
-        let popover = NSPopover()
-        popover.behavior = .transient
-        // Animate in normal use — the animated show path positions the popover
-        // under the status item reliably (the non-animated path can land with a
-        // gap / wrong spot until a reflow snaps it back). Under the test harness
-        // we keep it OFF so the ui.open_menu → app.screenshot {surface:menu}
-        // sequence is deterministic (no lingering isShown).
-        popover.animates = !ShedBackend.shared.testMode
-        popover.contentSize = NSSize(width: 300, height: 360)
-        popover.contentViewController = NSHostingController(rootView: MenuBarContentView(
+        // A borderless panel (not an NSPopover) so the dropdown is fully opaque
+        // with no arrow — the standard menu-bar look. It sizes to the SwiftUI
+        // content on each open and dismisses on an outside click.
+        let host = NSHostingView(rootView: MenuBarContentView(
             state: state,
             onOpenDashboard: { [weak self] in
                 self?.setMenuOpen(false)
@@ -531,7 +535,25 @@ final class AppModel: NSObject, UiBridge {
             },
             onQuit: { NSApp.terminate(nil) }
         ))
-        self.popover = popover
+        host.wantsLayer = true
+        host.layer?.cornerRadius = 12
+        host.layer?.masksToBounds = true
+
+        let panel = MenuPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.level = .popUpMenu
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.animationBehavior = .none
+        panel.hidesOnDeactivate = false
+        panel.acceptsMouseMovedEvents = true
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        panel.contentView = host
+        self.menuPanel = panel
+        self.menuPanelHost = host
 
         updateStatusItemTitle()
     }
@@ -543,7 +565,7 @@ final class AppModel: NSObject, UiBridge {
     }
 
     @objc private func toggleMenu() {
-        setMenuOpen(!(popover?.isShown ?? false))
+        setMenuOpen(!(menuPanel?.isVisible ?? false))
     }
 
     // MARK: - IPC
@@ -570,8 +592,8 @@ final class AppModel: NSObject, UiBridge {
         case .window:
             return mainWindow
         case .menu:
-            guard let popover, popover.isShown else { return nil }
-            return popover.contentViewController?.view.window
+            guard let menuPanel, menuPanel.isVisible else { return nil }
+            return menuPanel
         case .preferences:
             return prefsWindow
         }
@@ -600,15 +622,64 @@ final class AppModel: NSObject, UiBridge {
         state.showCreateSheet = true
     }
 
+    func showLaunchSheet() {
+        showWindow()
+        state.pane = .agents
+        state.showLaunchSheet = true
+    }
+
     func setMenuOpen(_ open: Bool) {
-        guard let popover, let button = statusItem?.button else { return }
+        guard let panel = menuPanel else { return }
         if open {
-            if !popover.isShown {
-                popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            guard let host = menuPanelHost,
+                  let button = statusItem?.button, let buttonWindow = button.window,
+                  !panel.isVisible else { return }
+            // Size to the SwiftUI content (height varies with the approvals
+            // section) and drop the panel just below the status item, clamped
+            // to the screen.
+            host.layoutSubtreeIfNeeded()
+            var size = host.fittingSize
+            if size.width < 1 { size.width = 300 }
+            if size.height < 1 { size.height = 200 }
+            let buttonRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+            var x = buttonRect.maxX - size.width
+            var y = buttonRect.minY - size.height - 4
+            if let screen = buttonWindow.screen ?? NSScreen.main {
+                let vf = screen.visibleFrame
+                x = min(max(x, vf.minX + 8), vf.maxX - size.width - 8)
+                y = max(y, vf.minY + 8)
             }
+            panel.setFrame(NSRect(x: x, y: y, width: size.width, height: size.height), display: true)
+            panel.orderFrontRegardless()
+            installMenuDismissMonitors()
         } else {
-            popover.close()  // immediate (vs animated performClose) — isShown clears at once
+            removeMenuDismissMonitors()
+            panel.orderOut(nil)
         }
+    }
+
+    /// Dismiss the menu panel on a mouse-down outside it (skipping the status
+    /// item, whose own action toggles). Off under the harness so the
+    /// open_menu → screenshot sequence stays deterministic.
+    private func installMenuDismissMonitors() {
+        guard menuDismissMonitors.isEmpty, !ShedBackend.shared.testMode else { return }
+        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        let global = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] _ in
+            self?.setMenuOpen(false)
+        }
+        let local = NSEvent.addLocalMonitorForEvents(matching: mask) { [weak self] event in
+            guard let self else { return event }
+            if event.window === self.menuPanel { return event }
+            if event.window === self.statusItem?.button?.window { return event }
+            self.setMenuOpen(false)
+            return event
+        }
+        menuDismissMonitors = [global, local].compactMap { $0 }
+    }
+
+    private func removeMenuDismissMonitors() {
+        for monitor in menuDismissMonitors { NSEvent.removeMonitor(monitor) }
+        menuDismissMonitors.removeAll()
     }
 
     func navigate(toPane pane: String) -> Bool {
