@@ -40,7 +40,7 @@ struct SidebarView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 10)
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(Theme.canvas)
     }
 
     @ViewBuilder
@@ -68,9 +68,12 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(selected ? Color(nsColor: .windowBackgroundColor) : Color.clear)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(selected ? Theme.surface : Color.clear)
+                    .shadow(color: selected ? .black.opacity(0.06) : .clear, radius: 1.5, y: 1)
+            }
             .foregroundStyle(selected ? Color.primary : Color.secondary)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
             // Make the whole padded row the hit target, not just the text +
             // icon (a Button with a Spacer otherwise only clicks on its content).
             .contentShape(Rectangle())

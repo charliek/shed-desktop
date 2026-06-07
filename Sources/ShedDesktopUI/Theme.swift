@@ -1,9 +1,30 @@
 // Theme.swift — shared colors + small view helpers for the dashboard.
 
+import AppKit
 import ShedKit
 import SwiftUI
 
 public enum Theme {
+    // Warm "cream" palette. Each token is appearance-aware (cream under aqua,
+    // warm-charcoal under darkAqua) via an NSColor dynamic provider, which is the
+    // one technique that also resolves correctly under the screenshot path's
+    // `performAsCurrentDrawingAppearance`. Text stays on system label colors, so
+    // only these canvas/surface tokens need explicit light+dark values.
+    public static let canvas = dynamic(lightHex: 0xF3F1E8, darkHex: 0x1E1D1A)
+    public static let surface = dynamic(lightHex: 0xFCFBF7, darkHex: 0x2A2926)
+    // A translucent hairline: black ~12% on light, white ~12% on dark — `.primary`
+    // (label color) adapts per appearance for free.
+    public static let border = Color.primary.opacity(0.12)
+
+    /// A SwiftUI color that resolves to `lightHex` under aqua and `darkHex` under
+    /// darkAqua. `Color` is `Sendable`; the raw `NSColor` is never exposed.
+    public static func dynamic(lightHex: UInt32, darkHex: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(hex: isDark ? darkHex : lightHex)
+        })
+    }
+
     public static func statusColor(_ status: ShedStatus) -> Color {
         switch status {
         case .running: return .green

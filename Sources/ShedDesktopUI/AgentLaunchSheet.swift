@@ -33,6 +33,8 @@ public struct AgentLaunchSheet: View {
                 TextField("Display name (optional)", text: $displayName).textFieldStyle(.roundedBorder)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .listRowBackground(Theme.surface)
             Spacer()
             HStack {
                 Button("Cancel") { dismiss() }
@@ -44,6 +46,7 @@ public struct AgentLaunchSheet: View {
             .padding(16)
         }
         .frame(width: 420, height: 300)
+        .background(Theme.canvas)
         .onAppear { if target.isEmpty { target = runningSheds.first?.id ?? "" } }
     }
 

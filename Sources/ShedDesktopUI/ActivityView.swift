@@ -31,12 +31,20 @@ struct ActivityView: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
-                        ForEach(state.activity) { entry in
+                        ForEach(Array(state.activity.enumerated()), id: \.element.id) { index, entry in
+                            if index > 0 { Divider() }
                             ActivityRow(entry: entry)
-                            Divider()
                         }
                     }
+                    .padding(.horizontal, 12)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Theme.surface)
+                            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+                    }
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
                     .padding(.horizontal, 18)
+                    .padding(.bottom, 16)
                 }
             }
         }

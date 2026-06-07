@@ -34,6 +34,7 @@ public struct CreateShedSheet: View {
             }
         }
         .frame(width: 460, height: 420)
+        .background(Theme.canvas)
         .onAppear {
             if host.isEmpty { host = state.hosts.first?.name ?? "" }
             state.onImagesRefresh?()
@@ -95,6 +96,8 @@ public struct CreateShedSheet: View {
                 Toggle("Provision", isOn: $provision)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .listRowBackground(Theme.surface)
             Spacer()
             HStack {
                 Button("Cancel") { dismiss() }

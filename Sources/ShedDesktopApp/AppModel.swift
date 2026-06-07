@@ -482,6 +482,12 @@ final class AppModel: NSObject, UiBridge {
         window.setContentSize(NSSize(width: 820, height: 520))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.titlebarAppearsTransparent = false
+        // Match Theme.canvas so resize / behind-sheet flashes show cream, not the
+        // system gray. Leave window.appearance nil so system light/dark drives it.
+        window.backgroundColor = NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            return NSColor(hex: isDark ? 0x1E1D1A : 0xF3F1E8)
+        }
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

@@ -76,7 +76,12 @@ struct AgentRow: View {
                 .buttonStyle(.bordered).help("Kill session")
         }
         .padding(.horizontal, 12).padding(.vertical, 11)
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.2), lineWidth: 0.5))
+        .background {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.surface)
+                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
+        }
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
     }
 
     private var metaLine: String {

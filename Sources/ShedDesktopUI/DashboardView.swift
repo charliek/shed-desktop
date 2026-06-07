@@ -23,7 +23,7 @@ public struct DashboardView: View {
             }
         }
         .frame(minWidth: 720, minHeight: 460)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Theme.canvas)
         .sheet(isPresented: $state.showCreateSheet) {
             CreateShedSheet(state: state)
         }
@@ -56,7 +56,7 @@ public struct DashboardView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Color(nsColor: .underPageBackgroundColor))
+        .background(Theme.canvas)
     }
 
     @ViewBuilder
