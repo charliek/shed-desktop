@@ -628,10 +628,11 @@ final class AppModel: NSObject, UiBridge {
     }
 
     func setMenuOpen(_ open: Bool) {
-        guard let panel = menuPanel, let host = menuPanelHost,
-              let button = statusItem?.button, let buttonWindow = button.window else { return }
+        guard let panel = menuPanel else { return }
         if open {
-            guard !panel.isVisible else { return }
+            guard let host = menuPanelHost,
+                  let button = statusItem?.button, let buttonWindow = button.window,
+                  !panel.isVisible else { return }
             // Size to the SwiftUI content (height varies with the approvals
             // section) and drop the panel just below the status item, clamped
             // to the screen.
