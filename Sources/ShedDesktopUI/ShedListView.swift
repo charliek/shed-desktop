@@ -9,11 +9,11 @@ struct ShedListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("Sheds").font(.system(size: 16, weight: .semibold))
+                Text("Sheds").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.text)
                 if let err = state.lastError {
                     Label(err, systemImage: "exclamationmark.triangle")
                         .font(.system(size: 11))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(Theme.attention)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -21,26 +21,27 @@ struct ShedListView: View {
                     state.showCreateSheet = true
                 } label: {
                     Label("New shed", systemImage: "plus")
-                        .font(.system(size: 13))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 18)
-            .padding(.top, 16)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 20)
+            .padding(.top, 18)
+            .padding(.bottom, 12)
 
             if state.sheds.isEmpty {
                 emptyState
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 16) {
                         ForEach(state.shedsByHost(), id: \.host.name) { group in
                             if !group.sheds.isEmpty {
                                 hostSection(group.host, group.sheds)
                             }
                         }
                     }
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 16)
                 }
             }
@@ -50,12 +51,12 @@ struct ShedListView: View {
     private var emptyState: some View {
         VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(.tertiary)
+            Image(systemName: "tray").font(.system(size: 26)).foregroundStyle(Theme.textMuted)
             Text(state.hosts.contains(where: \.reachable)
                  ? "No sheds across the reachable hosts."
                  : "No reachable hosts. Check ~/.shed/config.yaml and that shed-server is running.")
                 .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
             Spacer()
@@ -68,7 +69,8 @@ struct ShedListView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(host.name.uppercased())
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.tertiary)
+                .tracking(0.6)
+                .foregroundStyle(Theme.textMuted)
             ForEach(sheds) { shed in
                 ShedRow(shed: shed, state: state)
             }
@@ -85,34 +87,31 @@ struct ShedRow: View {
     var body: some View {
         HStack(spacing: 12) {
             StatusDot(Theme.statusColor(shed.status))
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(shed.name).font(.system(size: 14, weight: .medium))
-                    if let backend = shed.backend { Badge(backend, prominent: true) }
-                    if let image = state.imageLabel(for: shed) { Badge(image) }
+                    Text(shed.name).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                    if let backend = shed.backend { Badge(backend, tone: .backend(backend)) }
+                    if let image = state.imageLabel(for: shed) {
+                        Badge(image, tone: .accent, symbol: "square.3.layers.3d")
+                    }
                 }
-                Text(metaLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Text(metaLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer()
             if !shed.activeNamespaces.isEmpty {
                 Label(shed.activeNamespaces.joined(separator: " · "), systemImage: "key")
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
                     .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.1))
+                    .background(Theme.inset)
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             actions
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 11)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.surface)
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
-        .opacity(shed.status == .stopped ? 0.6 : 1.0)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .cardSurface()
+        .opacity(shed.status == .stopped ? 0.7 : 1.0)
         .confirmationDialog("Delete shed \(shed.name)?", isPresented: $confirmingDelete) {
             Button("Delete", role: .destructive) { state.onShedAction?(.delete, shed) }
         }
@@ -125,21 +124,28 @@ struct ShedRow: View {
     private var actions: some View {
         HStack(spacing: 6) {
             if shed.status == .running {
-                iconButton("terminal", "Open terminal") { state.onOpenTerminal?(shed) }
-                iconButton("arrow.clockwise", "Reset") { confirmingReset = true }
-                iconButton("stop.fill", "Stop") { state.onShedAction?(.stop, shed) }
+                intentButton("terminal", "Open terminal", Theme.accent) { state.onOpenTerminal?(shed) }
+                intentButton("arrow.clockwise", "Reset", Theme.attention) { confirmingReset = true }
+                intentButton("stop.fill", "Stop", Theme.danger) { state.onShedAction?(.stop, shed) }
             } else if shed.status == .stopped {
-                iconButton("play.fill", "Start") { state.onShedAction?(.start, shed) }
-                iconButton("trash", "Delete") { confirmingDelete = true }
+                intentButton("play.fill", "Start", Theme.ok) { state.onShedAction?(.start, shed) }
+                intentButton("trash", "Delete", Theme.danger) { confirmingDelete = true }
             }
         }
     }
 
-    private func iconButton(_ symbol: String, _ help: String, action: @escaping () -> Void) -> some View {
+    /// An icon button that carries intent: subtle tint + colored border + glyph.
+    private func intentButton(_ symbol: String, _ help: String, _ intent: Color,
+                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).font(.system(size: 12)).frame(width: 22, height: 22)
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(intent)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7).fill(intent.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(intent.opacity(0.30), lineWidth: 0.5))
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
         .help(help)
     }
 

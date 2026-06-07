@@ -92,6 +92,10 @@ public struct MenuBarContentView: View {
                 .padding(.bottom, 6)
         }
         .frame(width: 300)
+        // The NSPopover otherwise shows its translucent system material through
+        // the (background-less) content; paint an opaque neutral surface so the
+        // popover stays easy to read.
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func menuHeader(_ title: String, trailing: String) -> some View {

@@ -9,21 +9,23 @@ struct SystemView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("System").font(.system(size: 16, weight: .semibold))
+                Text("System").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.text)
                 Spacer()
                 Button { state.onSystemRefresh?() } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise").font(.system(size: 12))
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 4)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 4)
             Text("Disk usage per host (images, sheds, snapshots, orphans).")
-                .font(.system(size: 12)).foregroundStyle(.tertiary)
-                .padding(.horizontal, 18).padding(.bottom, 10)
+                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 20).padding(.bottom, 12)
 
             if state.systemUsage.isEmpty {
                 VStack { Spacer()
-                    Text("Refreshing disk usage…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("Refreshing disk usage…").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Spacer() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -33,7 +35,7 @@ struct SystemView: View {
                             HostUsageCard(row: row)
                         }
                     }
-                    .padding(.horizontal, 18).padding(.bottom, 16)
+                    .padding(.horizontal, 20).padding(.bottom, 16)
                 }
             }
         }
@@ -47,20 +49,20 @@ private struct HostUsageCard: View {
     let row: HostDiskUsage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Image(systemName: "internaldrive").foregroundStyle(.secondary)
-                Text(row.host).font(.system(size: 14, weight: .medium))
+                Image(systemName: "internaldrive").foregroundStyle(Theme.textSecondary)
+                Text(row.host).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
                 if let backend = row.usage?.backend {
-                    Text(backend).font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Badge(backend, tone: .backend(backend))
                 }
                 Spacer()
                 if let t = row.usage?.totals {
-                    Text(SystemView.bytes(t.all.physicalBytes)).font(.system(size: 13, weight: .semibold))
+                    Text(SystemView.bytes(t.all.physicalBytes)).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
                 }
             }
             if let error = row.error {
-                Text(error).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(2)
+                Text(error).font(.system(size: 11)).foregroundStyle(Theme.attention).lineLimit(2)
             } else if let t = row.usage?.totals {
                 HStack(spacing: 16) {
                     metric("Images", t.images.physicalBytes)
@@ -70,19 +72,14 @@ private struct HostUsageCard: View {
                 }
             }
         }
-        .padding(12)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.surface)
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
+        .padding(14)
+        .cardSurface()
     }
 
     private func metric(_ label: String, _ bytes: Int64) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(label).font(.system(size: 10)).foregroundStyle(.tertiary)
-            Text(SystemView.bytes(bytes)).font(.system(size: 12, design: .monospaced))
+            Text(label).font(.system(size: 10)).foregroundStyle(Theme.textMuted)
+            Text(SystemView.bytes(bytes)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.text)
         }
     }
 }

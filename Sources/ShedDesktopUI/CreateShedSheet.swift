@@ -25,7 +25,7 @@ public struct CreateShedSheet: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("New shed").font(.system(size: 15, weight: .semibold)).padding(16)
+            Text("New shed").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(16)
             Divider()
             if submitted {
                 progress
@@ -34,7 +34,7 @@ public struct CreateShedSheet: View {
             }
         }
         .frame(width: 460, height: 420)
-        .background(Theme.canvas)
+        .background(Theme.bg)
         .onAppear {
             if host.isEmpty { host = state.hosts.first?.name ?? "" }
             state.onImagesRefresh?()
@@ -121,10 +121,10 @@ public struct CreateShedSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 3) {
                     ForEach(Array((create?.messages ?? []).enumerated()), id: \.offset) { _, msg in
-                        Text(msg).font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                        Text(msg).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.textSecondary)
                     }
                     if let err = create?.error {
-                        Text(err).font(.system(size: 12, design: .monospaced)).foregroundStyle(.red)
+                        Text(err).font(.system(size: 12, design: .monospaced)).foregroundStyle(Theme.danger)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)

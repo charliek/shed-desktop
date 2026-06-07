@@ -21,7 +21,7 @@ public struct AgentLaunchSheet: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Launch agent").font(.system(size: 15, weight: .semibold)).padding(16)
+            Text("Launch agent").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.text).padding(16)
             Divider()
             Form {
                 Picker("Shed", selection: $target) {
@@ -46,7 +46,7 @@ public struct AgentLaunchSheet: View {
             .padding(16)
         }
         .frame(width: 420, height: 300)
-        .background(Theme.canvas)
+        .background(Theme.bg)
         .onAppear { if target.isEmpty { target = runningSheds.first?.id ?? "" } }
     }
 

@@ -8,28 +8,32 @@ struct AgentsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 8) {
-                Text("Remote-control agents").font(.system(size: 16, weight: .semibold))
+            HStack(spacing: 12) {
+                Text("Remote-control agents").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.text)
                 Spacer()
-                Button { state.onRcRefresh?() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.borderless).help("Refresh")
-                Button { state.showLaunchSheet = true } label: {
-                    Label("Launch agent", systemImage: "plus").font(.system(size: 13))
+                Button { state.onRcRefresh?() } label: {
+                    Image(systemName: "arrow.clockwise").foregroundStyle(Theme.textSecondary)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain).help("Refresh")
+                Button { state.showLaunchSheet = true } label: {
+                    Label("Launch agent", systemImage: "plus")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 10)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 12)
 
             if state.rcSessions.isEmpty {
                 empty
             } else {
                 ScrollView {
-                    VStack(spacing: 8) {
+                    VStack(spacing: 10) {
                         ForEach(state.rcSessions) { session in
                             AgentRow(session: session, state: state)
                         }
                     }
-                    .padding(.horizontal, 18).padding(.bottom, 16)
+                    .padding(.horizontal, 20).padding(.bottom, 16)
                 }
             }
         }
@@ -38,9 +42,9 @@ struct AgentsView: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "wand.and.stars").font(.system(size: 26)).foregroundStyle(.tertiary)
+            Image(systemName: "wand.and.stars").font(.system(size: 26)).foregroundStyle(Theme.textMuted)
             Text("No remote-control sessions. Launch one into a running shed.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 320)
             Spacer()
         }
@@ -55,33 +59,40 @@ struct AgentRow: View {
     var body: some View {
         HStack(spacing: 12) {
             StatePill(session.state)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text("\(session.shed)/\(session.displayName)").font(.system(size: 14, weight: .medium))
+                    Text("\(session.shed)/\(session.displayName)").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
                     Badge(session.kind.rawValue)
                 }
-                Text(metaLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+                Text(metaLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer()
             if needsFix {
-                Text(fixHint).font(.system(size: 11)).foregroundStyle(.orange).lineLimit(1)
+                Text(fixHint).font(.system(size: 11)).foregroundStyle(Theme.attention).lineLimit(1)
             }
             if let url = session.url, session.state == .ready {
                 Button { state.onOpenURL?(url) } label: {
-                    Label("Open in Claude", systemImage: "arrow.up.right.square").font(.system(size: 12))
+                    Label("Open in Claude", systemImage: "arrow.up.right.square")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(Theme.accentSubtle, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accentBorder, lineWidth: 0.5))
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.plain)
             }
-            Button { state.onRcKill?(session) } label: { Image(systemName: "trash").font(.system(size: 12)) }
-                .buttonStyle(.bordered).help("Kill session")
+            Button { state.onRcKill?(session) } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Theme.danger)
+                    .frame(width: 26, height: 26)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.danger.opacity(0.12)))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.danger.opacity(0.30), lineWidth: 0.5))
+            }
+            .buttonStyle(.plain).help("Kill session")
         }
-        .padding(.horizontal, 12).padding(.vertical, 11)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.surface)
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
+        .padding(.horizontal, 14).padding(.vertical, 12)
+        .cardSurface()
     }
 
     private var metaLine: String {
@@ -109,7 +120,7 @@ struct StatePill: View {
         Text(state.rawValue)
             .font(.system(size: 11, weight: .medium))
             .frame(width: 84)
-            .padding(.vertical, 3)
+            .padding(.vertical, 4)
             .background(color.opacity(0.18))
             .foregroundStyle(color)
             .clipShape(RoundedRectangle(cornerRadius: 6))

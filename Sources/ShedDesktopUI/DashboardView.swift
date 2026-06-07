@@ -11,19 +11,20 @@ public struct DashboardView: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            header
+        HStack(spacing: 0) {
+            SidebarView(state: state)
+                .frame(width: Theme.sidebarWidth)
             Divider()
-            HStack(spacing: 0) {
-                SidebarView(state: state)
-                    .frame(width: Theme.sidebarWidth)
+            VStack(spacing: 0) {
+                header
                 Divider()
                 contentPane
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             }
+            .background(Theme.bg)
         }
-        .frame(minWidth: 720, minHeight: 460)
-        .background(Theme.canvas)
+        .frame(minWidth: 760, minHeight: 480)
+        .background(Theme.bg)
         .sheet(isPresented: $state.showCreateSheet) {
             CreateShedSheet(state: state)
         }
@@ -35,28 +36,28 @@ public struct DashboardView: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "shippingbox")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
             Text("shed desktop")
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
             Spacer()
             if !state.approvals.isEmpty {
                 Label("\(state.approvals.count) pending", systemImage: "shield.lefthalf.filled")
                     .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(Theme.danger)
             }
             HStack(spacing: 6) {
                 Circle()
-                    .fill(state.hostAgentConnected ? Color.green : Color.secondary)
+                    .fill(state.hostAgentConnected ? Theme.ok : Theme.textMuted)
                     .frame(width: 7, height: 7)
                 Text(state.hostAgentConnected ? "host agent · connected" : "host agent · not connected")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Theme.canvas)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        .background(Theme.bg)
     }
 
     @ViewBuilder

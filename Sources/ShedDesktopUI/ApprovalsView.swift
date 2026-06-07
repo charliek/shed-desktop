@@ -9,16 +9,16 @@ struct ApprovalsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Credential approvals").font(.system(size: 16, weight: .semibold))
+                Text("Credential approvals").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.text)
                 Spacer()
                 Text(state.hostAgentConnected ? "gate: shed-desktop" : "host agent not connected")
                     .font(.system(size: 12))
-                    .foregroundStyle(state.hostAgentConnected ? Color.secondary : Color.orange)
+                    .foregroundStyle(state.hostAgentConnected ? Theme.textMuted : Theme.attention)
             }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 4)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 4)
             Text("Requests routed from shed-host-agent when its approval mode is shed-desktop.")
-                .font(.system(size: 12)).foregroundStyle(.tertiary)
-                .padding(.horizontal, 18).padding(.bottom, 12)
+                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 20).padding(.bottom, 14)
 
             if state.approvals.isEmpty {
                 empty
@@ -29,7 +29,7 @@ struct ApprovalsView: View {
                             ApprovalCard(item: item, state: state)
                         }
                     }
-                    .padding(.horizontal, 18).padding(.bottom, 16)
+                    .padding(.horizontal, 20).padding(.bottom, 16)
                 }
             }
         }
@@ -38,9 +38,9 @@ struct ApprovalsView: View {
     private var empty: some View {
         VStack(spacing: 8) {
             Spacer()
-            Image(systemName: "checkmark.shield").font(.system(size: 26)).foregroundStyle(.tertiary)
+            Image(systemName: "checkmark.shield").font(.system(size: 26)).foregroundStyle(Theme.textMuted)
             Text(state.hostAgentConnected ? "No pending approvals." : "Waiting for the host agent. Set its approval mode to shed-desktop.")
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center).frame(maxWidth: 340)
             Spacer()
         }
@@ -55,12 +55,12 @@ struct ApprovalCard: View {
     private var req: ApprovalRequest { item.request }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
                 NamespaceIcon(req.namespace)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(req.namespace) · \(req.op)").font(.system(size: 14, weight: .medium))
-                    Text("shed \(req.qualifiedShed) · \(req.detail)").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("\(req.namespace) · \(req.op)").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
+                    Text("shed \(req.qualifiedShed) · \(req.detail)").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                 }
                 Spacer()
                 countdown
@@ -68,32 +68,37 @@ struct ApprovalCard: View {
             HStack(spacing: 8) {
                 // The card applies the configured SSH policy — it notifies, it
                 // doesn't change policy. The subtitle says what Approve will do.
-                Text(approveEffect).font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text(approveEffect).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                 Spacer()
                 Button { state.onApprovalDecide?(req, item.denyChoice) } label: {
-                    Text("Deny").font(.system(size: 13))
+                    Text("Deny")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.danger)
+                        .padding(.horizontal, 14).padding(.vertical, 7)
+                        .background(Theme.denyBg, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .buttonStyle(.bordered).tint(.red)
+                .buttonStyle(.plain)
                 Button {
                     state.onApprovalDecide?(req, item.approveChoice)
                 } label: {
-                    if item.gate.isBiometric {
-                        // Fingerprint only when a biometric prompt will be shown.
-                        Label("Approve (Touch ID)", systemImage: "touchid").font(.system(size: 13))
-                    } else {
-                        Text("Approve").font(.system(size: 13))
+                    Group {
+                        if item.gate.isBiometric {
+                            // Fingerprint only when a biometric prompt will be shown.
+                            Label("Approve (Touch ID)", systemImage: "touchid")
+                        } else {
+                            Text("Approve")
+                        }
                     }
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.approveFg)
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .background(Theme.approve, in: RoundedRectangle(cornerRadius: 8))
                 }
-                .buttonStyle(.borderedProminent).tint(.green)
+                .buttonStyle(.plain)
             }
         }
-        .padding(12)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Theme.surface)
-                .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-        }
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
+        .padding(14)
+        .cardSurface()
     }
 
     /// One line describing what Approve will do under the configured policy.
@@ -109,8 +114,8 @@ struct ApprovalCard: View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let remaining = max(0, Int((req.expiresAtDate ?? context.date).timeIntervalSince(context.date)))
             Text("expires in \(remaining)s")
-                .font(.system(size: 12))
-                .foregroundStyle(remaining < 10 ? .red : .orange)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(remaining < 10 ? Theme.danger : Theme.attention)
         }
     }
 }

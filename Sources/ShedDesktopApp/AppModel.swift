@@ -481,12 +481,14 @@ final class AppModel: NSObject, UiBridge {
         window.title = "shed desktop"
         window.setContentSize(NSSize(width: 820, height: 520))
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        // Keep the standard system titlebar with the "shed desktop" title (the
+        // content view starts below it). backgroundColor matches the linen canvas
+        // so resize / behind-sheet flashes aren't gray; window.appearance stays
+        // nil so system light/dark drives it.
         window.titlebarAppearsTransparent = false
-        // Match Theme.canvas so resize / behind-sheet flashes show cream, not the
-        // system gray. Leave window.appearance nil so system light/dark drives it.
         window.backgroundColor = NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            return NSColor(hex: isDark ? 0x1E1D1A : 0xF3F1E8)
+            return NSColor(hex: isDark ? 0x100F0C : 0xF1EFE9)
         }
         window.isReleasedWhenClosed = false
         window.delegate = self

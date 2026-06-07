@@ -10,22 +10,24 @@ struct ActivityView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Activity").font(.system(size: 16, weight: .semibold))
+                Text("Activity").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.text)
                 Spacer()
                 Button { state.onRevealAuditLog?() } label: {
-                    Label("Reveal log", systemImage: "doc.text.magnifyingglass").font(.system(size: 12))
+                    Label("Reveal log", systemImage: "doc.text.magnifyingglass")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .help("Reveal the append-only audit log in Finder.")
             }
-            .padding(.horizontal, 18).padding(.top, 16).padding(.bottom, 4)
+            .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 4)
             Text("Host-agent credential audit + shed-desktop decisions, newest first.")
-                .font(.system(size: 12)).foregroundStyle(.tertiary)
-                .padding(.horizontal, 18).padding(.bottom, 8)
+                .font(.system(size: 12)).foregroundStyle(Theme.textMuted)
+                .padding(.horizontal, 20).padding(.bottom, 10)
 
             if state.activity.isEmpty {
                 VStack { Spacer()
-                    Text("No activity yet.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("No activity yet.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
                     Spacer() }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -36,14 +38,9 @@ struct ActivityView: View {
                             ActivityRow(entry: entry)
                         }
                     }
-                    .padding(.horizontal, 12)
-                    .background {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Theme.surface)
-                            .shadow(color: .black.opacity(0.04), radius: 2, y: 1)
-                    }
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.border, lineWidth: 0.5))
-                    .padding(.horizontal, 18)
+                    .padding(.horizontal, 14)
+                    .cardSurface()
+                    .padding(.horizontal, 20)
                     .padding(.bottom, 16)
                 }
             }
@@ -56,18 +53,18 @@ struct ActivityRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(shortTime).font(.system(size: 11, design: .monospaced)).foregroundStyle(.tertiary).frame(width: 64, alignment: .leading)
-            if let ns = entry.ns { Badge(ns) }
-            Text(opLine).font(.system(size: 12)).foregroundStyle(.secondary).lineLimit(1)
+            Text(shortTime).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textMuted).frame(width: 66, alignment: .leading)
+            if let ns = entry.ns { Badge(ns, tone: ns == "ssh-agent" ? .agent : .neutral) }
+            Text(opLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             Spacer()
             Text(entry.result)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(resultColor)
             if let approval = entry.approval, approval != "none" {
-                Text(approval).font(.system(size: 11)).foregroundStyle(.tertiary)
+                Text(approval).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
     }
 
     private var shortTime: String { DateFormatting.shortTime(entry.ts) }
