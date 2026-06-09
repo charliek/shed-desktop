@@ -1,0 +1,30 @@
+#!/bin/bash
+# Open a new WezTerm tab running the given command (new window on cold start).
+#
+# Usage: shed-open-wezterm <shed> <cmd>
+#
+# When the WezTerm GUI/mux is already running, `wezterm cli spawn` opens a new
+# tab in an existing window; otherwise `wezterm start` cold-launches a window
+# with the command. The wezterm binary is resolved inside the app bundle (it's
+# not on a GUI-launched process's PATH).
+set -euo pipefail
+
+shed="${1:-}"
+cmd="${2:-}"
+[ -n "$cmd" ] || { echo "usage: shed-open-wezterm <shed> <cmd>" >&2; exit 2; }
+
+app_dir="$(/usr/bin/osascript -e 'POSIX path of (path to application id "com.github.wez.wezterm")' 2>/dev/null || true)"
+WEZ="${app_dir%/}/Contents/MacOS/wezterm"
+[ -x "$WEZ" ] || { echo "wezterm binary not found in WezTerm.app" >&2; exit 1; }
+
+# Run the (already shell-quoted) ssh command through a shell so its quoting is
+# preserved, rather than word-splitting it here.
+if "$WEZ" cli list >/dev/null 2>&1; then
+  win="$("$WEZ" cli list | awk 'NR==2{print $1; exit}')"
+  if [ -n "${win:-}" ]; then
+    exec "$WEZ" cli spawn --window-id "$win" -- /bin/sh -lc "$cmd"
+  fi
+  exec "$WEZ" cli spawn -- /bin/sh -lc "$cmd"
+fi
+# Cold start: launch the GUI with the command in a new window.
+exec "$WEZ" start -- /bin/sh -lc "$cmd"

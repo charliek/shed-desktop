@@ -221,8 +221,13 @@ actor IPCHandlerImpl: IPCHandler {
         return status
     }
 
-    @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalCommand {
-        try uiBridge().terminalCommand(shed: p.shed, host: p.host, session: p.session)
+    @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalPreviewResult {
+        let r = try uiBridge().terminalLaunchPreview(shed: p.shed, host: p.host, session: p.session)
+        // Keep `argv`/`command` at top level for backward compatibility; add the
+        // active preset + resolved invocation for observability.
+        return TerminalPreviewResult(
+            argv: r.command.argv, command: r.command.command,
+            preset: r.preset.rawValue, invocation: r.invocation)
     }
 
     @MainActor private func rcListOp(_ p: RcListParams) async throws -> RcListResult {
@@ -363,6 +368,13 @@ private struct TerminalParams: Decodable {
     let host: String?
     let shed: String
     let session: String?
+}
+
+private struct TerminalPreviewResult: Encodable, Sendable {
+    let argv: [String]
+    let command: String
+    let preset: String
+    let invocation: LaunchInvocation
 }
 
 private struct RcClassifyParams: Decodable { let kind: RcKind; let pane: String }

@@ -21,6 +21,76 @@ final class TerminalLauncherTests: XCTestCase {
         XCTAssertEqual(TerminalLauncher.shellQuote("a b"), "'a b'")
         XCTAssertEqual(TerminalLauncher.shellQuote("it's"), "'it'\\''s'")
     }
+
+    // MARK: - resolveLaunch matrix
+
+    private let fixtureCmd = TerminalLauncher.sshCommand(shed: "stbot", host: "mini3", sshPort: 2222)
+    private let scriptsDir = URL(fileURLWithPath: "/Apps/ShedDesktop.app/Contents/Resources/bin")
+
+    private func resolve(_ preset: TerminalPreset, template: String? = nil, scriptsDir: URL?) -> LaunchInvocation {
+        TerminalLauncher.resolveLaunch(
+            preset: preset, cmd: fixtureCmd, shed: "stbot",
+            customTemplate: template, scriptsDir: scriptsDir)
+    }
+
+    func testResolveTerminalApp() {
+        let inv = resolve(.terminalApp, scriptsDir: scriptsDir)
+        XCTAssertEqual(inv.executable, "/usr/bin/osascript")
+        XCTAssertEqual(inv.arguments.first, "-e")
+        XCTAssertTrue(inv.arguments[1].contains("tell application \"Terminal\""))
+        XCTAssertTrue(inv.arguments[1].contains(fixtureCmd.command))
+    }
+
+    func testResolveScriptPresetsArgvContract() {
+        // Every script preset → its interpreter + [scriptPath, shed, cmd].
+        let cases: [(TerminalPreset, String, String)] = [
+            (.ghostty, "/bin/bash", "shed-open-ghostty"),
+            (.iterm2, "/bin/bash", "shed-open-iterm2"),
+            (.wezterm, "/bin/bash", "shed-open-wezterm"),
+            (.kitty, "/bin/bash", "shed-open-kitty"),
+            (.warp, "/bin/bash", "shed-open-warp"),
+            (.roost, "/usr/bin/python3", "shed-open-roost.py"),
+        ]
+        for (preset, interp, script) in cases {
+            let inv = resolve(preset, scriptsDir: scriptsDir)
+            XCTAssertEqual(inv.executable, interp, "\(preset)")
+            XCTAssertEqual(
+                inv.arguments,
+                ["/Apps/ShedDesktop.app/Contents/Resources/bin/\(script)", "stbot", fixtureCmd.command],
+                "\(preset)")
+        }
+    }
+
+    func testResolveCustomSubstitutesCmdAndShed() {
+        let inv = resolve(.custom, template: "echo {shed}: {cmd}", scriptsDir: scriptsDir)
+        XCTAssertEqual(inv.executable, "/bin/sh")
+        XCTAssertEqual(inv.arguments, ["-c", "echo stbot: \(fixtureCmd.command)"])
+    }
+
+    func testResolveScriptPresetFallsBackToTerminalAppWithoutScriptsDir() {
+        let inv = resolve(.ghostty, scriptsDir: nil)
+        XCTAssertEqual(inv.executable, "/usr/bin/osascript")
+        XCTAssertTrue(inv.arguments[1].contains("tell application \"Terminal\""))
+    }
+
+    func testResolveEmptyCustomTemplateFallsBackToTerminalApp() {
+        let inv = resolve(.custom, template: "   ", scriptsDir: scriptsDir)
+        XCTAssertEqual(inv.executable, "/usr/bin/osascript")
+        XCTAssertTrue(inv.arguments[1].contains("tell application \"Terminal\""))
+    }
+
+    // MARK: - preset derive-default
+
+    func testDeriveDefaults() {
+        // No explicit store: empty legacy → terminalApp; non-empty → custom.
+        XCTAssertEqual(TerminalPreset.derive(legacyTemplate: "", storedRaw: nil), .terminalApp)
+        XCTAssertEqual(TerminalPreset.derive(legacyTemplate: "   ", storedRaw: nil), .terminalApp)
+        XCTAssertEqual(TerminalPreset.derive(legacyTemplate: "ghostty -e {cmd}", storedRaw: nil), .custom)
+        // An explicit stored preset wins over the legacy template.
+        XCTAssertEqual(TerminalPreset.derive(legacyTemplate: "ghostty -e {cmd}", storedRaw: "roost"), .roost)
+        // Unknown stored raw → fall back to derivation.
+        XCTAssertEqual(TerminalPreset.derive(legacyTemplate: "", storedRaw: "bogus"), .terminalApp)
+    }
 }
 
 final class SSEParserTests: XCTestCase {
