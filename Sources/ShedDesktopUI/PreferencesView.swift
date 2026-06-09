@@ -27,10 +27,20 @@ public struct PreferencesView: View {
             }
 
             Section("Terminal") {
-                TextField("Command template", text: $prefs.terminalTemplate, prompt: Text("ghostty -e {cmd}"))
-                    .onChange(of: prefs.terminalTemplate) { _, v in prefs.onTerminalTemplate?(v) }
-                Text("`{cmd}` is replaced with the ssh command. Leave empty to use Terminal.app.")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Picker("Open sheds in", selection: $prefs.terminalPreset) {
+                    ForEach(prefs.availableTerminalPresets) { Text($0.label).tag($0) }
+                }
+                .onChange(of: prefs.terminalPreset) { _, v in prefs.onTerminalPreset?(v) }
+
+                if prefs.terminalPreset == .custom {
+                    TextField("Command template", text: $prefs.terminalTemplate, prompt: Text("ghostty -e {cmd}"))
+                        .onChange(of: prefs.terminalTemplate) { _, v in prefs.onTerminalTemplate?(v) }
+                    Text("`{cmd}` is replaced with the ssh command, `{shed}` with the shed name. Leave empty to use Terminal.app.")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                } else {
+                    Text(prefs.terminalPreset.detail)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
             }
 
             if !anyGated {

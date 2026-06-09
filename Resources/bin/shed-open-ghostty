@@ -1,0 +1,29 @@
+#!/bin/bash
+# Open a new Ghostty tab running the given command.
+#
+# Usage: shed-open-ghostty <shed> <cmd>
+#
+# Drives Ghostty's AppleScript dictionary (surface configuration → new tab).
+# `wait after command = false` ⇒ the tab closes when the command exits.
+# The shed ssh command is plain space-separated tokens, so Ghostty's command
+# parsing handles it as-is; if it ever needs shell semantics, wrap $cmd in
+# `/bin/sh -lc`.
+set -euo pipefail
+
+shed="${1:-}"
+cmd="${2:-}"
+[ -n "$cmd" ] || { echo "usage: shed-open-ghostty <shed> <cmd>" >&2; exit 2; }
+
+# Escape for an AppleScript double-quoted string literal.
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+cmd_as="$(esc "$cmd")"
+
+/usr/bin/osascript <<APPLESCRIPT
+tell application id "com.mitchellh.ghostty"
+  activate
+  set cfg to make new surface configuration
+  set command of cfg to "$cmd_as"
+  set wait after command of cfg to false
+  make new tab with configuration cfg
+end tell
+APPLESCRIPT

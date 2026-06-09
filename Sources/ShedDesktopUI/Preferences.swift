@@ -23,6 +23,11 @@ public struct ShedRuleRow: Identifiable, Equatable, Sendable {
     @Published public var launchAtLogin: Bool
     @Published public var terminalTemplate: String
 
+    /// The selected terminal preset, and the presets actually offered (the
+    /// app computes the latter from which terminals are installed).
+    @Published public var terminalPreset: TerminalPreset = .terminalApp
+    @Published public var availableTerminalPresets: [TerminalPreset] = [.terminalApp, .custom]
+
     /// Credential namespaces the host agent delegates to shed-desktop
     /// (`hello_ack.gate_namespaces`) — drives which approval sections show.
     @Published public var gatedNamespaces: [String] = []
@@ -41,6 +46,7 @@ public struct ShedRuleRow: Identifiable, Equatable, Sendable {
 
     public var onLaunchAtLogin: ((Bool) -> Void)?
     public var onTerminalTemplate: ((String) -> Void)?
+    public var onTerminalPreset: ((TerminalPreset) -> Void)?
     public var onSSHMethod: ((ApprovalMethod) -> Void)?
     public var onSSHPolicy: ((SSHApprovalPolicy) -> Void)?
     public var onSSHTTL: ((String) -> Void)?

@@ -81,6 +81,10 @@ public protocol UiBridge: AnyObject {
 
     /// Build the ssh command to reach a shed (pure; spawns nothing).
     func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand
+    /// Resolve the launch (active preset + the exact invocation) without
+    /// spawning — backs `terminal.preview` so an agent can observe what would run.
+    func terminalLaunchPreview(shed: String, host: String?, session: String?) throws
+        -> (command: TerminalCommand, preset: TerminalPreset, invocation: LaunchInvocation)
     /// Build AND launch the terminal (side-effecting; gated to test mode off).
     func openTerminal(shed: String, host: String?, session: String?) throws -> TerminalCommand
 

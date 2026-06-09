@@ -18,11 +18,22 @@ struct PreferencesStore {
         }
     }
 
-    /// Terminal launch template with a `{cmd}` placeholder; empty = default
-    /// to Terminal.app.
+    /// Custom terminal command template with `{cmd}`/`{shed}` placeholders;
+    /// used only when `terminalPreset == .custom`.
     var terminalTemplate: String {
         get { defaults.string(forKey: "terminalTemplate") ?? "" }
         nonmutating set { defaults.set(newValue, forKey: "terminalTemplate") }
+    }
+
+    /// The selected terminal preset. Absent (fresh install) → derive once from
+    /// the legacy template (non-empty ⇒ `.custom`, else `.terminalApp`).
+    var terminalPreset: TerminalPreset {
+        get {
+            TerminalPreset.derive(
+                legacyTemplate: defaults.string(forKey: "terminalTemplate") ?? "",
+                storedRaw: defaults.string(forKey: "terminalPreset"))
+        }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: "terminalPreset") }
     }
 
     // Per-provider approval config (issue: per-provider approval). SSH gets a

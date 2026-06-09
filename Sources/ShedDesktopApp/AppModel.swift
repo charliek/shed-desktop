@@ -105,6 +105,15 @@ final class AppModel: NSObject, UiBridge {
         let testMode = ShedBackend.shared.testMode
         prefs.launchAtLogin = testMode ? false : LoginItem.isEnabled
         prefs.terminalTemplate = prefsStore.terminalTemplate
+        // If the persisted preset's app was uninstalled since last launch, the
+        // Picker selection would have no matching tag (blank + warning). Clamp to
+        // Terminal.app so "selection ∈ options" always holds before first render.
+        prefs.availableTerminalPresets = Self.availableTerminalPresets()
+        let storedPreset = prefsStore.terminalPreset
+        prefs.terminalPreset = prefs.availableTerminalPresets.contains(storedPreset) ? storedPreset : .terminalApp
+        if prefs.terminalPreset != storedPreset {
+            prefsStore.terminalPreset = prefs.terminalPreset
+        }
         prefs.sshMethod = prefsStore.sshMethod
         prefs.sshPolicy = prefsStore.sshPolicy
         prefs.sshTTL = prefsStore.sshTTL
@@ -136,6 +145,9 @@ final class AppModel: NSObject, UiBridge {
         }
         prefs.onTerminalTemplate = { [weak self] template in
             self?.prefsStore.terminalTemplate = template
+        }
+        prefs.onTerminalPreset = { [weak self] preset in
+            self?.prefsStore.terminalPreset = preset
         }
         // Changing any SSH approval setting clears live in-memory SSH grants, so
         // the new policy takes effect on the very next request (a grant from an
@@ -767,8 +779,44 @@ final class AppModel: NSObject, UiBridge {
 
     func openTerminal(shed: String, host: String?, session: String?) throws -> TerminalCommand {
         let cmd = try terminalCommand(shed: shed, host: host, session: session)
-        try TerminalLauncher.launchInTerminal(cmd, template: terminalTemplate)
+        try TerminalLauncher.launchInTerminal(
+            cmd,
+            preset: prefs.terminalPreset,
+            shed: shed,
+            customTemplate: terminalTemplate,
+            scriptsDir: Self.terminalScriptsDir)
         return cmd
+    }
+
+    /// Resolve a launch without spawning — backs `terminal.preview` so an
+    /// agent can observe exactly what the active preset would run.
+    func terminalLaunchPreview(shed: String, host: String?, session: String?) throws
+        -> (command: TerminalCommand, preset: TerminalPreset, invocation: LaunchInvocation) {
+        let cmd = try terminalCommand(shed: shed, host: host, session: session)
+        let inv = TerminalLauncher.resolveLaunch(
+            preset: prefs.terminalPreset,
+            cmd: cmd,
+            shed: shed,
+            customTemplate: terminalTemplate,
+            scriptsDir: Self.terminalScriptsDir)
+        return (cmd, prefs.terminalPreset, inv)
+    }
+
+    /// The bundled opener-scripts dir (`Contents/Resources/bin`). nil under
+    /// `swift run` (no .app bundle) — the launcher falls back to Terminal.app.
+    static var terminalScriptsDir: URL? {
+        Bundle.main.resourceURL?.appendingPathComponent("bin")
+    }
+
+    /// Terminal presets to offer: always-available ones, plus any whose app is
+    /// installed (and, for python-backed openers, only when python3 is present).
+    static func availableTerminalPresets() -> [TerminalPreset] {
+        let hasPython = FileManager.default.isExecutableFile(atPath: "/usr/bin/python3")
+        return TerminalPreset.allCases.filter { preset in
+            if preset.requiresPython && !hasPython { return false }
+            guard let bundleID = preset.bundleID else { return true }
+            return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
+        }
     }
 
     private func resolveHost(_ host: String?) throws -> ShedHost {

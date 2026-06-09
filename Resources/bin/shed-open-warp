@@ -1,0 +1,38 @@
+#!/bin/bash
+# Best-effort Warp opener: write a one-tab Launch Configuration that runs the
+# command, then open it via the warp:// URI.
+#
+# Usage: shed-open-warp <shed> <cmd>
+#
+# Warp has no clean "run a command in a new tab" CLI/URI — running a command
+# from outside is an open upstream feature request (warpdotdev/Warp#3959). The
+# launch-configuration route is the only option and is the weakest integration
+# here; verify the YAML schema against your Warp version.
+set -euo pipefail
+
+shed="${1:-}"
+cmd="${2:-}"
+[ -n "$cmd" ] || { echo "usage: shed-open-warp <shed> <cmd>" >&2; exit 2; }
+
+cfg_dir="$HOME/.warp/launch_configurations"
+mkdir -p "$cfg_dir"
+name="shed-desktop"
+
+# Escape for a YAML double-quoted scalar.
+esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+cmd_yaml="$(esc "$cmd")"
+shed_yaml="$(esc "$shed")"
+
+cat > "$cfg_dir/$name.yaml" <<YAML
+---
+name: $name
+windows:
+  - tabs:
+      - title: "$shed_yaml"
+        layout:
+          cwd: "~"
+          commands:
+            - exec: "$cmd_yaml"
+YAML
+
+exec /usr/bin/open "warp://launch/$name"

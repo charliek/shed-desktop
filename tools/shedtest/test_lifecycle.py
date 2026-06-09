@@ -49,6 +49,11 @@ def test_terminal_preview_builds_ssh(shed):
     # Host "mock" in the fixture config maps to 127.0.0.1:2222 (ssh port).
     assert cmd["argv"][:5] == ["ssh", "-t", "hello-world@127.0.0.1", "-p", "2222"]
     assert "ssh -t hello-world@127.0.0.1 -p 2222" in cmd["command"]
+    # Observability: preview also surfaces the active preset + the exact
+    # invocation that would run (no spawn). Fresh defaults → Terminal.app.
+    assert cmd["preset"] == "terminal-app"
+    assert cmd["invocation"]["executable"] == "/usr/bin/osascript"
+    assert 'tell application "Terminal"' in cmd["invocation"]["arguments"][1]
 
 
 def test_terminal_open_disabled_in_test_mode(shed):
