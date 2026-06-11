@@ -52,16 +52,37 @@ struct ActivityRow: View {
     let entry: AuditEntry
 
     var body: some View {
-        HStack(spacing: 8) {
-            Text(shortTime).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textMuted).frame(width: 66, alignment: .leading)
-            if let ns = entry.ns { Badge(ns, tone: ns == "ssh-agent" ? .agent : .neutral) }
-            Text(opLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            Spacer()
-            Text(entry.result)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(resultColor)
-            if let approval = entry.approval, approval != "none" {
-                Text(approval).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 8) {
+                Text(shortTime).font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textMuted).frame(width: 66, alignment: .leading)
+                if let ns = entry.ns { Badge(ns, tone: ns == "ssh-agent" ? .agent : .neutral) }
+                Text(opLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Spacer()
+                Text(entry.result)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(resultColor)
+                if let approval = entry.approval, approval != "none" {
+                    Text(approval).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                }
+            }
+            // For a failed/denied request, surface *why* on a second line: the
+            // machine code (red) and the host's reason. Successful and anonymous
+            // rows stay single-line. Older agents send no code/reason → nothing extra.
+            if isFailure, hasCause {
+                HStack(spacing: 6) {
+                    if let code = entry.code, !code.isEmpty {
+                        Text(code)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Theme.danger)
+                    }
+                    if let reason = entry.reason, !reason.isEmpty {
+                        Text(reason)
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(2)
+                    }
+                }
+                .padding(.leading, 74)
             }
         }
         .padding(.vertical, 8)
@@ -78,4 +99,10 @@ struct ActivityRow: View {
     }
 
     private var resultColor: Color { Theme.auditResultColor(entry.result) }
+
+    private var isFailure: Bool { entry.result == "error" || entry.result == "denied" }
+
+    private var hasCause: Bool {
+        !(entry.code ?? "").isEmpty || !(entry.reason ?? "").isEmpty
+    }
 }

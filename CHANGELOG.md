@@ -2,6 +2,16 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## Unreleased
+
+### Added
+- **Failure reason in the activity feed** — a failed or denied credential event
+  now shows the host-agent's machine code (e.g. `REGISTRY_NOT_ALLOWED`,
+  `APPROVAL_DENIED`) and a short reason on a second line, instead of burying the
+  detail in the op line. Successful and anonymous rows are unchanged, and events
+  from older host-agents (no `code`/`reason`) render exactly as before. Pairs
+  with the shed-extensions audit `code`/`reason` enrichment.
+
 ## v0.0.6 — 2026-06-07
 
 A full dashboard theme overhaul, redesigned modal sheets, and an app icon.

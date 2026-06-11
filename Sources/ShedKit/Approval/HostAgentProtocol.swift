@@ -43,12 +43,14 @@ public struct AuditEventFrame: Sendable, Decodable {
     public let op: String?
     public let result: String
     public let detail: String?
+    public let code: String?           // machine-readable failure cause (e.g. REGISTRY_NOT_ALLOWED); nil on success or older agents
+    public let reason: String?         // short host-side explanation for a non-ok result; nil on success or older agents
     public let approval: String?
     public let requestID: String?
     public let ts: String?
 
     enum CodingKeys: String, CodingKey {
-        case kind, server, shed, ns, op, result, detail, approval, ts
+        case kind, server, shed, ns, op, result, detail, code, reason, approval, ts
         case requestID = "request_id"
     }
 }

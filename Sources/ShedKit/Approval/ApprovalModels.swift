@@ -85,12 +85,15 @@ public struct AuditEntry: Codable, Sendable, Equatable, Identifiable {
     public var op: String?
     public var result: String          // ok | denied | error | …
     public var detail: String?
+    public var code: String?           // machine-readable failure cause (REGISTRY_NOT_ALLOWED, …); nil on success/older agents
+    public var reason: String?         // short host-side explanation for a non-ok result; nil on success/older agents
     public var approval: String?
     public var policy: String?
 
     public init(
         id: String, ts: String, source: AuditSource, server: String? = nil, shed: String? = nil, ns: String? = nil,
-        op: String? = nil, result: String, detail: String? = nil, approval: String? = nil, policy: String? = nil
+        op: String? = nil, result: String, detail: String? = nil, code: String? = nil, reason: String? = nil,
+        approval: String? = nil, policy: String? = nil
     ) {
         self.id = id
         self.ts = ts
@@ -101,6 +104,8 @@ public struct AuditEntry: Codable, Sendable, Equatable, Identifiable {
         self.op = op
         self.result = result
         self.detail = detail
+        self.code = code
+        self.reason = reason
         self.approval = approval
         self.policy = policy
     }
@@ -111,7 +116,7 @@ public struct AuditEntry: Codable, Sendable, Equatable, Identifiable {
             id: frame.requestID ?? UUID().uuidString,
             ts: frame.ts ?? DateFormatting.nowISO8601(),
             source: .hostAgent, server: frame.server, shed: frame.shed, ns: frame.ns, op: frame.op,
-            result: frame.result, detail: frame.detail, approval: frame.approval)
+            result: frame.result, detail: frame.detail, code: frame.code, reason: frame.reason, approval: frame.approval)
     }
 }
 
