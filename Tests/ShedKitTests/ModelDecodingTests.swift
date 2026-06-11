@@ -143,4 +143,34 @@ final class ModelDecodingTests: XCTestCase {
         let config = ShedConfig.load(path: "/nonexistent/\(UUID().uuidString)/config.yaml")
         XCTAssertEqual(config, .empty)
     }
+
+    func testAuditEventFrameDecodesCodeAndReason() throws {
+        // A failed docker get from an enriched host-agent carries code + reason.
+        let json = """
+        {"type":"event","kind":"audit","ns":"docker-credentials","op":"get","shed":"t1",
+         "result":"error","detail":"https://index.docker.io/v1/",
+         "code":"REGISTRY_NOT_ALLOWED","reason":"registry index.docker.io not in allowlist",
+         "approval":"approve-all","ts":"2026-06-10T23:00:00Z"}
+        """
+        let frame = try JSONDecoder().decode(AuditEventFrame.self, from: Data(json.utf8))
+        XCTAssertEqual(frame.code, "REGISTRY_NOT_ALLOWED")
+        XCTAssertEqual(frame.reason, "registry index.docker.io not in allowlist")
+
+        // …and the mapping into the stored entry preserves them.
+        let entry = AuditEntry(frame: frame)
+        XCTAssertEqual(entry.result, "error")
+        XCTAssertEqual(entry.code, "REGISTRY_NOT_ALLOWED")
+        XCTAssertEqual(entry.reason, "registry index.docker.io not in allowlist")
+    }
+
+    func testAuditEventFrameWithoutCodeReasonDecodesNil() throws {
+        // Pre-enrichment host-agents omit code/reason — must default to nil, not throw.
+        let json = #"{"type":"event","ns":"ssh-agent","op":"sign","shed":"x","result":"ok"}"#
+        let frame = try JSONDecoder().decode(AuditEventFrame.self, from: Data(json.utf8))
+        XCTAssertNil(frame.code)
+        XCTAssertNil(frame.reason)
+        let entry = AuditEntry(frame: frame)
+        XCTAssertNil(entry.code)
+        XCTAssertNil(entry.reason)
+    }
 }
