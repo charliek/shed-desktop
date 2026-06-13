@@ -16,13 +16,19 @@ public struct ShedServerEntry: Sendable, Equatable {
     /// Control-scoped bearer token for the HTTP API. Empty when the server
     /// isn't token-gated.
     public let controlToken: String
+    /// HTTPS control-plane URL (api_url); overrides host+httpPort when set.
+    public let apiURL: String
+    /// Pinned TLS cert fingerprint ("sha256:<hex>"); empty for plain HTTP.
+    public let tlsCertFingerprint: String
 
-    public init(name: String, host: String, httpPort: Int, sshPort: Int, controlToken: String = "") {
+    public init(name: String, host: String, httpPort: Int, sshPort: Int, controlToken: String = "", apiURL: String = "", tlsCertFingerprint: String = "") {
         self.name = name
         self.host = host
         self.httpPort = httpPort
         self.sshPort = sshPort
         self.controlToken = controlToken
+        self.apiURL = apiURL
+        self.tlsCertFingerprint = tlsCertFingerprint
     }
 }
 
@@ -56,7 +62,12 @@ public struct ShedConfig: Sendable, Equatable {
                 let httpPort = fields["http_port"]?.scalar.flatMap { Int($0) } ?? 8080
                 let sshPort = fields["ssh_port"]?.scalar.flatMap { Int($0) } ?? 22
                 let controlToken = fields["control_token"]?.scalar ?? ""
-                entries.append(ShedServerEntry(name: name, host: host, httpPort: httpPort, sshPort: sshPort, controlToken: controlToken))
+                let apiURL = fields["api_url"]?.scalar ?? ""
+                // Canonicalize to the lowercase "sha256:<hex>" the server emits,
+                // so a hand-edited upper/mixed-case pin still matches at handshake
+                // time rather than silently failing every connection.
+                let tlsCertFingerprint = fields["tls_cert_fingerprint"]?.scalar?.lowercased() ?? ""
+                entries.append(ShedServerEntry(name: name, host: host, httpPort: httpPort, sshPort: sshPort, controlToken: controlToken, apiURL: apiURL, tlsCertFingerprint: tlsCertFingerprint))
             }
         }
         entries.sort { $0.name < $1.name }

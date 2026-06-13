@@ -315,12 +315,20 @@ final class AppModel: NSObject, UiBridge {
                 name: entry.name, host: entry.host,
                 httpPort: entry.httpPort, sshPort: entry.sshPort))
             let baseURL: URL
+            let pin: String
             if let mockBase, let url = URL(string: mockBase) {
                 baseURL = url
+                pin = ""  // hermetic mock is plain http; no pinning
+            } else if !entry.apiURL.isEmpty, let url = URL(string: entry.apiURL) {
+                baseURL = url
+                pin = entry.tlsCertFingerprint
             } else {
                 baseURL = URL(string: "http://\(entry.host):\(entry.httpPort)")!
+                pin = entry.tlsCertFingerprint  // empty for plain http; a stray pin fails closed
             }
-            clients[entry.name] = ShedServerClient(baseURL: baseURL, serverName: entry.name, token: entry.controlToken)
+            clients[entry.name] = ShedServerClient(
+                baseURL: baseURL, serverName: entry.name,
+                token: entry.controlToken, tlsCertFingerprint: pin)
         }
         self.clients = clients
         self.defaultServerName = config.defaultServer ?? config.servers.first?.name

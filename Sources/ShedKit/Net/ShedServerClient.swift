@@ -34,12 +34,35 @@ public struct ShedServerClient: Sendable {
     public let serverName: String
     private let session: URLSession
     private let token: String
+    // Set when the client is misconfigured (a TLS pin on a non-https URL); every
+    // request throws it instead of sending unpinned plaintext.
+    private let configError: ShedClientError?
 
-    public init(baseURL: URL, serverName: String, token: String = "", session: URLSession = .shared) {
+    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", session: URLSession? = nil) {
         self.baseURL = baseURL
         self.serverName = serverName
         self.token = token
-        self.session = session
+
+        // The injected `session` (the hermetic test mock) is honored only on the
+        // unpinned path; a pinned build always owns its delegate-backed session.
+        if tlsCertFingerprint.isEmpty {
+            self.session = session ?? .shared
+            self.configError = nil
+        } else if baseURL.scheme?.lowercased() == "https" {
+            // Pinned TLS: a delegate-backed session verifies the leaf cert
+            // against the fingerprint. The session retains its delegate until
+            // invalidated; these clients live for the app session, which is
+            // acceptable for the handful of configured hosts.
+            let delegate = PinningSessionDelegate(fingerprint: tlsCertFingerprint)
+            self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
+            self.configError = nil
+        } else {
+            // Fail closed: a pin only protects https, so refuse rather than
+            // silently send unpinned plaintext (mirrors the Go/sdk contract).
+            self.session = session ?? .shared
+            self.configError = .transport(
+                "TLS pin configured for a non-https URL \(baseURL.absoluteString); refusing to send unpinned plaintext")
+        }
     }
 
     /// Sets the bearer token header on `req` when the client is configured
@@ -108,12 +131,14 @@ public struct ShedServerClient: Sendable {
         let serverName = self.serverName
         let session = self.session
         let token = self.token
+        let configError = self.configError
         // Bounded buffer: a runaway server can't grow our heap without limit
         // if the consumer lags (256 is far more than a real create streams).
         return AsyncThrowingStream(CreateEvent.self, bufferingPolicy: .bufferingNewest(256)) { continuation in
             let task = Task {
                 var sawComplete = false
                 do {
+                    if let configError { throw configError }
                     var req = URLRequest(url: baseURL.appendingPathComponent("/api/sheds"))
                     req.httpMethod = "POST"
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
@@ -182,6 +207,7 @@ public struct ShedServerClient: Sendable {
     /// errors. `get`/`send` are thin wrappers; the streaming create path
     /// reuses only the status-check shape (it needs the byte stream).
     private func requestData(_ method: String, _ path: String, accept: String? = nil, timeout: TimeInterval) async throws -> Data {
+        if let configError { throw configError }
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = method
         req.timeoutInterval = timeout
