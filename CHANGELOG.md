@@ -2,6 +2,18 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.8 — 2026-06-13
+
+### Added
+- **SSH host-key pinning + native TLS certificate pinning** (#15) — desktop
+  support for the shed v0.7.0 server hardening. Both terminal-launch paths use
+  `StrictHostKeyChecking=yes` against `~/.shed/known_hosts`, and the client pins
+  shed-server's self-signed TLS cert by SHA-256 fingerprint (fail-closed on a
+  mismatch, on a non-https URL, and on plaintext redirects). `ShedConfig` reads
+  `api_url`, `tls_cert_fingerprint`, and `control_token`; the client sends the
+  bearer token and pins TLS when a server is configured for it. Default-off: a
+  plain-http server with no pin or token behaves exactly as before.
+
 ## v0.0.7 — 2026-06-12
 
 ### Added
