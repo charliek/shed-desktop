@@ -22,12 +22,29 @@ public func pinMatches(leafDER: Data, fingerprint: String) -> Bool {
 /// URLSession delegate that pins the server's self-signed cert by fingerprint.
 /// Fail-closed: any server-trust challenge it cannot verify against the pin is
 /// cancelled, so a mismatched (or unreadable) cert never completes a handshake.
-public final class PinningSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+public final class PinningSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     // @unchecked Sendable: the only stored state is an immutable pin string.
     private let fingerprint: String
 
     public init(fingerprint: String) {
         self.fingerprint = fingerprint
+    }
+
+    /// A pinned session must never follow a redirect to plaintext. Allow only
+    /// https redirects (their handshake is re-pinned by the challenge handler
+    /// below, so an off-pin host is rejected there); cancel anything else.
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection response: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping (URLRequest?) -> Void
+    ) {
+        if request.url?.scheme?.lowercased() == "https" {
+            completionHandler(request)
+        } else {
+            completionHandler(nil)  // don't follow; the task returns the redirect response
+        }
     }
 
     public func urlSession(
