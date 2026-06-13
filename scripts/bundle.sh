@@ -83,7 +83,7 @@ echo "    Embedded: ${APP_DIR}/Contents/Resources/bin/shedctl"
 # Per-terminal opener scripts (one per preset; invoked by the app via
 # /bin/bash | /usr/bin/python3 — see TerminalLauncher). Plain text, not Mach-O,
 # so they aren't codesigned individually; the outer .app signature seals them.
-for s in shed-open-ghostty shed-open-iterm2 shed-open-wezterm shed-open-kitty shed-open-warp shed-open-roost.py; do
+for s in shed-open-ghostty shed-open-iterm2 shed-open-warp shed-open-roost.py; do
   cp "${REPO_ROOT}/Resources/bin/${s}" "${APP_DIR}/Contents/Resources/bin/${s}"
   chmod +x "${APP_DIR}/Contents/Resources/bin/${s}"
   echo "    Embedded: ${APP_DIR}/Contents/Resources/bin/${s}"

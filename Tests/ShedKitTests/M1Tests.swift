@@ -46,8 +46,6 @@ final class TerminalLauncherTests: XCTestCase {
         let cases: [(TerminalPreset, String, String)] = [
             (.ghostty, "/bin/bash", "shed-open-ghostty"),
             (.iterm2, "/bin/bash", "shed-open-iterm2"),
-            (.wezterm, "/bin/bash", "shed-open-wezterm"),
-            (.kitty, "/bin/bash", "shed-open-kitty"),
             (.warp, "/bin/bash", "shed-open-warp"),
             (.roost, "/usr/bin/python3", "shed-open-roost.py"),
         ]

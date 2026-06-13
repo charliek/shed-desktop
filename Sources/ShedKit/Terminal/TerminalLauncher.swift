@@ -49,8 +49,6 @@ public enum TerminalPreset: String, Codable, Sendable, CaseIterable, Identifiabl
     case terminalApp = "terminal-app"
     case ghostty
     case iterm2
-    case wezterm
-    case kitty
     case warp
     case roost
     case custom
@@ -62,8 +60,6 @@ public enum TerminalPreset: String, Codable, Sendable, CaseIterable, Identifiabl
         case .terminalApp: return "Terminal.app"
         case .ghostty: return "Ghostty"
         case .iterm2: return "iTerm2"
-        case .wezterm: return "WezTerm"
-        case .kitty: return "Kitty"
         case .warp: return "Warp"
         case .roost: return "Roost"
         case .custom: return "Custom"
@@ -76,10 +72,7 @@ public enum TerminalPreset: String, Codable, Sendable, CaseIterable, Identifiabl
         case .terminalApp: return "Opens the ssh command in Terminal.app."
         case .ghostty: return "Opens a new Ghostty tab running the ssh command."
         case .iterm2: return "Opens a new iTerm2 tab running the ssh command."
-        case .wezterm: return "Opens a new WezTerm tab running the ssh command."
-        case .kitty:
-            return "Opens a new Kitty tab running the ssh command (needs `allow_remote_control yes`)."
-        case .warp: return "Opens Warp via a launch config running the ssh command (best-effort)."
+        case .warp: return "Opens Warp in a new window running the ssh command (best-effort)."
         case .roost: return "Opens a new Roost tab in a project named after the shed."
         case .custom: return ""
         }
@@ -91,8 +84,6 @@ public enum TerminalPreset: String, Codable, Sendable, CaseIterable, Identifiabl
         switch self {
         case .ghostty: return "com.mitchellh.ghostty"
         case .iterm2: return "com.googlecode.iterm2"
-        case .wezterm: return "com.github.wez.wezterm"
-        case .kitty: return "net.kovidgoyal.kitty"
         case .warp: return "dev.warp.Warp-Stable"
         case .roost: return "ai.stridelabs.Roost"
         case .terminalApp, .custom: return nil
@@ -109,8 +100,6 @@ public enum TerminalPreset: String, Codable, Sendable, CaseIterable, Identifiabl
         switch self {
         case .ghostty: return ("/bin/bash", "shed-open-ghostty")
         case .iterm2: return ("/bin/bash", "shed-open-iterm2")
-        case .wezterm: return ("/bin/bash", "shed-open-wezterm")
-        case .kitty: return ("/bin/bash", "shed-open-kitty")
         case .warp: return ("/bin/bash", "shed-open-warp")
         case .roost: return ("/usr/bin/python3", "shed-open-roost.py")
         case .terminalApp, .custom: return nil

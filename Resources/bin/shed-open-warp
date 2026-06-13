@@ -4,10 +4,12 @@
 #
 # Usage: shed-open-warp <shed> <cmd>
 #
-# Warp has no clean "run a command in a new tab" CLI/URI — running a command
-# from outside is an open upstream feature request (warpdotdev/Warp#3959). The
-# launch-configuration route is the only option and is the weakest integration
-# here; verify the YAML schema against your Warp version.
+# Warp can't open a new TAB with a command from outside, by design:
+#   - Launch Configs (used here) always open a new WINDOW (warp#8833, closed).
+#   - Tab Configs open as a tab but aren't launchable via URI/CLI yet
+#     (warp#9083, warp#12343 — both open). No AppleScript, no CLI either.
+# So new-window is the best available; revisit (switch to a Tab Config) once
+# warp#9083 ships. Verify the YAML schema against your Warp version.
 set -euo pipefail
 
 shed="${1:-}"
