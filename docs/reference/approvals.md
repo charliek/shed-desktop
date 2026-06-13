@@ -8,7 +8,7 @@ crosses the socket, and the agent stays the sole credential holder.
 ## Configuring for shed-desktop
 
 In the host agent's `~/.config/shed/extensions.yaml`, set the `approval.policy` of each
-extension you want the app to decide to `shed-desktop`, and turn the channel on:
+extension you want the app to decide to `shed-desktop`:
 
 ```yaml
 ssh:
@@ -20,11 +20,16 @@ aws:
 docker:
   approval:
     policy: shed-desktop      # optional — a live Allow/Deny toggle in the app
-desktop:
-  enabled: true               # serve the local UDS the app connects to
-  socket_path: ~/Library/Application Support/shed/host-agent.sock
-  timeout_ms: 25000           # fail-closed (deny) if the app doesn't answer in time
+
+# Optional — how long the agent waits for the app to decide before failing
+# closed (deny). Go duration, default 25s.
+# approval_timeout: 25s
 ```
+
+The agent always serves the approval socket at a fixed path, so there is nothing
+else to enable. (shed-host-agent v0.4.0 removed the old `desktop.enabled` /
+`socket_path` / `timeout_ms` keys; a config that still sets them loads with a
+deprecation warning.)
 
 Restart the host agent, then launch shed-desktop. The **Approvals** pane header shows
 `gate: shed-desktop` once connected; if the agent is down it shows
@@ -70,7 +75,7 @@ reachable without the dashboard.
 ## Fail-closed
 
 The agent denies a request when **no app is connected**, when the app **doesn't answer
-within `timeout_ms`**, or on a **disconnect mid-request** — the same outcome as an
+within `approval_timeout`**, or on a **disconnect mid-request** — the same outcome as an
 unanswered local prompt today. The app likewise auto-denies a queued request when its
 countdown expires.
 
