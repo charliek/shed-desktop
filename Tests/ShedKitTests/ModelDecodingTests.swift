@@ -122,6 +122,7 @@ final class ModelDecodingTests: XCTestCase {
                 host: mini2
                 http_port: 8080
                 ssh_port: 2222
+                control_token: shed_control_abc123
                 added_at: 2026-05-09T01:44:44.395385-05:00
             my-server:
                 host: localhost
@@ -137,6 +138,9 @@ final class ModelDecodingTests: XCTestCase {
         XCTAssertEqual(mini2?.host, "mini2")
         XCTAssertEqual(mini2?.httpPort, 8080)
         XCTAssertEqual(mini2?.sshPort, 2222)
+        XCTAssertEqual(mini2?.controlToken, "shed_control_abc123")
+        // An entry without a token parses to an empty controlToken.
+        XCTAssertEqual(config.servers.first { $0.name == "my-server" }?.controlToken, "")
     }
 
     func testConfigMissingFileIsEmptyNotCrash() {

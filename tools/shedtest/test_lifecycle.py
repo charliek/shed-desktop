@@ -47,8 +47,16 @@ def test_terminal_preview_builds_ssh(shed):
     shed.refresh()
     cmd = shed.terminal_preview("hello-world")
     # Host "mock" in the fixture config maps to 127.0.0.1:2222 (ssh port).
-    assert cmd["argv"][:5] == ["ssh", "-t", "hello-world@127.0.0.1", "-p", "2222"]
-    assert "ssh -t hello-world@127.0.0.1 -p 2222" in cmd["command"]
+    argv = cmd["argv"]
+    assert argv[:2] == ["ssh", "-t"]
+    assert "hello-world@127.0.0.1" in argv
+    assert "-p" in argv and argv[argv.index("-p") + 1] == "2222"
+    # The SSH host key is pinned: strict checking against the shed known_hosts
+    # file. The -o options sit between `-t` and the target; the file path is
+    # host-specific, so assert on the structure rather than the exact path.
+    assert "StrictHostKeyChecking=yes" in argv
+    assert "hello-world@127.0.0.1 -p 2222" in cmd["command"]
+    assert "StrictHostKeyChecking=yes" in cmd["command"]
     # Observability: preview also surfaces the active preset + the exact
     # invocation that would run (no spawn). Fresh defaults → Terminal.app.
     assert cmd["preset"] == "terminal-app"
