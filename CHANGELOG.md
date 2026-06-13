@@ -2,9 +2,14 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
-## Unreleased
+## v0.0.7 — 2026-06-12
 
 ### Added
+- **Terminal preset dropdown** (#11, #13, #14) — choose how shed opens a session
+  terminal, with a per-terminal opener. Ships the verified macOS set: iTerm2
+  (new tab, verified end-to-end) and Ghostty (opener corrected so it runs the
+  shed command); Warp opens a new window. The WezTerm and Kitty presets were
+  dropped as unverifiable on macOS.
 - **Failure reason in the activity feed** — a failed or denied credential event
   now shows the host-agent's machine code (e.g. `REGISTRY_NOT_ALLOWED`,
   `APPROVAL_DENIED`) and a short reason on a second line, instead of burying the
