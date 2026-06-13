@@ -122,7 +122,7 @@ public enum TerminalLauncher {
     /// Build the ssh command to reach `shed` on `host`. When `session` is
     /// given, attach that tmux session.
     public static func sshCommand(shed: String, host: String, sshPort: Int, session: String? = nil) -> TerminalCommand {
-        var argv = ["ssh", "-t", "\(shed)@\(host)", "-p", String(sshPort)]
+        var argv = ["ssh", "-t"] + ShedSSH.hostKeyOptions + ["\(shed)@\(host)", "-p", String(sshPort)]
         if let session, !session.isEmpty {
             argv += ["tmux", "attach", "-t", session]
         }

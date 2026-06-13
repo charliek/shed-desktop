@@ -6,14 +6,30 @@ import XCTest
 final class TerminalLauncherTests: XCTestCase {
     func testSSHCommandWithoutSession() {
         let cmd = TerminalLauncher.sshCommand(shed: "stbot", host: "mini3", sshPort: 2222)
-        XCTAssertEqual(cmd.argv, ["ssh", "-t", "stbot@mini3", "-p", "2222"])
-        XCTAssertEqual(cmd.command, "ssh -t stbot@mini3 -p 2222")
+        XCTAssertEqual(cmd.argv, ["ssh", "-t"] + ShedSSH.hostKeyOptions + ["stbot@mini3", "-p", "2222"])
+        // Pins the host key with strict checking (Phase 3 hardening).
+        XCTAssertTrue(cmd.argv.contains("StrictHostKeyChecking=yes"))
+        XCTAssertFalse(cmd.argv.contains("StrictHostKeyChecking=accept-new"))
+        XCTAssertTrue(cmd.command.contains("stbot@mini3 -p 2222"))
     }
 
     func testSSHCommandWithSession() {
         let cmd = TerminalLauncher.sshCommand(shed: "stbot", host: "mini3", sshPort: 2222, session: "rc-demo")
-        XCTAssertEqual(cmd.argv, ["ssh", "-t", "stbot@mini3", "-p", "2222", "tmux", "attach", "-t", "rc-demo"])
-        XCTAssertEqual(cmd.command, "ssh -t stbot@mini3 -p 2222 tmux attach -t rc-demo")
+        XCTAssertEqual(
+            cmd.argv,
+            ["ssh", "-t"] + ShedSSH.hostKeyOptions + ["stbot@mini3", "-p", "2222", "tmux", "attach", "-t", "rc-demo"])
+    }
+
+    func testSSHHostKeyOptionsArePinned() {
+        // Both SSH paths (terminal + remote-control) verify the host key against
+        // ~/.shed/known_hosts with strict checking.
+        XCTAssertEqual(
+            ShedSSH.hostKeyOptions,
+            ["-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=\(ShedSSH.knownHostsPath)"])
+        XCTAssertTrue(ShedSSH.knownHostsPath.hasSuffix("/.shed/known_hosts"))
+        let rc = RemoteControl.sshArgv(user: "stbot", host: "mini3", port: 2222, remoteArgv: ["true"])
+        XCTAssertTrue(rc.contains("StrictHostKeyChecking=yes"))
+        XCTAssertFalse(rc.contains("StrictHostKeyChecking=accept-new"))
     }
 
     func testShellQuoteEscapesSpacesAndQuotes() {

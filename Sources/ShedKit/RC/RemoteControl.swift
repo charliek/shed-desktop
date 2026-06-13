@@ -207,7 +207,7 @@ public enum RemoteControl {
         return [
             "ssh",
             "-o", "BatchMode=yes",
-            "-o", "StrictHostKeyChecking=accept-new",
+        ] + ShedSSH.hostKeyOptions + [
             "-o", "ConnectTimeout=\(connectTimeout)",
             "-p", String(port),
             "\(user)@\(host)",
