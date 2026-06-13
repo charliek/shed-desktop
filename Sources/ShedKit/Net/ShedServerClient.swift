@@ -33,11 +33,21 @@ public struct ShedServerClient: Sendable {
     public let baseURL: URL
     public let serverName: String
     private let session: URLSession
+    private let token: String
 
-    public init(baseURL: URL, serverName: String, session: URLSession = .shared) {
+    public init(baseURL: URL, serverName: String, token: String = "", session: URLSession = .shared) {
         self.baseURL = baseURL
         self.serverName = serverName
+        self.token = token
         self.session = session
+    }
+
+    /// Sets the bearer token header on `req` when the client is configured
+    /// with a control token.
+    private func authorize(_ req: inout URLRequest) {
+        if !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     /// `GET /api/info`.
@@ -97,6 +107,7 @@ public struct ShedServerClient: Sendable {
         let baseURL = self.baseURL
         let serverName = self.serverName
         let session = self.session
+        let token = self.token
         // Bounded buffer: a runaway server can't grow our heap without limit
         // if the consumer lags (256 is far more than a real create streams).
         return AsyncThrowingStream(CreateEvent.self, bufferingPolicy: .bufferingNewest(256)) { continuation in
@@ -107,6 +118,9 @@ public struct ShedServerClient: Sendable {
                     req.httpMethod = "POST"
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    if !token.isEmpty {
+                        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    }
                     req.httpBody = try JSONEncoder().encode(body)
                     let (bytes, response) = try await session.bytes(for: req)
                     if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
@@ -172,6 +186,7 @@ public struct ShedServerClient: Sendable {
         req.httpMethod = method
         req.timeoutInterval = timeout
         if let accept { req.setValue(accept, forHTTPHeaderField: "Accept") }
+        authorize(&req)
         do {
             let (data, response) = try await session.data(for: req)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {

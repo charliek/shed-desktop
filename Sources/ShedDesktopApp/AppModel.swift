@@ -320,7 +320,7 @@ final class AppModel: NSObject, UiBridge {
             } else {
                 baseURL = URL(string: "http://\(entry.host):\(entry.httpPort)")!
             }
-            clients[entry.name] = ShedServerClient(baseURL: baseURL, serverName: entry.name)
+            clients[entry.name] = ShedServerClient(baseURL: baseURL, serverName: entry.name, token: entry.controlToken)
         }
         self.clients = clients
         self.defaultServerName = config.defaultServer ?? config.servers.first?.name

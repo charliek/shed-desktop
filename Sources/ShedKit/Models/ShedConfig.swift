@@ -13,12 +13,16 @@ public struct ShedServerEntry: Sendable, Equatable {
     public let host: String
     public let httpPort: Int
     public let sshPort: Int
+    /// Control-scoped bearer token for the HTTP API. Empty when the server
+    /// isn't token-gated.
+    public let controlToken: String
 
-    public init(name: String, host: String, httpPort: Int, sshPort: Int) {
+    public init(name: String, host: String, httpPort: Int, sshPort: Int, controlToken: String = "") {
         self.name = name
         self.host = host
         self.httpPort = httpPort
         self.sshPort = sshPort
+        self.controlToken = controlToken
     }
 }
 
@@ -51,7 +55,8 @@ public struct ShedConfig: Sendable, Equatable {
                 let host = fields["host"]?.scalar ?? name
                 let httpPort = fields["http_port"]?.scalar.flatMap { Int($0) } ?? 8080
                 let sshPort = fields["ssh_port"]?.scalar.flatMap { Int($0) } ?? 22
-                entries.append(ShedServerEntry(name: name, host: host, httpPort: httpPort, sshPort: sshPort))
+                let controlToken = fields["control_token"]?.scalar ?? ""
+                entries.append(ShedServerEntry(name: name, host: host, httpPort: httpPort, sshPort: sshPort, controlToken: controlToken))
             }
         }
         entries.sort { $0.name < $1.name }
