@@ -120,6 +120,15 @@ public struct AuditEntry: Codable, Sendable, Equatable, Identifiable {
     }
 }
 
+public extension AuditEntry {
+    /// The audit namespace for egress-control decisions, matching the
+    /// host-agent's stamping (shed-extensions egress subscriber).
+    static let egressNamespace = "egress"
+
+    /// True when this entry is an egress-control decision (ns == "egress").
+    var isEgress: Bool { ns == AuditEntry.egressNamespace }
+}
+
 public enum AuditSource: String, Codable, Sendable {
     case hostAgent = "host-agent"
     case app
