@@ -95,6 +95,7 @@ nav:
       - Architecture: reference/architecture.md
       - Configuration: reference/configuration.md
       - Credential approvals: reference/approvals.md
+      - RC sessions: reference/rc-sessions.md
       - IPC: reference/ipc.md
       - shedctl CLI: reference/cli.md
   - Roadmap: roadmap.md

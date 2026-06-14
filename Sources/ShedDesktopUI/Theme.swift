@@ -122,7 +122,7 @@ public struct StatusDot: View {
 
 /// Pill tone — maps to the semantic pill tokens.
 public enum BadgeTone {
-    case neutral, accent, vz, firecracker, agent
+    case neutral, accent, vz, firecracker, agent, legacy
 
     /// Tone for a backend name ("vz" → blue, "firecracker" → amber, else neutral).
     public static func backend(_ name: String?) -> BadgeTone {
@@ -140,6 +140,7 @@ public enum BadgeTone {
         case .vz: return Theme.tagVzBg
         case .firecracker: return Theme.tagFcBg
         case .agent: return Theme.agentBg
+        case .legacy: return Theme.inset
         }
     }
     var fg: Color {
@@ -149,9 +150,37 @@ public enum BadgeTone {
         case .vz: return Theme.tagVzText
         case .firecracker: return Theme.tagFcText
         case .agent: return Theme.agentText
+        case .legacy: return Theme.textMuted
         }
     }
     var stroke: Color? { self == .accent ? Theme.accentBorder : nil }
+}
+
+/// An icon button that carries intent: subtle tint + colored border + glyph.
+/// Shared by the Sheds and Agents rows.
+public struct IntentButton: View {
+    let symbol: String
+    let help: String
+    let intent: Color
+    let action: () -> Void
+    public init(_ symbol: String, _ help: String, _ intent: Color, action: @escaping () -> Void) {
+        self.symbol = symbol
+        self.help = help
+        self.intent = intent
+        self.action = action
+    }
+    public var body: some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(intent)
+                .frame(width: 26, height: 26)
+                .background(RoundedRectangle(cornerRadius: 7).fill(intent.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(intent.opacity(0.30), lineWidth: 0.5))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
 }
 
 /// A pill badge (backend / image / namespace), optionally with a leading glyph.

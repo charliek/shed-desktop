@@ -54,6 +54,11 @@ public final class AppState: ObservableObject {
     public var onRcLaunch: ((String?, String, RcKind, String?) -> Void)?
     public var onRcKill: ((RcSession) -> Void)?
     public var onRcRefresh: (() -> Void)?
+    /// Open a terminal attached to a session's tmux (`rc-<slug>`). Knowingly
+    /// adds to the STOP-ruled bag above: it's one closure for a small feature,
+    /// and an AgentRow carries an RcSession (not a Shed), so the Shed-typed
+    /// onOpenTerminal seam doesn't fit. The delegate refactor stays separate.
+    public var onRcAttach: ((RcSession) -> Void)?
     /// Refresh per-host disk usage (the System pane).
     public var onSystemRefresh: (() -> Void)?
     /// Refresh per-host installed images (the New-Shed picker).

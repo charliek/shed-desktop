@@ -120,6 +120,12 @@ actor IPCHandlerImpl: IPCHandler {
             let p = try decodeParams(params, as: RcKillParams.self, expected: ["host", "shed", "slug"])
             try await rcKillOp(p)
             return emptyResult
+        case "rc.inject_test":
+            let p = try decodeParams(params, as: RcInjectTestParams.self,
+                expected: ["host", "shed", "slug", "kind", "state", "display_name", "workdir", "url",
+                           "managed", "rc_id", "created_by", "created_at", "target_label"])
+            try await rcInjectTestOp(p)
+            return emptyResult
         case "approvals.list":
             _ = try decodeParams(params, as: EmptyParams.self, expected: [])
             return try await encodeResult(approvalsListOp())
@@ -240,6 +246,18 @@ actor IPCHandlerImpl: IPCHandler {
 
     @MainActor private func rcKillOp(_ p: RcKillParams) async throws {
         try await uiBridge().rcKill(host: p.host, shed: p.shed, slug: p.slug)
+    }
+
+    @MainActor private func rcInjectTestOp(_ p: RcInjectTestParams) throws {
+        let session = RcSession(
+            host: p.host ?? "", shed: p.shed, slug: p.slug,
+            tmuxSession: RemoteControl.tmuxName(slug: p.slug),
+            displayName: p.displayName ?? (p.managed ? p.slug : "\(p.shed)/\(p.slug)"),
+            workdir: p.workdir ?? RemoteControl.defaultWorkdir,
+            kind: p.kind, state: p.state, url: p.url,
+            rcID: p.rcID, createdBy: p.createdBy, createdAt: p.createdAt,
+            targetLabel: p.targetLabel, managed: p.managed)
+        try uiBridge().rcInjectTest(session)
     }
 
     @MainActor private func approvalsListOp() throws -> ApprovalListResult {
@@ -405,6 +423,49 @@ private struct RcLaunchParams: Decodable {
 
 private struct RcListResult: Encodable, Sendable { let sessions: [RcSession] }
 private struct RcClassifyResult: Encodable, Sendable { let state: RcState; let url: String? }
+
+/// Test-only: inject a session (managed or legacy) into the table for an e2e
+/// screenshot. Only `shed` + `slug` are required; the rest default.
+private struct RcInjectTestParams: Decodable {
+    let host: String?
+    let shed: String
+    let slug: String
+    let kind: RcKind
+    let state: RcState
+    let displayName: String?
+    let workdir: String?
+    let url: String?
+    let managed: Bool
+    let rcID: String?
+    let createdBy: String?
+    let createdAt: String?
+    let targetLabel: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host, shed, slug, kind, state, workdir, url, managed
+        case displayName = "display_name"
+        case rcID = "rc_id"
+        case createdBy = "created_by"
+        case createdAt = "created_at"
+        case targetLabel = "target_label"
+    }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        host = try c.decodeIfPresent(String.self, forKey: .host)
+        shed = try c.decode(String.self, forKey: .shed)
+        slug = try c.decode(String.self, forKey: .slug)
+        kind = try c.decodeIfPresent(RcKind.self, forKey: .kind) ?? .default
+        state = try c.decodeIfPresent(RcState.self, forKey: .state) ?? .ready
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        workdir = try c.decodeIfPresent(String.self, forKey: .workdir)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        managed = try c.decodeIfPresent(Bool.self, forKey: .managed) ?? false
+        rcID = try c.decodeIfPresent(String.self, forKey: .rcID)
+        createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        targetLabel = try c.decodeIfPresent(String.self, forKey: .targetLabel)
+    }
+}
 
 private struct SetSshApprovalParams: Decodable {
     let method: ApprovalMethod?

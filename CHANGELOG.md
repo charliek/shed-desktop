@@ -2,6 +2,33 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## Unreleased
+
+### Added
+- **Agent console button** — every Agents-pane row now has an **Open console**
+  button that opens your configured terminal attached to the session's tmux
+  (`ssh -t <shed>@<host> tmux attach -t rc-<slug>`), mirroring the Sheds pane.
+  It's also the way to act on a `needs-trust` / `needs-auth` session (attach,
+  trust the folder or `claude auth login`).
+
+### Changed
+- **Adopted the cross-tool RC Session Convention v1 (`SHED_RC_*`)** (#16) —
+  remote-control tmux sessions now carry tool-neutral, versioned metadata
+  (`SHED_RC_V/ID/DISPLAY_NAME/KIND/WORKDIR/CREATED_BY/CREATED_AT`, optional
+  `SHED_RC_TARGET`) instead of the app-named `SRA_*` prefix, so shed-desktop,
+  `shed-remote-agent`, the `shed` CLI, and future clients can discover and pick
+  up each other's sessions. The Agents pane surfaces provenance ("made by … ·
+  age"), labels legacy/unmanaged sessions and confirms before killing them, and
+  forward-compatibly never drops a higher-version session. See
+  [RC sessions](docs/reference/rc-sessions.md). **Clean break:** `SRA_*` is no
+  longer written or read; recreate existing sessions to restore their metadata.
+- Listing now reads one `tmux show-environment` dump per session (not one call
+  per key) and pipes the batched list script to a remote `bash` over stdin (not
+  `bash -c`), fixing tmux "not a terminal" failures on some shed images. Kill is
+  idempotent (a missing session counts as success). The shed-side follow-up to
+  surface this metadata over HTTP is tracked in
+  [charliek/shed#199](https://github.com/charliek/shed/issues/199).
+
 ## v0.0.8 — 2026-06-13
 
 ### Added

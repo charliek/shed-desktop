@@ -55,6 +55,7 @@ struct AgentsView: View {
 struct AgentRow: View {
     let session: RcSession
     @ObservedObject var state: AppState
+    @State private var confirmingKill = false
 
     var body: some View {
         HStack(spacing: 12) {
@@ -63,8 +64,10 @@ struct AgentRow: View {
                 HStack(spacing: 6) {
                     Text("\(session.shed)/\(session.displayName)").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.text)
                     Badge(session.kind.rawValue)
+                    if !session.managed { Badge("legacy", tone: .legacy) }
                 }
-                Text(metaLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(metaLine).font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).help(session.createdBy ?? "")
             }
             Spacer()
             if needsFix {
@@ -81,22 +84,45 @@ struct AgentRow: View {
                 }
                 .buttonStyle(.plain)
             }
-            Button { state.onRcKill?(session) } label: {
-                Image(systemName: "trash")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.danger)
-                    .frame(width: 26, height: 26)
-                    .background(RoundedRectangle(cornerRadius: 7).fill(Theme.danger.opacity(0.12)))
-                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.danger.opacity(0.30), lineWidth: 0.5))
+            // Attach a terminal to the session's tmux. Always available (except
+            // when dead) — it's also the way to act on the needs-trust/auth hint.
+            if session.state != .dead {
+                IntentButton("terminal", "Open console", Theme.accent) { state.onRcAttach?(session) }
             }
-            .buttonStyle(.plain).help("Kill session")
+            // A managed session kills outright; an unmanaged (legacy/foreign)
+            // one confirms first, per the convention's destructive-action rule.
+            IntentButton("trash", "Kill session", Theme.danger) {
+                if session.managed { state.onRcKill?(session) } else { confirmingKill = true }
+            }
         }
         .padding(.horizontal, 14).padding(.vertical, 12)
         .cardSurface()
+        .confirmationDialog(
+            "Kill \(session.tmuxSession)? This rc-* session is legacy/unmanaged (not created by a v1 tool).",
+            isPresented: $confirmingKill
+        ) {
+            Button("Kill", role: .destructive) { state.onRcKill?(session) }
+        }
     }
 
     private var metaLine: String {
-        "tmux \(session.tmuxSession) · \(session.workdir)"
+        var parts = ["tmux \(session.tmuxSession)", session.workdir]
+        if session.managed, let prov = provenance { parts.append(prov) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "made by <tool> <age>" for a managed session, where <tool> is the token
+    /// before the final `/` of SHED_RC_CREATED_BY (capped so a foreign value
+    /// can't crowd out the rest). Age is omitted when createdAt is absent or
+    /// unparseable.
+    private var provenance: String? {
+        guard let by = session.createdBy, !by.isEmpty else { return nil }
+        let token = by.split(separator: "/").dropLast().joined(separator: "/")
+        let tool = String((token.isEmpty ? by : token).prefix(40))
+        if let at = session.createdAt, let date = DateFormatting.parseFlexibleTimestamp(at) {
+            return "made by \(tool) \(DateFormatting.shortRelative(date))"
+        }
+        return "made by \(tool)"
     }
 
     private var needsFix: Bool {

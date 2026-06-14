@@ -124,29 +124,14 @@ struct ShedRow: View {
     private var actions: some View {
         HStack(spacing: 6) {
             if shed.status == .running {
-                intentButton("terminal", "Open terminal", Theme.accent) { state.onOpenTerminal?(shed) }
-                intentButton("arrow.clockwise", "Reset", Theme.attention) { confirmingReset = true }
-                intentButton("stop.fill", "Stop", Theme.danger) { state.onShedAction?(.stop, shed) }
+                IntentButton("terminal", "Open terminal", Theme.accent) { state.onOpenTerminal?(shed) }
+                IntentButton("arrow.clockwise", "Reset", Theme.attention) { confirmingReset = true }
+                IntentButton("stop.fill", "Stop", Theme.danger) { state.onShedAction?(.stop, shed) }
             } else if shed.status == .stopped {
-                intentButton("play.fill", "Start", Theme.ok) { state.onShedAction?(.start, shed) }
-                intentButton("trash", "Delete", Theme.danger) { confirmingDelete = true }
+                IntentButton("play.fill", "Start", Theme.ok) { state.onShedAction?(.start, shed) }
+                IntentButton("trash", "Delete", Theme.danger) { confirmingDelete = true }
             }
         }
-    }
-
-    /// An icon button that carries intent: subtle tint + colored border + glyph.
-    private func intentButton(_ symbol: String, _ help: String, _ intent: Color,
-                              action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(intent)
-                .frame(width: 26, height: 26)
-                .background(RoundedRectangle(cornerRadius: 7).fill(intent.opacity(0.12)))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(intent.opacity(0.30), lineWidth: 0.5))
-        }
-        .buttonStyle(.plain)
-        .help(help)
     }
 
     private var metaLine: String {
