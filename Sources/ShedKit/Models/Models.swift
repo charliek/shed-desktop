@@ -386,6 +386,7 @@ public enum DashboardPane: String, Codable, Sendable, CaseIterable {
     case approvals
     case agents
     case activity
+    case egress
     case system
 }
 
