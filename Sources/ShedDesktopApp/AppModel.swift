@@ -936,7 +936,7 @@ final class AppModel: NSObject, UiBridge {
                 throw IPCHandlerError.internalError("rc kill failed: \(res.stderr.isEmpty ? res.stdout : res.stderr)")
             }
         }
-        rcTable["\(serverName)/\(shed)/\(slug)"] = nil
+        rcTable[RcSession.compositeID(host: serverName, shed: shed, slug: slug)] = nil
         publishRcSessions()
     }
 

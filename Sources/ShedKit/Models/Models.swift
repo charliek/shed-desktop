@@ -225,7 +225,13 @@ public struct RcSession: Codable, Sendable, Equatable, Identifiable {
     public var targetLabel: String?
     public var managed: Bool
 
-    public var id: String { "\(host)/\(shed)/\(slug)" }
+    public var id: String { Self.compositeID(host: host, shed: shed, slug: slug) }
+
+    /// The table/wire identity — `host/shed/slug`. The single source of truth so
+    /// a kill that has only those three parts keys exactly the same entry.
+    public static func compositeID(host: String, shed: String, slug: String) -> String {
+        "\(host)/\(shed)/\(slug)"
+    }
 
     enum CodingKeys: String, CodingKey {
         case host, shed, slug
