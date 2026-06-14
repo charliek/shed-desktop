@@ -215,19 +215,41 @@ public struct RcSession: Codable, Sendable, Equatable, Identifiable {
     public var kind: RcKind
     public var state: RcState
     public var url: String?
+    // RC Session Convention v1 metadata. `rcID` is the SHED_RC_ID (a UUID) and
+    // is encoded under `rc_id` — NOT `id`, which stays the computed Identifiable
+    // key below (`host/shed/slug`). All optional + absent on legacy/unmanaged
+    // sessions; `managed` says whether a valid SHED_RC_V was present.
+    public var rcID: String?
+    public var createdBy: String?
+    public var createdAt: String?
+    public var targetLabel: String?
+    public var managed: Bool
 
-    public var id: String { "\(host)/\(shed)/\(slug)" }
+    public var id: String { Self.compositeID(host: host, shed: shed, slug: slug) }
+
+    /// The table/wire identity — `host/shed/slug`. The single source of truth so
+    /// a kill that has only those three parts keys exactly the same entry.
+    public static func compositeID(host: String, shed: String, slug: String) -> String {
+        "\(host)/\(shed)/\(slug)"
+    }
 
     enum CodingKeys: String, CodingKey {
         case host, shed, slug
         case tmuxSession = "tmux_session"
         case displayName = "display_name"
         case workdir, kind, state, url
+        case rcID = "rc_id"
+        case createdBy = "created_by"
+        case createdAt = "created_at"
+        case targetLabel = "target_label"
+        case managed
     }
 
     public init(
         host: String, shed: String, slug: String, tmuxSession: String,
-        displayName: String, workdir: String, kind: RcKind, state: RcState, url: String? = nil
+        displayName: String, workdir: String, kind: RcKind, state: RcState, url: String? = nil,
+        rcID: String? = nil, createdBy: String? = nil, createdAt: String? = nil,
+        targetLabel: String? = nil, managed: Bool = false
     ) {
         self.host = host
         self.shed = shed
@@ -238,6 +260,31 @@ public struct RcSession: Codable, Sendable, Equatable, Identifiable {
         self.kind = kind
         self.state = state
         self.url = url
+        self.rcID = rcID
+        self.createdBy = createdBy
+        self.createdAt = createdAt
+        self.targetLabel = targetLabel
+        self.managed = managed
+    }
+
+    // Defensive decode (the repo convention): the v1 metadata + `managed` are
+    // absent on older wire payloads, so default them rather than fail.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        host = try c.decode(String.self, forKey: .host)
+        shed = try c.decode(String.self, forKey: .shed)
+        slug = try c.decode(String.self, forKey: .slug)
+        tmuxSession = try c.decode(String.self, forKey: .tmuxSession)
+        displayName = try c.decode(String.self, forKey: .displayName)
+        workdir = try c.decode(String.self, forKey: .workdir)
+        kind = try c.decode(RcKind.self, forKey: .kind)
+        state = try c.decode(RcState.self, forKey: .state)
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        rcID = try c.decodeIfPresent(String.self, forKey: .rcID)
+        createdBy = try c.decodeIfPresent(String.self, forKey: .createdBy)
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt)
+        targetLabel = try c.decodeIfPresent(String.self, forKey: .targetLabel)
+        managed = try c.decodeIfPresent(Bool.self, forKey: .managed) ?? false
     }
 }
 

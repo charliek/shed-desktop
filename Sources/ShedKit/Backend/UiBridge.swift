@@ -93,6 +93,9 @@ public protocol UiBridge: AnyObject {
     func rcList(host: String?, shed: String?) async throws -> [RcSession]
     func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession
     func rcKill(host: String?, shed: String, slug: String) async throws
+    /// Inject a session into the table directly — test-only (e.g. a legacy row
+    /// for an e2e screenshot). Throws outside the harness.
+    func rcInjectTest(_ session: RcSession) throws
 
     // MARK: - M3: credential approvals + activity
 

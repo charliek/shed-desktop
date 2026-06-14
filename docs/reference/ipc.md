@@ -57,6 +57,11 @@ menu requires it to be open first (`ui.open_menu {open:true}`).
 | `rc.list` | `host?`, `shed?` | `sessions[]` |
 | `rc.launch` | `host?`, `shed`, `kind?`, `display_name?`, `workdir?` | the launched `RcSession` |
 | `rc.kill` | `host?`, `shed`, `slug` | `{}` |
+| `rc.inject_test` | `shed`, `slug`, `kind?`, `state?`, `managed?`, `display_name?`, `created_by?`, … | `{}` — **test mode only**; injects a session (e.g. a legacy row) into the table |
+
+Each `RcSession` carries the [RC Session Convention v1](rc-sessions.md) metadata:
+`managed`, and (when managed) `rc_id`, `created_by`, `created_at`, `target_label`.
+A legacy/unmanaged `rc-*` session decodes with `managed: false` and no metadata.
 
 ## Approval ops
 

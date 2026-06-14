@@ -25,7 +25,8 @@ final class AppModel: NSObject, UiBridge {
     private var clients: [String: ShedServerClient] = [:]
     private var defaultServerName: String?
     private var creates: [String: CreateProgress] = [:]
-    /// In-memory RC session table for test mode (no SSH); keyed by slug.
+    /// In-memory RC session table, keyed by the composite `RcSession.id`
+    /// (`host/shed/slug`) so identical slugs across sheds don't collide.
     private var rcTable: [String: RcSession] = [:]
     private var pollTask: Task<Void, Never>?
     private var ipcServer: IPCServer?
@@ -281,6 +282,11 @@ final class AppModel: NSObject, UiBridge {
                 do { _ = try await self.rcList(host: nil, shed: nil) }
                 catch { self.state.lastError = "rc list: \(error)" }
             }
+        }
+        state.onRcAttach = { [weak self] session in
+            guard let self else { return }
+            do { _ = try self.openTerminal(shed: session.shed, host: session.host, session: session.tmuxSession) }
+            catch { self.state.lastError = "console \(session.slug): \(error)" }
         }
         state.onSystemRefresh = { [weak self] in
             Task { [weak self] in _ = await self?.refreshSystemUsage() }
@@ -877,44 +883,71 @@ final class AppModel: NSObject, UiBridge {
         guard isSafeRCValue(name), isSafeRCValue(dir) else {
             throw IPCHandlerError.invalidParam("display name and workdir must not contain newlines or control characters")
         }
+        // Write-once v1 metadata (SHED_RC_*). The id is a fresh UUID; createdAt
+        // is the strict RFC3339-Z shape the parser validates on read back.
+        let meta = RcMetadata(
+            id: UUID().uuidString.lowercased(),
+            displayName: name, kind: kind, workdir: dir,
+            createdBy: "\(RemoteControl.toolName)/\(uiVersion)",
+            createdAt: DateFormatting.nowISO8601(),
+            targetLabel: "shed:\(shed)@\(serverName)")
         var session = RcSession(
             host: serverName, shed: shed, slug: slug,
             tmuxSession: RemoteControl.tmuxName(slug: slug),
-            displayName: name, workdir: dir, kind: kind, state: .starting)
+            displayName: name, workdir: dir, kind: kind, state: .starting,
+            rcID: meta.id, createdBy: meta.createdBy, createdAt: meta.createdAt,
+            targetLabel: meta.targetLabel, managed: true)
 
         if ShedBackend.shared.testMode {
-            // No SSH under the harness — synthesize a ready session.
+            // No SSH under the harness — synthesize a ready session (carrying
+            // the managed metadata so the hermetic harness can assert it).
             session.state = .ready
             session.url = syntheticURL(kind: kind, slug: slug)
         } else {
             let h = try resolveHost(host)
-            let bootstrap = RemoteControl.bootstrapArgv(slug: slug, kind: kind, displayName: name, workdir: dir)
+            let bootstrap = RemoteControl.bootstrapArgv(slug: slug, meta: meta)
             let res = try await ProcessRunner.run(
                 RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: bootstrap))
             guard res.ok else {
+                if RemoteControl.isDuplicateSessionError(res.stderr) {
+                    throw IPCHandlerError.internalError("rc session rc-\(slug) already exists")
+                }
                 throw IPCHandlerError.internalError("rc launch failed: \(res.stderr.isEmpty ? res.stdout : res.stderr)")
             }
             let cls = try await probeReal(h: h, shed: shed, slug: slug, kind: kind)
             session.state = cls.state
             session.url = cls.url
         }
-        rcTable[slug] = session
+        rcTable[session.id] = session
         publishRcSessions()
         return session
     }
 
     func rcKill(host: String?, shed: String, slug: String) async throws {
+        let serverName = try resolveName(host)
         if !ShedBackend.shared.testMode {
             let h = try resolveHost(host)
             let res = try await ProcessRunner.run(
                 RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: RemoteControl.killArgv(slug: slug)))
-            // Don't drop the session from the table (and report success) if
-            // the remote kill actually failed; a refresh reconciles.
-            guard res.ok else {
+            // Idempotent: a session that's already gone (tmux "can't find
+            // session", or "no server running" after the last one was killed)
+            // counts as success. A genuine failure is left in the table so a
+            // refresh reconciles.
+            guard res.ok || RemoteControl.isMissingSessionError(res.stderr) else {
                 throw IPCHandlerError.internalError("rc kill failed: \(res.stderr.isEmpty ? res.stdout : res.stderr)")
             }
         }
-        rcTable[slug] = nil
+        rcTable[RcSession.compositeID(host: serverName, shed: shed, slug: slug)] = nil
+        publishRcSessions()
+    }
+
+    /// Inject a session into the table directly — test-only (e.g. a legacy/
+    /// unmanaged row for an e2e screenshot). Throws outside the harness.
+    func rcInjectTest(_ session: RcSession) throws {
+        guard ShedBackend.shared.testMode else {
+            throw IPCHandlerError.notEnabled("rc.inject_test requires test mode")
+        }
+        rcTable[session.id] = session
         publishRcSessions()
     }
 
@@ -932,24 +965,27 @@ final class AppModel: NSObject, UiBridge {
                 else { return nil }
                 return (h, shedItem)
             }
+            // listReal is a nonisolated static (captures only Sendable value
+            // data) so the per-shed SSH probes fan out without hopping back to
+            // the main actor — clean under Swift 6 strict concurrency.
             let lists = await withTaskGroup(of: [RcSession].self) { group in
                 for (h, shedItem) in targets {
-                    group.addTask { (try? await self.listReal(h: h, serverName: shedItem.host, shed: shedItem.name)) ?? [] }
+                    group.addTask { await Self.listReal(h: h, serverName: shedItem.host, shed: shedItem.name) }
                 }
                 var all: [RcSession] = []
                 for await s in group { all.append(contentsOf: s) }
                 return all
             }
-            rcTable = Dictionary(lists.map { ($0.slug, $0) }, uniquingKeysWith: { _, b in b })
+            rcTable = Dictionary(lists.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         }
         publishRcSessions()
         return rcTable.values
             .filter { (host == nil || $0.host == host) && (shed == nil || $0.shed == shed) }
-            .sorted { $0.slug < $1.slug }
+            .sorted { $0.id < $1.id }
     }
 
     private func publishRcSessions() {
-        state.rcSessions = rcTable.values.sorted { $0.slug < $1.slug }
+        state.rcSessions = rcTable.values.sorted { $0.id < $1.id }
     }
 
     private func isSafeRCValue(_ s: String) -> Bool {
@@ -973,14 +1009,17 @@ final class AppModel: NSObject, UiBridge {
         return RemoteControl.classifyPane(kind: kind, pane: res.stdout)
     }
 
-    /// List + classify rc-* sessions on one shed via a single bash script
-    /// over SSH (the script + parser live in RemoteControl).
-    private func listReal(h: ShedHost, serverName: String, shed: String) async throws -> [RcSession] {
-        let sep = "@@RC@@"
-        let res = try await ProcessRunner.run(
-            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: ["bash", "-c", RemoteControl.listScript(sep: sep)]))
-        guard res.ok else { return [] }
-        return RemoteControl.parseSessionList(res.stdout, sep: sep, serverName: serverName, shed: shed)
+    /// List + classify rc-* sessions on one shed via a single batched script
+    /// piped to a remote `bash` over stdin (the script + parser live in
+    /// RemoteControl). `nonisolated static` so it runs off the main actor with
+    /// no `self` capture. Best-effort: any failure yields no sessions.
+    nonisolated private static func listReal(h: ShedHost, serverName: String, shed: String) async -> [RcSession] {
+        let markers = ListMarkers(nonce: UUID().uuidString.lowercased())
+        let script = RemoteControl.listScript(markers: markers)
+        guard let res = try? await ProcessRunner.run(
+            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: ["bash"]), stdin: script),
+            res.ok else { return [] }
+        return RemoteControl.parseListOutput(res.stdout, markers: markers, serverName: serverName, shed: shed)
     }
 
     // MARK: - M3: approvals + activity

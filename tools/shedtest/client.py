@@ -197,6 +197,21 @@ class ShedDesktop:
             params["host"] = host
         self.call("rc.kill", params)
 
+    def rc_inject_test(self, shed: str, slug: str, *, host: str | None = None,
+                       kind: str = "agent", state: str = "ready", managed: bool = False,
+                       display_name: str | None = None, created_by: str | None = None,
+                       created_at: str | None = None, rc_id: str | None = None,
+                       url: str | None = None, target_label: str | None = None) -> None:
+        """Inject a session (managed or legacy) into the table — test mode only."""
+        params: dict = {"shed": shed, "slug": slug, "kind": kind,
+                        "state": state, "managed": managed}
+        for k, v in (("host", host), ("display_name", display_name),
+                     ("created_by", created_by), ("created_at", created_at),
+                     ("rc_id", rc_id), ("url", url), ("target_label", target_label)):
+            if v is not None:
+                params[k] = v
+        self.call("rc.inject_test", params)
+
     # -- M3: approvals + activity ----------------------------------------
     def approvals_list(self) -> list[dict]:
         return self.call("approvals.list")["approvals"]
