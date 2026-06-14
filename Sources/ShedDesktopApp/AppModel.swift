@@ -25,7 +25,8 @@ final class AppModel: NSObject, UiBridge {
     private var clients: [String: ShedServerClient] = [:]
     private var defaultServerName: String?
     private var creates: [String: CreateProgress] = [:]
-    /// In-memory RC session table for test mode (no SSH); keyed by slug.
+    /// In-memory RC session table, keyed by the composite `RcSession.id`
+    /// (`host/shed/slug`) so identical slugs across sheds don't collide.
     private var rcTable: [String: RcSession] = [:]
     private var pollTask: Task<Void, Never>?
     private var ipcServer: IPCServer?
