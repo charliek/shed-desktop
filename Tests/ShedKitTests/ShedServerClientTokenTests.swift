@@ -124,4 +124,31 @@ final class ShedServerClientTokenTests: XCTestCase {
         }
         XCTAssertEqual(StubURLProtocol.recordedAuths(), ["Bearer tok-1", "Bearer tok-2"])
     }
+
+    func testProviderMintFailureFallsBackToStaticToken() async throws {
+        // Host agent can't mint (down / open-mode server): degrade to the static
+        // configured token rather than failing the request.
+        StubURLProtocol.reset([.init(status: 200, body: Data(#"{"sheds":null}"#.utf8))])
+        let rec = MintRecorder(expiry: Date(timeIntervalSince1970: 100_000))
+        await rec.setFailTimes(100)
+        let c = client(provider(rec), token: "static-fallback")
+
+        let sheds = try await c.listSheds()
+        XCTAssertEqual(sheds.count, 0)
+        XCTAssertEqual(StubURLProtocol.recordedAuths(), ["Bearer static-fallback"])
+    }
+
+    func testProviderMintFailureWithNoStaticTokenSurfaces() async throws {
+        // No fallback token → the mint error surfaces (wrapped as transport).
+        StubURLProtocol.reset([.init(status: 200, body: Data(#"{"sheds":null}"#.utf8))])
+        let rec = MintRecorder(expiry: Date(timeIntervalSince1970: 100_000))
+        await rec.setFailTimes(100)
+        let c = client(provider(rec), token: "")
+        do {
+            _ = try await c.listSheds()
+            XCTFail("expected the mint error to surface")
+        } catch let e as ShedClientError {
+            guard case .transport = e else { return XCTFail("expected transport, got \(e)") }
+        }
+    }
 }

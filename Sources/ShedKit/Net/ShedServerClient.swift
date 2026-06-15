@@ -74,8 +74,17 @@ public struct ShedServerClient: Sendable {
     /// servers, or the static configured token for open-mode servers. Throws if
     /// a provider mint fails (e.g. the host agent is down).
     private func bearerToken() async throws -> String {
-        if let tokenProvider { return try await tokenProvider.token() }
-        return token
+        guard let tokenProvider else { return token }
+        do {
+            return try await tokenProvider.token()
+        } catch {
+            // The host agent can't mint (it's down, or this is an open-mode server
+            // it won't vend for): fall back to the static configured token so the
+            // desktop degrades to "offline-but-usable" rather than failing hard. An
+            // empty fallback means we have nothing → surface the mint error.
+            if !token.isEmpty { return token }
+            throw error
+        }
     }
 
     /// Sets the bearer token header on `req` when the client has a token.
@@ -157,14 +166,15 @@ public struct ShedServerClient: Sendable {
                     req.httpMethod = "POST"
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    // Secure servers mint a fresh token; open-mode uses the static
-                    // one. A mint failure surfaces as a create error. The stream is
-                    // one-shot, so a 401 is surfaced (badStatus) rather than retried.
-                    if let tokenProvider {
-                        let tok = try await tokenProvider.token()
-                        if !tok.isEmpty { req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization") }
-                    } else if !token.isEmpty {
-                        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    // Secure servers mint a fresh token, falling back to the static
+                    // one if the host agent can't mint (down / open mode). The stream
+                    // is one-shot, so a 401 is surfaced (badStatus) rather than retried.
+                    var bearer = token
+                    if let tokenProvider, let minted = try? await tokenProvider.token() {
+                        bearer = minted
+                    }
+                    if !bearer.isEmpty {
+                        req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
                     }
                     req.httpBody = try JSONEncoder().encode(body)
                     let (bytes, response) = try await session.bytes(for: req)
