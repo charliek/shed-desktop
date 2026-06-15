@@ -34,14 +34,19 @@ public struct ShedServerClient: Sendable {
     public let serverName: String
     private let session: URLSession
     private let token: String
+    // When set (secure servers), the bearer token is minted/refreshed on demand
+    // by the host agent (token.get) and re-minted on a 401. nil → the static
+    // `token` String above is used as-is (open-mode / pre-bootstrap servers).
+    private let tokenProvider: ControlTokenProvider?
     // Set when the client is misconfigured (a TLS pin on a non-https URL); every
     // request throws it instead of sending unpinned plaintext.
     private let configError: ShedClientError?
 
-    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", session: URLSession? = nil) {
+    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil) {
         self.baseURL = baseURL
         self.serverName = serverName
         self.token = token
+        self.tokenProvider = tokenProvider
 
         // The injected `session` (the hermetic test mock) is honored only on the
         // unpinned path; a pinned build always owns its delegate-backed session.
@@ -65,11 +70,23 @@ public struct ShedServerClient: Sendable {
         }
     }
 
-    /// Sets the bearer token header on `req` when the client is configured
-    /// with a control token.
-    private func authorize(_ req: inout URLRequest) {
-        if !token.isEmpty {
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+    /// The bearer token to send. For a provider-backed (secure) client the host
+    /// agent is authoritative: on ANY mint failure — down, refused, or a
+    /// fail-closed pin mismatch — we send NO token rather than the static
+    /// configured one. Never downgrade the secure-by-default issuance path to a
+    /// legacy config token: a secure server then 401s (graceful offline); an
+    /// open server accepts the tokenless request. The static `token` is used
+    /// only when there is no provider (open-mode / pre-bootstrap clients).
+    private func bearerToken() async -> String {
+        guard let tokenProvider else { return token }
+        return (try? await tokenProvider.token()) ?? ""
+    }
+
+    /// Sets the bearer token header on `req` when there is a token to send.
+    private func authorize(_ req: inout URLRequest) async {
+        let tok = await bearerToken()
+        if !tok.isEmpty {
+            req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
     }
 
@@ -131,6 +148,7 @@ public struct ShedServerClient: Sendable {
         let serverName = self.serverName
         let session = self.session
         let token = self.token
+        let tokenProvider = self.tokenProvider
         let configError = self.configError
         // Bounded buffer: a runaway server can't grow our heap without limit
         // if the consumer lags (256 is far more than a real create streams).
@@ -143,8 +161,17 @@ public struct ShedServerClient: Sendable {
                     req.httpMethod = "POST"
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    if !token.isEmpty {
-                        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                    // Same auth decision as every other request: the provider's
+                    // minted token, or NONE on a mint failure — never the static
+                    // token (no secure-by-default downgrade). An open server accepts
+                    // the tokenless request; a secure server 401s. One-shot stream,
+                    // so a 401 surfaces (badStatus) rather than retrying.
+                    var bearer = token
+                    if let tokenProvider {
+                        bearer = (try? await tokenProvider.token()) ?? ""
+                    }
+                    if !bearer.isEmpty {
+                        req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
                     }
                     req.httpBody = try JSONEncoder().encode(body)
                     let (bytes, response) = try await session.bytes(for: req)
@@ -208,17 +235,27 @@ public struct ShedServerClient: Sendable {
     /// reuses only the status-check shape (it needs the byte stream).
     private func requestData(_ method: String, _ path: String, accept: String? = nil, timeout: TimeInterval) async throws -> Data {
         if let configError { throw configError }
-        var req = URLRequest(url: baseURL.appendingPathComponent(path))
-        req.httpMethod = method
-        req.timeoutInterval = timeout
-        if let accept { req.setValue(accept, forHTTPHeaderField: "Accept") }
-        authorize(&req)
-        do {
+        // Build + authorize + send one attempt. Factored so a 401 can retry with
+        // a freshly minted token (the provider path only).
+        func attempt() async throws -> Data {
+            var req = URLRequest(url: baseURL.appendingPathComponent(path))
+            req.httpMethod = method
+            req.timeoutInterval = timeout
+            if let accept { req.setValue(accept, forHTTPHeaderField: "Accept") }
+            await authorize(&req)
             let (data, response) = try await session.data(for: req)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 throw ShedClientError.badStatus(http.statusCode)
             }
             return data
+        }
+        do {
+            return try await attempt()
+        } catch ShedClientError.badStatus(401) where tokenProvider != nil {
+            // Stale control token: drop it, re-mint, retry once (at-most-once,
+            // mirrors the SDK/CLI). Static-token clients fall through unchanged.
+            await tokenProvider?.invalidate()
+            return try await attempt()
         } catch let e as ShedClientError {
             throw e
         } catch {
