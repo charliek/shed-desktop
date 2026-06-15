@@ -70,26 +70,21 @@ public struct ShedServerClient: Sendable {
         }
     }
 
-    /// The bearer token to send: minted/refreshed by the provider for secure
-    /// servers, or the static configured token for open-mode servers. Throws if
-    /// a provider mint fails (e.g. the host agent is down).
-    private func bearerToken() async throws -> String {
+    /// The bearer token to send. For a provider-backed (secure) client the host
+    /// agent is authoritative: on ANY mint failure — down, refused, or a
+    /// fail-closed pin mismatch — we send NO token rather than the static
+    /// configured one. Never downgrade the secure-by-default issuance path to a
+    /// legacy config token: a secure server then 401s (graceful offline); an
+    /// open server accepts the tokenless request. The static `token` is used
+    /// only when there is no provider (open-mode / pre-bootstrap clients).
+    private func bearerToken() async -> String {
         guard let tokenProvider else { return token }
-        do {
-            return try await tokenProvider.token()
-        } catch {
-            // The host agent can't mint (it's down, or this is an open-mode server
-            // it won't vend for): fall back to the static configured token so the
-            // desktop degrades to "offline-but-usable" rather than failing hard. An
-            // empty fallback means we have nothing → surface the mint error.
-            if !token.isEmpty { return token }
-            throw error
-        }
+        return (try? await tokenProvider.token()) ?? ""
     }
 
-    /// Sets the bearer token header on `req` when the client has a token.
-    private func authorize(_ req: inout URLRequest) async throws {
-        let tok = try await bearerToken()
+    /// Sets the bearer token header on `req` when there is a token to send.
+    private func authorize(_ req: inout URLRequest) async {
+        let tok = await bearerToken()
         if !tok.isEmpty {
             req.setValue("Bearer \(tok)", forHTTPHeaderField: "Authorization")
         }
@@ -166,12 +161,14 @@ public struct ShedServerClient: Sendable {
                     req.httpMethod = "POST"
                     req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    // Secure servers mint a fresh token, falling back to the static
-                    // one if the host agent can't mint (down / open mode). The stream
-                    // is one-shot, so a 401 is surfaced (badStatus) rather than retried.
+                    // Same auth decision as every other request: the provider's
+                    // minted token, or NONE on a mint failure — never the static
+                    // token (no secure-by-default downgrade). An open server accepts
+                    // the tokenless request; a secure server 401s. One-shot stream,
+                    // so a 401 surfaces (badStatus) rather than retrying.
                     var bearer = token
-                    if let tokenProvider, let minted = try? await tokenProvider.token() {
-                        bearer = minted
+                    if let tokenProvider {
+                        bearer = (try? await tokenProvider.token()) ?? ""
                     }
                     if !bearer.isEmpty {
                         req.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
@@ -245,7 +242,7 @@ public struct ShedServerClient: Sendable {
             req.httpMethod = method
             req.timeoutInterval = timeout
             if let accept { req.setValue(accept, forHTTPHeaderField: "Accept") }
-            try await authorize(&req)
+            await authorize(&req)
             let (data, response) = try await session.data(for: req)
             if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
                 throw ShedClientError.badStatus(http.statusCode)

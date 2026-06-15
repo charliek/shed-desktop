@@ -337,8 +337,9 @@ final class AppModel: NSObject, UiBridge {
                 pin = entry.tlsCertFingerprint  // empty for plain http; a stray pin fails closed
             }
             // Secure servers mint/refresh their control token via the host agent
-            // (token.get), falling back to the static configured token. The
-            // hermetic mock keeps the static token (no host-agent dependency).
+            // (token.get); on a mint failure the client sends no token (a secure
+            // server 401s → offline, an open server still works) — never the
+            // static config token. The hermetic mock has no provider (static token).
             let provider: ControlTokenProvider? = mockBase == nil
                 ? hostAgent.map { ControlTokenProvider.hostAgent($0, server: entry.name) }
                 : nil

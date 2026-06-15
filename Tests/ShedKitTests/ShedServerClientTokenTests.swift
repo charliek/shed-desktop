@@ -125,30 +125,33 @@ final class ShedServerClientTokenTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.recordedAuths(), ["Bearer tok-1", "Bearer tok-2"])
     }
 
-    func testProviderMintFailureFallsBackToStaticToken() async throws {
-        // Host agent can't mint (down / open-mode server): degrade to the static
-        // configured token rather than failing the request.
+    func testProviderMintFailureSendsNoTokenNeverStatic() async throws {
+        // Security: a mint failure must NOT downgrade to the static config token.
+        // The request goes out with no Authorization (a secure server 401s; an
+        // open server accepts it) — never the legacy static token.
         StubURLProtocol.reset([.init(status: 200, body: Data(#"{"sheds":null}"#.utf8))])
         let rec = MintRecorder(expiry: Date(timeIntervalSince1970: 100_000))
         await rec.setFailTimes(100)
-        let c = client(provider(rec), token: "static-fallback")
+        let c = client(provider(rec), token: "static-must-not-be-sent")
 
         let sheds = try await c.listSheds()
         XCTAssertEqual(sheds.count, 0)
-        XCTAssertEqual(StubURLProtocol.recordedAuths(), ["Bearer static-fallback"])
+        XCTAssertEqual(StubURLProtocol.recordedAuths(), [nil])  // no Authorization header
     }
 
-    func testProviderMintFailureWithNoStaticTokenSurfaces() async throws {
-        // No fallback token → the mint error surfaces (wrapped as transport).
-        StubURLProtocol.reset([.init(status: 200, body: Data(#"{"sheds":null}"#.utf8))])
+    func testProviderMintFailureFailsClosedThroughRetry() async throws {
+        // A secure server whose mint keeps failing: the attempt AND the 401-retry
+        // both send no token — never the static fallback — and the 401 surfaces.
+        StubURLProtocol.reset([.init(status: 401, body: Data()), .init(status: 401, body: Data())])
         let rec = MintRecorder(expiry: Date(timeIntervalSince1970: 100_000))
         await rec.setFailTimes(100)
-        let c = client(provider(rec), token: "")
+        let c = client(provider(rec), token: "static-must-not-be-sent")
         do {
             _ = try await c.listSheds()
-            XCTFail("expected the mint error to surface")
+            XCTFail("expected badStatus(401)")
         } catch let e as ShedClientError {
-            guard case .transport = e else { return XCTFail("expected transport, got \(e)") }
+            guard case .badStatus(401) = e else { return XCTFail("expected badStatus(401), got \(e)") }
         }
+        XCTAssertEqual(StubURLProtocol.recordedAuths(), [nil, nil])  // never the static token
     }
 }

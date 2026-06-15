@@ -57,6 +57,10 @@ public final class HostAgentClient: @unchecked Sendable {
     /// removeValue is the single-resume guard — whoever removes a continuation
     /// owns its (exactly-once) resume.
     private var pending: [String: CheckedContinuation<TokenResponse, Error>] = [:]
+    /// Per-request timeout tasks keyed by the same id; cancelled when the request
+    /// resolves (reply/disconnect/stop) so a resolved request leaves no lingering
+    /// timer. Guarded by `lock`.
+    private var pendingTimeouts: [String: Task<Void, Never>] = [:]
 
     public init(socketPath: String) {
         self.socketPath = socketPath
@@ -113,19 +117,10 @@ public final class HostAgentClient: @unchecked Sendable {
         guard let data = try? HostAgentProtocol.tokenGet(id: id, server: server) else {
             throw HostAgentClientError.encodingFailed
         }
-        // Backstop: if neither a reply nor a disconnect resolves this first,
-        // time it out so a registered continuation can never leak.
-        let timeoutTask = Task { [weak self] in
-            try? await Task.sleep(for: timeout)
-            guard !Task.isCancelled else { return }
-            self?.failPending(id: id, error: HostAgentClientError.timedOut)
-        }
-        defer { timeoutTask.cancel() }
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<TokenResponse, Error>) in
-            // Register + write under the same critical section's intent: take the
-            // lock, fail fast if disconnected, else register before writing so a
-            // fast reply can't race ahead of registration. (writeLine re-takes the
-            // lock, so write after unlock — NSLock isn't reentrant.)
+            // Take the lock, fail fast if disconnected, else register before
+            // writing so a fast reply can't race ahead of registration. (writeLine
+            // re-takes the lock, so write after unlock — NSLock isn't reentrant.)
             lock.lock()
             guard currentFD >= 0 else {
                 lock.unlock()
@@ -133,6 +128,15 @@ public final class HostAgentClient: @unchecked Sendable {
                 return
             }
             pending[id] = cont
+            // Arm the timeout only AFTER registering, so it can always find the
+            // continuation (a tiny timeout can't fire before registration). It's a
+            // backstop so a registered continuation never leaks; the resolve paths
+            // cancel it.
+            pendingTimeouts[id] = Task { [weak self] in
+                try? await Task.sleep(for: timeout)
+                guard !Task.isCancelled else { return }
+                self?.failPending(id: id, error: HostAgentClientError.timedOut)
+            }
             lock.unlock()
             writeLine(data)
         }
@@ -143,6 +147,7 @@ public final class HostAgentClient: @unchecked Sendable {
     private func resolvePending(_ resp: TokenResponse) {
         lock.lock()
         let cont = pending.removeValue(forKey: resp.inReplyTo)
+        pendingTimeouts.removeValue(forKey: resp.inReplyTo)?.cancel()
         lock.unlock()
         cont?.resume(returning: resp)
     }
@@ -150,6 +155,7 @@ public final class HostAgentClient: @unchecked Sendable {
     private func failPending(id: String, error: Error) {
         lock.lock()
         let cont = pending.removeValue(forKey: id)
+        pendingTimeouts.removeValue(forKey: id)?.cancel()
         lock.unlock()
         cont?.resume(throwing: error)
     }
@@ -158,7 +164,10 @@ public final class HostAgentClient: @unchecked Sendable {
         lock.lock()
         let conts = pending
         pending.removeAll()
+        let timeouts = pendingTimeouts
+        pendingTimeouts.removeAll()
         lock.unlock()
+        for t in timeouts.values { t.cancel() }
         for cont in conts.values { cont.resume(throwing: error) }
     }
 
