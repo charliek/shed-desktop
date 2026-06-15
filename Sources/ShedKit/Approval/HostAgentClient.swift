@@ -30,12 +30,33 @@ public enum HostAgentEvent: Sendable {
     case frame(HostAgentInbound)
 }
 
+public enum HostAgentClientError: Error, Equatable, CustomStringConvertible, Sendable {
+    case notConnected
+    case timedOut
+    case disconnected
+    case encodingFailed
+
+    public var description: String {
+        switch self {
+        case .notConnected: return "host agent not connected"
+        case .timedOut: return "timed out waiting for host agent reply"
+        case .disconnected: return "host agent connection dropped"
+        case .encodingFailed: return "failed to encode host agent request"
+        }
+    }
+}
+
 public final class HostAgentClient: @unchecked Sendable {
     private let socketPath: String
     private let lock = NSLock()
     private var currentFD: Int32 = -1
     private var running = false
     private var loopTask: Task<Void, Never>?
+    /// In-flight `token.get` requests keyed by request id, each awaiting the
+    /// correlated `token.response` (matched by `in_reply_to`). Guarded by `lock`.
+    /// removeValue is the single-resume guard — whoever removes a continuation
+    /// owns its (exactly-once) resume.
+    private var pending: [String: CheckedContinuation<TokenResponse, Error>] = [:]
 
     public init(socketPath: String) {
         self.socketPath = socketPath
@@ -62,6 +83,7 @@ public final class HostAgentClient: @unchecked Sendable {
         if currentFD >= 0 { Darwin.close(currentFD); currentFD = -1 }
         lock.unlock()
         task?.cancel()
+        failAllPending(error: HostAgentClientError.disconnected)
     }
 
     public var isConnected: Bool {
@@ -76,6 +98,68 @@ public final class HostAgentClient: @unchecked Sendable {
             id: UUID().uuidString, ts: DateFormatting.nowISO8601(), requestID: requestID,
             decision: decision, decidedBy: decidedBy, scope: scope, ttl: ttl) else { return }
         writeLine(data)
+    }
+
+    // MARK: - token.get / token.response
+
+    /// Request a CONTROL token for `server` from the host agent over the UDS.
+    /// Sends a `token.get` and awaits the correlated `token.response`. Throws
+    /// `.notConnected` if there is no live connection, `.timedOut` if no reply
+    /// arrives within `timeout`, or `.disconnected` if the connection drops
+    /// while waiting. A fail-closed reply (its `error` set, `token` nil) is
+    /// returned in the `TokenResponse` — the caller inspects it, it is not thrown.
+    public func requestToken(server: String, timeout: Duration = .seconds(10)) async throws -> TokenResponse {
+        let id = UUID().uuidString
+        guard let data = try? HostAgentProtocol.tokenGet(id: id, server: server) else {
+            throw HostAgentClientError.encodingFailed
+        }
+        // Backstop: if neither a reply nor a disconnect resolves this first,
+        // time it out so a registered continuation can never leak.
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: timeout)
+            guard !Task.isCancelled else { return }
+            self?.failPending(id: id, error: HostAgentClientError.timedOut)
+        }
+        defer { timeoutTask.cancel() }
+        return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<TokenResponse, Error>) in
+            // Register + write under the same critical section's intent: take the
+            // lock, fail fast if disconnected, else register before writing so a
+            // fast reply can't race ahead of registration. (writeLine re-takes the
+            // lock, so write after unlock — NSLock isn't reentrant.)
+            lock.lock()
+            guard currentFD >= 0 else {
+                lock.unlock()
+                cont.resume(throwing: HostAgentClientError.notConnected)
+                return
+            }
+            pending[id] = cont
+            lock.unlock()
+            writeLine(data)
+        }
+    }
+
+    /// Resume the request matching `resp.inReplyTo`. A no-op if it already timed
+    /// out or was failed by a disconnect (removeValue is the single-resume guard).
+    private func resolvePending(_ resp: TokenResponse) {
+        lock.lock()
+        let cont = pending.removeValue(forKey: resp.inReplyTo)
+        lock.unlock()
+        cont?.resume(returning: resp)
+    }
+
+    private func failPending(id: String, error: Error) {
+        lock.lock()
+        let cont = pending.removeValue(forKey: id)
+        lock.unlock()
+        cont?.resume(throwing: error)
+    }
+
+    private func failAllPending(error: Error) {
+        lock.lock()
+        let conts = pending
+        pending.removeAll()
+        lock.unlock()
+        for cont in conts.values { cont.resume(throwing: error) }
     }
 
     // MARK: - loop
@@ -105,11 +189,17 @@ public final class HostAgentClient: @unchecked Sendable {
                     if let pong = try? HostAgentProtocol.pong(id: id, ts: DateFormatting.nowISO8601()) { writeLine(pong) }
                 case .helloAck(let ack):
                     continuation.yield(.connected(ack))
+                case .tokenResponse(let resp):
+                    // Correlated reply — resume the waiter, never surface as a frame.
+                    resolvePending(resp)
                 default:
                     continuation.yield(.frame(frame))
                 }
             }
             closeCurrentIf(fd)
+            // Fail any in-flight token requests so awaiting callers don't hang
+            // until their individual timeout fires.
+            failAllPending(error: HostAgentClientError.disconnected)
             continuation.yield(.disconnected)
             try? await Task.sleep(for: .seconds(0.5))
         }
