@@ -76,6 +76,10 @@ final class AppModel: NSObject, UiBridge {
     func start(profile: BundleProfile) {
         ShedBackend.shared.start(profile: profile)
         ShedBackend.shared.registerUI(self)
+        // Construct the host-agent client before building server clients so each
+        // client can source its control token from the agent (token.get). The
+        // client only connects when started (in startApprovals).
+        self.hostAgent = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
         loadConfigAndClients()
         loadPreferences()
         wireActions()
@@ -332,9 +336,17 @@ final class AppModel: NSObject, UiBridge {
                 baseURL = URL(string: "http://\(entry.host):\(entry.httpPort)")!
                 pin = entry.tlsCertFingerprint  // empty for plain http; a stray pin fails closed
             }
+            // Secure servers mint/refresh their control token via the host agent
+            // (token.get); on a mint failure the client sends no token (a secure
+            // server 401s → offline, an open server still works) — never the
+            // static config token. The hermetic mock has no provider (static token).
+            let provider: ControlTokenProvider? = mockBase == nil
+                ? hostAgent.map { ControlTokenProvider.hostAgent($0, server: entry.name) }
+                : nil
             clients[entry.name] = ShedServerClient(
                 baseURL: baseURL, serverName: entry.name,
-                token: entry.controlToken, tlsCertFingerprint: pin)
+                token: entry.controlToken, tlsCertFingerprint: pin,
+                tokenProvider: provider)
         }
         self.clients = clients
         self.defaultServerName = config.defaultServer ?? config.servers.first?.name
@@ -1046,8 +1058,8 @@ final class AppModel: NSObject, UiBridge {
         if !ShedBackend.shared.testMode { notifier.requestAuthorization() }
         self.notifier = notifier
 
-        let client = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
-        self.hostAgent = client
+        // Created in start() (before the server clients, so they can mint via it).
+        guard let client = self.hostAgent else { return }
         let info = HelloClientInfo(
             name: "shed-desktop", version: uiVersion, pid: pid,
             capabilities: ["approval.ssh", "event.stream"], replayEvents: 50)
