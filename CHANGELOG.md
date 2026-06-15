@@ -2,9 +2,18 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
-## Unreleased
+## v0.0.9 — 2026-06-15
 
 ### Added
+- **Host-agent-minted control tokens for secure servers** (#19) — the desktop
+  now obtains its API **control** token from the local shed-host-agent over the
+  approval socket (`token.get`) instead of a static config token, with a cached,
+  single-flight provider that refreshes near expiry and re-mints on a 401. When
+  the host agent is unavailable the app degrades to a graceful offline state
+  rather than hanging. Companion to the shed v0.7.1 secure-by-default auth.
+- **View-only Egress activity pane** (#203) — a read-only feed of a shed's
+  outbound-network decisions, streamed from the host agent's egress-audit
+  subscriber. Pairs with shed's opt-in egress control.
 - **Agent console button** — every Agents-pane row now has an **Open console**
   button that opens your configured terminal attached to the session's tmux
   (`ssh -t <shed>@<host> tmux attach -t rc-<slug>`), mirroring the Sheds pane.
