@@ -2,8 +2,8 @@
 // and shed-desktop (M3). Newline-delimited JSON, one typed envelope per
 // line. Mirrors the mini-RFC in shed-extensions.
 //
-//   app → agent:  hello, approval_response, pong
-//   agent → app:  hello_ack, approval_request, event, ping
+//   app → agent:  hello, approval_response, pong, token.get
+//   agent → app:  hello_ack, approval_request, event, ping, token.response
 
 import Foundation
 
@@ -15,6 +15,7 @@ public enum HostAgentInbound: Sendable {
     case approvalRequest(ApprovalRequest)
     case event(AuditEventFrame)
     case ping(id: String)
+    case tokenResponse(TokenResponse)
     case unknown(type: String)
 }
 
@@ -55,6 +56,23 @@ public struct AuditEventFrame: Sendable, Decodable {
     }
 }
 
+/// The `token.response` frame — the host agent's reply to a `token.get`. The
+/// `inReplyTo` echoes the request's `id` for correlation. On success `token` and
+/// `expiresAt` are set; on failure `error` is set and they are nil (fail closed).
+public struct TokenResponse: Sendable, Decodable {
+    public let inReplyTo: String
+    public let server: String
+    public let token: String?
+    public let expiresAt: String?
+    public let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case server, token, error
+        case inReplyTo = "in_reply_to"
+        case expiresAt = "expires_at"
+    }
+}
+
 public enum HostAgentProtocol {
     /// Decode one newline-JSON line into a typed inbound frame.
     public static func decode(line: Data) throws -> HostAgentInbound {
@@ -69,6 +87,8 @@ public enum HostAgentProtocol {
             return .event(try JSONDecoder().decode(AuditEventFrame.self, from: line))
         case "ping":
             return .ping(id: obj["id"] as? String ?? "")
+        case "token.response":
+            return .tokenResponse(try JSONDecoder().decode(TokenResponse.self, from: line))
         default:
             return .unknown(type: type)
         }
@@ -96,6 +116,12 @@ public enum HostAgentProtocol {
 
     public static func pong(id: String, ts: String) throws -> Data {
         try line(["v": hostAgentProtocolVersion, "type": "pong", "id": id, "ts": ts])
+    }
+
+    /// Request a CONTROL token for `server` from the host agent. The reply is a
+    /// `token.response` whose `in_reply_to` echoes `id` for correlation.
+    public static func tokenGet(id: String, server: String) throws -> Data {
+        try line(["v": hostAgentProtocolVersion, "type": "token.get", "id": id, "server": server])
     }
 
     private static func line(_ obj: [String: Any]) throws -> Data {
