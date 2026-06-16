@@ -20,4 +20,17 @@ final class ResolvedEndpointTests: XCTestCase {
         XCTAssertEqual(r.baseURL.absoluteString, "http://mini2:8080")
         XCTAssertEqual(r.pin, "")
     }
+
+    func testMalformedApiURLFallsBackToPlainHTTP() {
+        // Relative path, wrong scheme, no host, and unparseable — all must fall
+        // back to the plain endpoint rather than hand a bad URL to the client.
+        for bad in ["/api/info", "ftp://example.com:21", "https://", "not a url"] {
+            let e = ShedServerEntry(
+                name: "s", host: "h", httpPort: 8080, sshPort: 2222,
+                apiURL: bad, tlsCertFingerprint: "sha256:x")
+            XCTAssertEqual(
+                e.resolvedEndpoint().baseURL.absoluteString, "http://h:8080",
+                "apiURL \(bad) should fall back to the plain endpoint")
+        }
+    }
 }

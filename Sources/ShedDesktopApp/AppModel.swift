@@ -336,6 +336,11 @@ final class AppModel: NSObject, UiBridge {
     /// stale results.
     func reconnect() {
         reloadGeneration += 1
+        // Cancel any in-flight poll over the old (possibly dead) endpoint so the
+        // fresh probe starts immediately instead of waiting on the old timeout;
+        // the generation guard would drop its results anyway.
+        inflightRefresh?.cancel()
+        inflightRefresh = nil
         diag?.log(.info, "config", "reconnect: reloading config")
         loadConfigAndClients()
         Task { [weak self] in await self?.refreshSheds() }

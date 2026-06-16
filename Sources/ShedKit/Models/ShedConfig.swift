@@ -49,7 +49,9 @@ extension ShedServerEntry {
     /// — this is the resolution whose absence caused a stale build to dial the
     /// dead `:8080` instead of the secure `:8443`.
     public func resolvedEndpoint() -> ResolvedEndpoint {
-        if !apiURL.isEmpty, let url = URL(string: apiURL) {
+        if !apiURL.isEmpty, let url = URL(string: apiURL),
+            let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+            url.host != nil {
             return ResolvedEndpoint(baseURL: url, pin: tlsCertFingerprint)
         }
         let fallback = URL(string: "http://\(host):\(httpPort)") ?? URL(string: "http://localhost")!
