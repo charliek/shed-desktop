@@ -59,6 +59,11 @@ struct ShedListView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 320)
+            Button("Reconnect") { state.onReconnect?() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.accent)
+                .help("Reload ~/.shed/config.yaml and reconnect to all hosts.")
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

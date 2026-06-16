@@ -71,6 +71,8 @@ public final class AppState: ObservableObject {
     public var onRevealAuditLog: (() -> Void)?
     /// Reveal the shed-desktop diagnostic log file in Finder.
     public var onRevealDiagnosticLog: (() -> Void)?
+    /// Reload ~/.shed/config.yaml and reconnect to all hosts.
+    public var onReconnect: (() -> Void)?
 
     public init() {}
 
