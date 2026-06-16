@@ -36,6 +36,7 @@ struct SidebarView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
+                .help(host.lastError ?? "")
             }
             Spacer()
         }

@@ -438,9 +438,7 @@ final class AppModel: NSObject, UiBridge {
             }
             for await (name, info, sheds, err) in group {
                 if let idx = newHosts.firstIndex(where: { $0.name == name }) {
-                    newHosts[idx].reachable = info != nil
-                    newHosts[idx].backend = info?.backend
-                    newHosts[idx].version = info?.version
+                    newHosts[idx] = newHosts[idx].applyingProbe(info: info, error: err)
                 }
                 allSheds.append(contentsOf: sheds)
                 if let err { errors.append(err) }
