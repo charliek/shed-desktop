@@ -75,6 +75,7 @@ final class AppModel: NSObject, UiBridge {
     /// Bumped on a reconnect (config reload) so an in-flight poll over the old
     /// clients drops its stale results instead of clobbering fresh state.
     private var reloadGeneration = 0
+    private var configWatcher: ConfigWatcher?
 
     // MARK: - lifecycle
 
@@ -89,6 +90,7 @@ final class AppModel: NSObject, UiBridge {
         // client only connects when started (in startApprovals).
         self.hostAgent = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
         loadConfigAndClients()
+        startConfigWatcher()
         loadPreferences()
         wireActions()
         buildMainWindow()
@@ -337,6 +339,17 @@ final class AppModel: NSObject, UiBridge {
         diag?.log(.info, "config", "reconnect: reloading config")
         loadConfigAndClients()
         Task { [weak self] in await self?.refreshSheds() }
+    }
+
+    /// Auto-reload on ~/.shed/config.yaml changes (FSEvents on its directory, so
+    /// atomic replaces are caught), debounced into a single reconnect. Skipped
+    /// under the test harness.
+    private func startConfigWatcher() {
+        guard !ShedBackend.shared.testMode else { return }
+        let dir = (ShedBackend.shared.shedConfigPath as NSString).deletingLastPathComponent
+        configWatcher = ConfigWatcher(directory: dir) { [weak self] in
+            Task { @MainActor in self?.reconnect() }
+        }
     }
 
     private func loadConfigAndClients() {
