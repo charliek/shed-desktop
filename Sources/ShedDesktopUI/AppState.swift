@@ -69,6 +69,8 @@ public final class AppState: ObservableObject {
     public var onApprovalDecide: ((ApprovalRequest, ApprovalChoice) -> Void)?
     /// Reveal the audit log file in Finder (FR-6).
     public var onRevealAuditLog: (() -> Void)?
+    /// Reveal the shed-desktop diagnostic log file in Finder.
+    public var onRevealDiagnosticLog: (() -> Void)?
 
     public init() {}
 

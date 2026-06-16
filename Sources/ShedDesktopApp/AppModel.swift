@@ -71,12 +71,14 @@ final class AppModel: NSObject, UiBridge {
 
     private let pollInterval: Duration = .seconds(5)
     private var diag: DiagnosticLog?
+    private var diagLogPath: String?
 
     // MARK: - lifecycle
 
     func start(profile: BundleProfile) {
         ShedBackend.shared.start(profile: profile)
         self.diag = DiagnosticLog(path: profile.logPath)
+        self.diagLogPath = profile.logPath
         diag?.log(.info, "app", "starting", [("config", ShedBackend.shared.shedConfigPath)])
         ShedBackend.shared.registerUI(self)
         // Construct the host-agent client before building server clients so each
@@ -314,6 +316,10 @@ final class AppModel: NSObject, UiBridge {
         state.onRevealAuditLog = { [weak self] in
             guard let self, let store = self.auditStore, !ShedBackend.shared.testMode else { return }
             NSWorkspace.shared.activateFileViewerSelecting([store.fileURL])
+        }
+        state.onRevealDiagnosticLog = { [weak self] in
+            guard let self, let path = self.diagLogPath, !ShedBackend.shared.testMode else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
         }
     }
 
