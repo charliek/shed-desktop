@@ -70,11 +70,14 @@ final class AppModel: NSObject, UiBridge {
     private var updater: SPUStandardUpdaterController?
 
     private let pollInterval: Duration = .seconds(5)
+    private var diag: DiagnosticLog?
 
     // MARK: - lifecycle
 
     func start(profile: BundleProfile) {
         ShedBackend.shared.start(profile: profile)
+        self.diag = DiagnosticLog(path: profile.logPath)
+        diag?.log(.info, "app", "starting", [("config", ShedBackend.shared.shedConfigPath)])
         ShedBackend.shared.registerUI(self)
         // Construct the host-agent client before building server clients so each
         // client can source its control token from the agent (token.get). The
@@ -347,6 +350,12 @@ final class AppModel: NSObject, UiBridge {
                 baseURL: baseURL, serverName: entry.name,
                 token: entry.controlToken, tlsCertFingerprint: pin,
                 tokenProvider: provider)
+            diag?.log(.info, "config", "resolved server", [
+                ("server", entry.name),
+                ("endpoint", baseURL.absoluteString),
+                ("pinned", String(!pin.isEmpty)),
+                ("tokenProvider", String(provider != nil)),
+            ])
         }
         self.clients = clients
         self.defaultServerName = config.defaultServer ?? config.servers.first?.name
@@ -435,6 +444,9 @@ final class AppModel: NSObject, UiBridge {
                 }
                 allSheds.append(contentsOf: sheds)
                 if let err { errors.append(err) }
+                diag?.log(info != nil ? .info : .warn, "probe",
+                          info != nil ? "reachable" : "unreachable",
+                          [("server", name), ("error", err ?? "")])
             }
         }
 
