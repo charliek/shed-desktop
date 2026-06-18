@@ -2,6 +2,22 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.10 — 2026-06-18
+
+### Added
+- **Diagnostic log** (#20) — a rotated, token-redacted `shed-desktop.log` under
+  `~/Library/Logs/ShedDesktop/`, recording config resolution (each server's
+  resolved endpoint + pin/token state) and per-host probe results, surfaced via a
+  **Diagnostics** action in the Activity view. The breadcrumbs that turn a "why is
+  this host unreachable?" investigation into a one-line answer.
+- **Per-host unreachable reason** (#20) — an unreachable host now shows *why* on
+  hover in the sidebar (e.g. "connection refused (http://…:8080)") instead of a
+  bare gray dot; tokens are scrubbed before the reason reaches the UI.
+- **Reconnect + automatic config reload** (#20) — a manual **Reconnect** action
+  reloads `~/.shed/config.yaml` and rebuilds clients on demand, and an FSEvents
+  watch on `~/.shed` does it automatically — so a server changing endpoint (e.g.
+  open→secure) is picked up without relaunching the app.
+
 ## v0.0.9 — 2026-06-15
 
 ### Added
