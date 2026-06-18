@@ -76,5 +76,13 @@
       <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
       <enclosure url="https://github.com/charliek/shed-desktop/releases/download/v0.0.9/ShedDesktop-0.0.9.dmg" type="application/octet-stream" sparkle:edSignature="5lcxHJibqJRz+i7zV/pcwmiz8rh6mUtLVULid18VIyK0V3TEjObYkCfu7zt1He1N7Z0RGjYXEJugDyMm6/09Aw==" length="2968948" />
     </item>
+    <item>
+      <title>0.0.10</title>
+      <pubDate>Thu, 18 Jun 2026 05:53:10 +0000</pubDate>
+      <sparkle:version>0.0.10</sparkle:version>
+      <sparkle:shortVersionString>0.0.10</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0.0</sparkle:minimumSystemVersion>
+      <enclosure url="https://github.com/charliek/shed-desktop/releases/download/v0.0.10/ShedDesktop-0.0.10.dmg" type="application/octet-stream" sparkle:edSignature="P7lGpyUex1xU57yM+YpRJbi4SPIw7ZtepXnshPsI3JYJnthV4TaQuXbTCBkV76N7OBuIqTXphHOixX4axeV5CA==" length="3028463" />
+    </item>
   </channel>
 </rss>
