@@ -19,6 +19,13 @@ struct ActivityView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Reveal the append-only audit log in Finder.")
+                Button { state.onRevealDiagnosticLog?() } label: {
+                    Label("Diagnostics", systemImage: "stethoscope")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Reveal the shed-desktop diagnostic log in Finder.")
             }
             .padding(.horizontal, 20).padding(.top, 18).padding(.bottom, 4)
             Text("Host-agent credential audit + shed-desktop decisions, newest first.")

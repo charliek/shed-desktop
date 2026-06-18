@@ -32,6 +32,33 @@ public struct ShedServerEntry: Sendable, Equatable {
     }
 }
 
+/// The resolved control-plane endpoint + TLS pin for a server entry.
+public struct ResolvedEndpoint: Equatable, Sendable {
+    public let baseURL: URL
+    public let pin: String
+    public init(baseURL: URL, pin: String) {
+        self.baseURL = baseURL
+        self.pin = pin
+    }
+}
+
+extension ShedServerEntry {
+    /// Resolve the control-plane endpoint the client should use: the https
+    /// `api_url` (with its pinned cert) when set, else plain `http://host:port`.
+    /// Pure, so both startup and reconnect build clients through one tested path
+    /// — this is the resolution whose absence caused a stale build to dial the
+    /// dead `:8080` instead of the secure `:8443`.
+    public func resolvedEndpoint() -> ResolvedEndpoint {
+        if !apiURL.isEmpty, let url = URL(string: apiURL),
+            let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+            url.host != nil {
+            return ResolvedEndpoint(baseURL: url, pin: tlsCertFingerprint)
+        }
+        let fallback = URL(string: "http://\(host):\(httpPort)") ?? URL(string: "http://localhost")!
+        return ResolvedEndpoint(baseURL: fallback, pin: tlsCertFingerprint)
+    }
+}
+
 public struct ShedConfig: Sendable, Equatable {
     public let servers: [ShedServerEntry]
     public let defaultServer: String?

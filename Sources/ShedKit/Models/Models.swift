@@ -31,17 +31,21 @@ public struct ShedHost: Codable, Sendable, Equatable {
     public var reachable: Bool
     public var backend: String?
     public var version: String?
+    /// Why the host is unreachable (sanitized for display), or nil when reachable.
+    public var lastError: String?
 
     enum CodingKeys: String, CodingKey {
         case name, host
         case httpPort = "http_port"
         case sshPort = "ssh_port"
         case reachable, backend, version
+        case lastError = "last_error"
     }
 
     public init(
         name: String, host: String, httpPort: Int, sshPort: Int,
-        reachable: Bool = false, backend: String? = nil, version: String? = nil
+        reachable: Bool = false, backend: String? = nil, version: String? = nil,
+        lastError: String? = nil
     ) {
         self.name = name
         self.host = host
@@ -50,6 +54,27 @@ public struct ShedHost: Codable, Sendable, Equatable {
         self.reachable = reachable
         self.backend = backend
         self.version = version
+        self.lastError = lastError
+    }
+}
+
+extension ShedHost {
+    /// Apply a reachability-probe result, returning the updated host. Pure +
+    /// testable: reachable + metadata on success; a sanitized error (tokens
+    /// scrubbed so nothing secret reaches the UI) on failure; `lastError`
+    /// cleared on success.
+    public func applyingProbe(info: ServerInfo?, error: String?) -> ShedHost {
+        var h = self
+        h.reachable = info != nil
+        h.backend = info?.backend
+        h.version = info?.version
+        h.lastError = info != nil ? nil : ShedHost.sanitizeProbeError(error)
+        return h
+    }
+
+    static func sanitizeProbeError(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return DiagnosticLog.redact(raw)
     }
 }
 

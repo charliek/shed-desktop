@@ -70,17 +70,27 @@ final class AppModel: NSObject, UiBridge {
     private var updater: SPUStandardUpdaterController?
 
     private let pollInterval: Duration = .seconds(5)
+    private var diag: DiagnosticLog?
+    private var diagLogPath: String?
+    /// Bumped on a reconnect (config reload) so an in-flight poll over the old
+    /// clients drops its stale results instead of clobbering fresh state.
+    private var reloadGeneration = 0
+    private var configWatcher: ConfigWatcher?
 
     // MARK: - lifecycle
 
     func start(profile: BundleProfile) {
         ShedBackend.shared.start(profile: profile)
+        self.diag = DiagnosticLog(path: profile.logPath)
+        self.diagLogPath = profile.logPath
+        diag?.log(.info, "app", "starting", [("config", ShedBackend.shared.shedConfigPath)])
         ShedBackend.shared.registerUI(self)
         // Construct the host-agent client before building server clients so each
         // client can source its control token from the agent (token.get). The
         // client only connects when started (in startApprovals).
         self.hostAgent = HostAgentClient(socketPath: ShedBackend.shared.hostAgentSocketPath)
         loadConfigAndClients()
+        startConfigWatcher()
         loadPreferences()
         wireActions()
         buildMainWindow()
@@ -312,6 +322,39 @@ final class AppModel: NSObject, UiBridge {
             guard let self, let store = self.auditStore, !ShedBackend.shared.testMode else { return }
             NSWorkspace.shared.activateFileViewerSelecting([store.fileURL])
         }
+        state.onRevealDiagnosticLog = { [weak self] in
+            guard let self, let path = self.diagLogPath, !ShedBackend.shared.testMode else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        }
+        state.onReconnect = { [weak self] in self?.reconnect() }
+    }
+
+    /// Reconnect: reload ~/.shed/config.yaml and rebuild the per-host clients on
+    /// demand (e.g. after a server flips open→secure). The host-agent approval
+    /// channel + in-flight approvals are owned separately, so they survive. The
+    /// generation bump makes an in-flight poll over the old clients drop its
+    /// stale results.
+    func reconnect() {
+        reloadGeneration += 1
+        // Cancel any in-flight poll over the old (possibly dead) endpoint so the
+        // fresh probe starts immediately instead of waiting on the old timeout;
+        // the generation guard would drop its results anyway.
+        inflightRefresh?.cancel()
+        inflightRefresh = nil
+        diag?.log(.info, "config", "reconnect: reloading config")
+        loadConfigAndClients()
+        Task { [weak self] in await self?.refreshSheds() }
+    }
+
+    /// Auto-reload on ~/.shed/config.yaml changes (FSEvents on its directory, so
+    /// atomic replaces are caught), debounced into a single reconnect. Skipped
+    /// under the test harness.
+    private func startConfigWatcher() {
+        guard !ShedBackend.shared.testMode else { return }
+        let dir = (ShedBackend.shared.shedConfigPath as NSString).deletingLastPathComponent
+        configWatcher = ConfigWatcher(directory: dir) { [weak self] in
+            Task { @MainActor in self?.reconnect() }
+        }
     }
 
     private func loadConfigAndClients() {
@@ -329,12 +372,10 @@ final class AppModel: NSObject, UiBridge {
             if let mockBase, let url = URL(string: mockBase) {
                 baseURL = url
                 pin = ""  // hermetic mock is plain http; no pinning
-            } else if !entry.apiURL.isEmpty, let url = URL(string: entry.apiURL) {
-                baseURL = url
-                pin = entry.tlsCertFingerprint
             } else {
-                baseURL = URL(string: "http://\(entry.host):\(entry.httpPort)")!
-                pin = entry.tlsCertFingerprint  // empty for plain http; a stray pin fails closed
+                let resolved = entry.resolvedEndpoint()
+                baseURL = resolved.baseURL
+                pin = resolved.pin
             }
             // Secure servers mint/refresh their control token via the host agent
             // (token.get); on a mint failure the client sends no token (a secure
@@ -347,6 +388,12 @@ final class AppModel: NSObject, UiBridge {
                 baseURL: baseURL, serverName: entry.name,
                 token: entry.controlToken, tlsCertFingerprint: pin,
                 tokenProvider: provider)
+            diag?.log(.info, "config", "resolved server", [
+                ("server", entry.name),
+                ("endpoint", baseURL.absoluteString),
+                ("pinned", String(!pin.isEmpty)),
+                ("tokenProvider", String(provider != nil)),
+            ])
         }
         self.clients = clients
         self.defaultServerName = config.defaultServer ?? config.servers.first?.name
@@ -409,6 +456,7 @@ final class AppModel: NSObject, UiBridge {
         // Probe every host concurrently; an unreachable host degrades to a
         // dot, never a hard failure of the whole list.
         let clients = Array(self.clients.values)
+        let generation = reloadGeneration
         var newHosts = state.hosts
         var allSheds: [Shed] = []
         var errors: [String] = []
@@ -429,18 +477,22 @@ final class AppModel: NSObject, UiBridge {
             }
             for await (name, info, sheds, err) in group {
                 if let idx = newHosts.firstIndex(where: { $0.name == name }) {
-                    newHosts[idx].reachable = info != nil
-                    newHosts[idx].backend = info?.backend
-                    newHosts[idx].version = info?.version
+                    newHosts[idx] = newHosts[idx].applyingProbe(info: info, error: err)
                 }
                 allSheds.append(contentsOf: sheds)
                 if let err { errors.append(err) }
+                diag?.log(info != nil ? .info : .warn, "probe",
+                          info != nil ? "reachable" : "unreachable",
+                          [("server", name), ("error", err ?? "")])
             }
         }
 
         // A cancelled poll (app shutting down) shouldn't clobber state with
         // the partial/errored results of an interrupted fetch.
         if Task.isCancelled { return }
+        // A reconnect bumped the generation while we probed the old clients —
+        // don't clobber the fresh state with stale results.
+        if generation != reloadGeneration { return }
         allSheds.sort { ($0.host, $0.name) < ($1.host, $1.name) }
         state.hosts = newHosts
         state.sheds = allSheds
