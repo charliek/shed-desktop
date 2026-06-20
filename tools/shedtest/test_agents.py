@@ -6,29 +6,29 @@ from __future__ import annotations
 
 def test_classify_agent_ready(shed):
     pane = "·✔︎· Connected\nContinue at https://claude.ai/code?environment=env_01ABC"
-    r = shed.rc_classify("agent", pane)
+    r = shed.rc_classify("claude-broker", pane)
     assert r["state"] == "ready"
     assert r["url"] == "https://claude.ai/code?environment=env_01ABC"
 
 
 def test_classify_repl_needs_trust(shed):
-    r = shed.rc_classify("repl", "Quick safety check: Is this a project you trust?")
+    r = shed.rc_classify("claude-rc", "Quick safety check: Is this a project you trust?")
     assert r["state"] == "needs-trust"
 
 
 def test_classify_agent_reconnecting(shed):
-    r = shed.rc_classify("agent", "·|· Reconnecting · retrying in 2.5s")
+    r = shed.rc_classify("claude-broker", "·|· Reconnecting · retrying in 2.5s")
     assert r["state"] == "reconnecting"
     assert "url" not in r
 
 
 def test_launch_list_kill(shed):
     shed.refresh()
-    session = shed.rc_launch("hello-world", kind="repl", display_name="demo")
+    session = shed.rc_launch("hello-world", kind="claude-rc", display_name="demo")
     slug = session["slug"]
     assert session["state"] == "ready"
     assert session["url"].startswith("https://claude.ai/code/session_")
-    assert session["kind"] == "repl"
+    assert session["kind"] == "claude-rc"
 
     # It shows up in the list with its tmux name.
     listed = {s["slug"]: s for s in shed.rc_list()}
@@ -43,7 +43,7 @@ def test_launch_list_kill(shed):
 
 def test_launch_agent_kind_gets_environment_url(shed):
     shed.refresh()
-    session = shed.rc_launch("hello-world", kind="agent")
+    session = shed.rc_launch("hello-world", kind="claude-broker")
     try:
         assert session["url"].startswith("https://claude.ai/code?environment=env_")
     finally:
@@ -52,9 +52,9 @@ def test_launch_agent_kind_gets_environment_url(shed):
 
 def test_launch_carries_managed_provenance(shed):
     """A launched session is managed and stamps SHED_RC_* provenance, which
-    survives the round-trip through rc.list (RC Session Convention v1)."""
+    survives the round-trip through rc.list (RC Session Convention v2)."""
     shed.refresh()
-    session = shed.rc_launch("hello-world", kind="repl", display_name="demo")
+    session = shed.rc_launch("hello-world", kind="claude-rc", display_name="demo")
     slug = session["slug"]
     try:
         assert session["managed"] is True
@@ -89,7 +89,7 @@ def test_inject_legacy_session_renders(shed):
     Agents pane (legacy badge + console button) for a screenshot."""
     shed.refresh()
     host = shed.host_list()[0]["name"]
-    shed.rc_inject_test("hello-world", "legacy1", host=host, kind="agent", state="ready")
+    shed.rc_inject_test("hello-world", "legacy1", host=host, kind="claude-broker", state="ready")
     try:
         listed = {s["slug"]: s for s in shed.rc_list()}
         assert "legacy1" in listed
