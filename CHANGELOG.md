@@ -2,6 +2,20 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.11 — 2026-06-19
+
+### Changed
+- **Remote-control sessions now run through the shared `shed-ext-rc` guest binary**
+  (#21) instead of shed-desktop building the SSH+tmux commands itself — it invokes
+  `shed-ext-rc create --wait` / `list` / `kill` over SSH and decodes the neutral
+  JSON DTO, so sessions it creates are byte-compatible with (and viewable in)
+  shed-remote-agent. Requires a shed image that ships `shed-ext-rc`
+  (shed-extensions v0.4.6+); an older shed reports it as not installed.
+- **RC kinds renamed to RC Session Convention v2** (#21): `agent`→`claude-broker`,
+  `repl`→`claude-rc` (now the default), `shell` unchanged; the session display name
+  is now `<shed>/<slug>`. `SHED_RC_V` is bumped to 2 with no v1 aliasing — a
+  pre-v2 session renders as legacy/unmanaged.
+
 ## v0.0.10 — 2026-06-18
 
 ### Added
