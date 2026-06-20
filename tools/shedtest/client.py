@@ -182,7 +182,7 @@ class ShedDesktop:
             params["shed"] = shed
         return self.call("rc.list", params)["sessions"]
 
-    def rc_launch(self, shed: str, kind: str = "repl", host: str | None = None,
+    def rc_launch(self, shed: str, kind: str = "claude-rc", host: str | None = None,
                   display_name: str | None = None) -> dict:
         params: dict = {"shed": shed, "kind": kind}
         if host:
@@ -198,7 +198,7 @@ class ShedDesktop:
         self.call("rc.kill", params)
 
     def rc_inject_test(self, shed: str, slug: str, *, host: str | None = None,
-                       kind: str = "agent", state: str = "ready", managed: bool = False,
+                       kind: str = "claude-broker", state: str = "ready", managed: bool = False,
                        display_name: str | None = None, created_by: str | None = None,
                        created_at: str | None = None, rc_id: str | None = None,
                        url: str | None = None, target_label: str | None = None) -> None:
