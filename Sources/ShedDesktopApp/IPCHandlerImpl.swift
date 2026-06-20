@@ -311,7 +311,8 @@ actor IPCHandlerImpl: IPCHandler {
     @MainActor
     private func uiNavigate(pane: String) throws -> AnyCodable? {
         guard try uiBridge().navigate(toPane: pane) else {
-            throw IPCHandlerError.invalidParam("unknown pane: \(pane) (want sheds|approvals|agents|activity|system)")
+            let want = DashboardPane.allCases.map(\.rawValue).joined(separator: "|")
+            throw IPCHandlerError.invalidParam("unknown pane: \(pane) (want \(want))")
         }
         return AnyCodable(["pane": pane])
     }
