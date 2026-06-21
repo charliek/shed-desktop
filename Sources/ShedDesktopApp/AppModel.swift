@@ -279,7 +279,7 @@ final class AppModel: NSObject, UiBridge {
         state.onRcLaunch = { [weak self] host, shed, kind, name in
             Task { [weak self] in
                 guard let self else { return }
-                do { _ = try await self.rcLaunch(host: host, shed: shed, kind: kind, displayName: name, workdir: nil) }
+                do { _ = try await self.rcLaunch(host: host, shed: shed, kind: kind, displayName: name, workdir: nil, initialPrompt: nil) }
                 catch { self.state.lastError = "launch \(shed): \(error)" }
             }
         }
@@ -970,7 +970,7 @@ final class AppModel: NSObject, UiBridge {
 
     // MARK: - UiBridge (M2: remote control)
 
-    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession {
+    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?, initialPrompt: String?) async throws -> RcSession {
         let serverName = try resolveName(host)
         let slug = RemoteControl.generateSlug()
         // The app picks the slug so it can build the `<shed>/<slug>` display name
@@ -982,6 +982,11 @@ final class AppModel: NSObject, UiBridge {
         guard isSafeRCValue(name), workdir.map(isSafeRCValue) ?? true else {
             throw IPCHandlerError.invalidParam("display name and workdir must not contain newlines or control characters")
         }
+        // Validate the kickoff line before the test-mode branch so the hermetic
+        // harness exercises it; surface the binary-domain error as an IPC param error.
+        let prompt: String?
+        do { prompt = try RemoteControl.normalizeRcPrompt(initialPrompt, kind: kind) }
+        catch RcError.badRequest(let reason) { throw IPCHandlerError.invalidParam(reason) }
 
         if ShedBackend.shared.testMode {
             // No SSH under the harness — synthesize a ready session (carrying the
@@ -1002,13 +1007,16 @@ final class AppModel: NSObject, UiBridge {
         // `shed-ext-rc create --wait` resolves the workdir ($SHED_WORKSPACE),
         // pre-seeds trust, bootstraps, polls to ready, and accepts trust — one call.
         let h = try resolveHost(host)
-        let argv = RemoteControl.createArgv(
+        // Build argv + stdin together so the `--prompt-stdin` flag and the stdin
+        // payload can't disagree (createInvocation drops the prompt for a kind
+        // that doesn't accept typed input).
+        let inv = RemoteControl.createInvocation(
             kind: kind, name: name, slug: slug, workdir: workdir,
-            createdBy: createdBy, target: target, hasPrompt: false)
+            createdBy: createdBy, target: target, prompt: prompt)
         // create --wait blocks ~20s inside the shed; give the command headroom.
         let res = try await ProcessRunner.run(
-            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: argv),
-            timeout: .seconds(30))
+            RemoteControl.sshArgv(user: shed, host: h.host, port: h.sshPort, remoteArgv: inv.argv),
+            stdin: inv.stdin, timeout: .seconds(30))
         guard res.ok else {
             throw RemoteControl.error(exitCode: res.exitCode, stderr: res.stderr, stdout: res.stdout)
         }
@@ -1083,9 +1091,7 @@ final class AppModel: NSObject, UiBridge {
         state.rcSessions = rcTable.values.sorted { $0.id < $1.id }
     }
 
-    private func isSafeRCValue(_ s: String) -> Bool {
-        !s.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
-    }
+    private func isSafeRCValue(_ s: String) -> Bool { RemoteControl.isSafeRCValue(s) }
 
     private func syntheticURL(kind: RcKind, slug: String) -> String? {
         switch kind {
