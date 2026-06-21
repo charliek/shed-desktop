@@ -16,7 +16,7 @@ struct AgentsView: View {
                 }
                 .buttonStyle(.plain).help("Refresh")
                 Button { state.showLaunchSheet = true } label: {
-                    Label("Launch agent", systemImage: "plus")
+                    Label("New session", systemImage: "plus")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.accent)
                 }

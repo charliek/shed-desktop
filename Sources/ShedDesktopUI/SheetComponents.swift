@@ -1,5 +1,5 @@
 // SheetComponents.swift — shared building blocks for the modal sheets
-// (New shed / Launch agent): card chrome, header, labeled fields, inset text
+// (New shed / New session): card chrome, header, labeled fields, inset text
 // fields + dropdowns, and footer buttons. Keeps the two modals consistent.
 
 import SwiftUI
@@ -78,10 +78,12 @@ struct SheetHeader: View {
 struct SheetField<Content: View>: View {
     let label: String
     var hint: String?
+    var help: String?
     @ViewBuilder let content: () -> Content
-    init(_ label: String, hint: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+    init(_ label: String, hint: String? = nil, help: String? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.label = label
         self.hint = hint
+        self.help = help
         self.content = content
     }
     var body: some View {
@@ -91,6 +93,7 @@ struct SheetField<Content: View>: View {
                 if let hint { Text(hint).font(.system(size: 12)).foregroundStyle(Theme.textMuted) }
             }
             content()
+            if let help { Text(help).font(.system(size: 12)).foregroundStyle(Theme.textMuted) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }

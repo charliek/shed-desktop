@@ -114,7 +114,7 @@ actor IPCHandlerImpl: IPCHandler {
             return try await encodeResult(rcListOp(p))
         case "rc.launch":
             let p = try decodeParams(params, as: RcLaunchParams.self,
-                expected: ["host", "shed", "kind", "display_name", "workdir"])
+                expected: ["host", "shed", "kind", "display_name", "workdir", "initial_prompt"])
             return try await encodeResult(rcLaunchOp(p))
         case "rc.kill":
             let p = try decodeParams(params, as: RcKillParams.self, expected: ["host", "shed", "slug"])
@@ -241,7 +241,7 @@ actor IPCHandlerImpl: IPCHandler {
     }
 
     @MainActor private func rcLaunchOp(_ p: RcLaunchParams) async throws -> RcSession {
-        try await uiBridge().rcLaunch(host: p.host, shed: p.shed, kind: p.kind, displayName: p.displayName, workdir: p.workdir)
+        try await uiBridge().rcLaunch(host: p.host, shed: p.shed, kind: p.kind, displayName: p.displayName, workdir: p.workdir, initialPrompt: p.initialPrompt)
     }
 
     @MainActor private func rcKillOp(_ p: RcKillParams) async throws {
@@ -407,10 +407,12 @@ private struct RcLaunchParams: Decodable {
     let kind: RcKind
     let displayName: String?
     let workdir: String?
+    let initialPrompt: String?
 
     enum CodingKeys: String, CodingKey {
         case host, shed, kind, workdir
         case displayName = "display_name"
+        case initialPrompt = "initial_prompt"
     }
 
     init(from decoder: Decoder) throws {
@@ -420,6 +422,7 @@ private struct RcLaunchParams: Decodable {
         self.kind = try c.decodeIfPresent(RcKind.self, forKey: .kind) ?? .default
         self.displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         self.workdir = try c.decodeIfPresent(String.self, forKey: .workdir)
+        self.initialPrompt = try c.decodeIfPresent(String.self, forKey: .initialPrompt)
     }
 }
 

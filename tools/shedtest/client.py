@@ -183,12 +183,16 @@ class ShedDesktop:
         return self.call("rc.list", params)["sessions"]
 
     def rc_launch(self, shed: str, kind: str = "claude-rc", host: str | None = None,
-                  display_name: str | None = None) -> dict:
+                  display_name: str | None = None, initial_prompt: str | None = None) -> dict:
         params: dict = {"shed": shed, "kind": kind}
         if host:
             params["host"] = host
         if display_name:
             params["display_name"] = display_name
+        # Include whenever non-None (not just truthy) so negative tests can send a
+        # deliberately bad value (e.g. a control char) through to the op.
+        if initial_prompt is not None:
+            params["initial_prompt"] = initial_prompt
         return self.call("rc.launch", params)
 
     def rc_kill(self, shed: str, slug: str, host: str | None = None) -> None:

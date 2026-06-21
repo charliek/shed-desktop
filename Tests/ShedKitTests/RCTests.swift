@@ -122,6 +122,71 @@ final class RCBinaryTests: XCTestCase {
         XCTAssertEqual(RemoteControl.killArgv(slug: "abc"), [RemoteControl.binaryName(), "kill", "--slug", "abc"])
     }
 
+    func testAcceptsTypedInput() {
+        XCTAssertTrue(RcKind.claudeRc.acceptsTypedInput)
+        XCTAssertTrue(RcKind.shell.acceptsTypedInput)
+        XCTAssertFalse(RcKind.claudeBroker.acceptsTypedInput)
+    }
+
+    func testCreatableKindsExcludeBroker() {
+        XCTAssertEqual(RcKind.creatable, [.claudeRc, .shell])
+        XCTAssertFalse(RcKind.creatable.contains(.claudeBroker))
+    }
+
+    func testNormalizeRcPromptTrimsAndAllows() throws {
+        XCTAssertNil(try RemoteControl.normalizeRcPrompt(nil, kind: .claudeRc))
+        XCTAssertNil(try RemoteControl.normalizeRcPrompt("   \n ", kind: .claudeRc))
+        XCTAssertEqual(try RemoteControl.normalizeRcPrompt("  hi there  ", kind: .claudeRc), "hi there")
+        XCTAssertEqual(try RemoteControl.normalizeRcPrompt("npm test", kind: .shell), "npm test")
+        // Surrounding whitespace/newlines are trimmed (not rejected), matching
+        // shed-remote-agent; only an *embedded* control char is rejected.
+        XCTAssertEqual(try RemoteControl.normalizeRcPrompt("\n  npm test \n", kind: .shell), "npm test")
+        // A 2000-byte value is the boundary and is allowed.
+        XCTAssertEqual(try RemoteControl.normalizeRcPrompt(String(repeating: "a", count: 2000), kind: .shell)?.utf8.count, 2000)
+    }
+
+    func testNormalizeRcPromptRejects() {
+        // Pin the specific badRequest reason — these strings are the IPC
+        // invalid-param message contract, so a plain "throws" check would hide a
+        // regression in the mapping.
+        func assertBadRequest(_ run: @autoclosure () throws -> String?,
+                              reasonContains needle: String, line: UInt = #line) {
+            XCTAssertThrowsError(try run(), line: line) { error in
+                guard case RcError.badRequest(let reason) = error else {
+                    return XCTFail("expected RcError.badRequest, got \(error)", line: line)
+                }
+                XCTAssertTrue(reason.contains(needle), "unexpected reason: \(reason)", line: line)
+            }
+        }
+        assertBadRequest(try RemoteControl.normalizeRcPrompt("a\nb", kind: .claudeRc),
+                         reasonContains: "control characters")
+        assertBadRequest(try RemoteControl.normalizeRcPrompt(String(repeating: "a", count: 2001), kind: .shell),
+                         reasonContains: "exceeds 2000 bytes")
+        assertBadRequest(try RemoteControl.normalizeRcPrompt("hello", kind: .claudeBroker),
+                         reasonContains: "does not accept an initial prompt")
+    }
+
+    func testCreateInvocationPairsFlagAndStdin() {
+        let withPrompt = RemoteControl.createInvocation(
+            kind: .claudeRc, name: "n", slug: "s", workdir: nil,
+            createdBy: "shed-desktop/0", target: "t", prompt: "do it")
+        XCTAssertTrue(withPrompt.argv.contains("--prompt-stdin"))
+        XCTAssertEqual(withPrompt.stdin, "do it")
+
+        let noPrompt = RemoteControl.createInvocation(
+            kind: .claudeRc, name: "n", slug: "s", workdir: nil,
+            createdBy: "shed-desktop/0", target: "t", prompt: nil)
+        XCTAssertFalse(noPrompt.argv.contains("--prompt-stdin"))
+        XCTAssertNil(noPrompt.stdin)
+
+        // A prompt is dropped for a kind that doesn't accept typed input.
+        let broker = RemoteControl.createInvocation(
+            kind: .claudeBroker, name: "n", slug: "s", workdir: nil,
+            createdBy: "shed-desktop/0", target: "t", prompt: "ignored")
+        XCTAssertFalse(broker.argv.contains("--prompt-stdin"))
+        XCTAssertNil(broker.stdin)
+    }
+
     func testExitCodeMapping() {
         XCTAssertEqual(RemoteControl.error(exitCode: 3, stderr: "exists", stdout: ""), .slugTaken("exists"))
         XCTAssertEqual(RemoteControl.error(exitCode: 4, stderr: "gone", stdout: ""), .notFound("gone"))

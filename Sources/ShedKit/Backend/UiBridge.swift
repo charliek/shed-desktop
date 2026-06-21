@@ -8,6 +8,25 @@
 import AppKit
 import Foundation
 
+/// A request to launch a remote-control session, passed from the UI to the app
+/// as one value so the launch fields can't be transposed positionally (the
+/// sheet builds it; `AppState.onRcLaunch` carries it). `workdir` is resolved by
+/// the binary, so the sheet doesn't supply one.
+public struct RcLaunchInput: Sendable {
+    public let host: String?
+    public let shed: String
+    public let kind: RcKind
+    public let displayName: String?
+    public let initialPrompt: String?
+    public init(host: String?, shed: String, kind: RcKind, displayName: String?, initialPrompt: String?) {
+        self.host = host
+        self.shed = shed
+        self.kind = kind
+        self.displayName = displayName
+        self.initialPrompt = initialPrompt
+    }
+}
+
 @MainActor
 public protocol UiBridge: AnyObject {
     /// The NSWindow backing a capturable `surface`, for `app.screenshot`.
@@ -91,7 +110,7 @@ public protocol UiBridge: AnyObject {
     // MARK: - M2: remote-control sessions
 
     func rcList(host: String?, shed: String?) async throws -> [RcSession]
-    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?) async throws -> RcSession
+    func rcLaunch(host: String?, shed: String, kind: RcKind, displayName: String?, workdir: String?, initialPrompt: String?) async throws -> RcSession
     func rcKill(host: String?, shed: String, slug: String) async throws
     /// Inject a session into the table directly — test-only (e.g. a legacy row
     /// for an e2e screenshot). Throws outside the harness.

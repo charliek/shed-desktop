@@ -53,7 +53,10 @@ public final class AppState: ObservableObject {
     public var onShedAction: ((ShedAction, Shed) -> Void)?
     public var onOpenTerminal: ((Shed) -> Void)?
     public var onCreate: ((String?, CreateShedRequest) -> Void)?
-    public var onRcLaunch: ((String?, String, RcKind, String?) -> Void)?
+    /// Launch an RC session. Takes a single `RcLaunchInput` rather than threading
+    /// more positional args through this STOP-ruled bag — two adjacent `String?`
+    /// (display name + initial prompt) would otherwise be silently transposable.
+    public var onRcLaunch: ((RcLaunchInput) -> Void)?
     public var onRcKill: ((RcSession) -> Void)?
     public var onRcRefresh: (() -> Void)?
     /// Open a terminal attached to a session's tmux (`rc-<slug>`). Knowingly

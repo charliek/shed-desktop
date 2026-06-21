@@ -3,6 +3,10 @@ the agents pane (in test mode against an in-memory session table)."""
 
 from __future__ import annotations
 
+import pytest
+
+from client import ShedError
+
 
 def test_classify_agent_ready(shed):
     pane = "·✔︎· Connected\nContinue at https://claude.ai/code?environment=env_01ABC"
@@ -108,3 +112,51 @@ def test_launch_sheet_is_screenshot_driveable(shed):
     png, w, h = shed.screenshot(surface="window", scale=2)
     assert png[:8] == b"\x89PNG\r\n\x1a\n", "expected a PNG"
     assert w > 0 and h > 0
+
+
+def test_launch_with_initial_prompt(shed):
+    """rc.launch accepts an optional initial_prompt for the kinds that take typed
+    input (claude-rc → prompt, shell → command)."""
+    shed.refresh()
+    rc = shed.rc_launch("hello-world", kind="claude-rc", display_name="demo",
+                        initial_prompt="summarize this repo")
+    try:
+        assert rc["state"] == "ready"
+        assert rc["kind"] == "claude-rc"
+    finally:
+        shed.rc_kill("hello-world", rc["slug"])
+
+    sh = shed.rc_launch("hello-world", kind="shell", display_name="dev",
+                        initial_prompt="npm install && npm test")
+    try:
+        assert sh["state"] == "ready"
+        assert sh["kind"] == "shell"
+    finally:
+        shed.rc_kill("hello-world", sh["slug"])
+
+
+def test_launch_rejects_control_char_prompt(shed):
+    """A control char in initial_prompt is rejected before the test-mode branch.
+    This also proves the custom RcLaunchParams decoder captured the field — were it
+    dropped, validation would pass and no error would be raised."""
+    shed.refresh()
+    with pytest.raises(ShedError) as exc:
+        shed.rc_launch("hello-world", kind="claude-rc", initial_prompt="bad\nvalue")
+    assert exc.value.code == "invalid-param"
+
+
+def test_launch_rejects_overlong_prompt(shed):
+    shed.refresh()
+    with pytest.raises(ShedError) as exc:
+        shed.rc_launch("hello-world", kind="shell", initial_prompt="a" * 2001)
+    assert exc.value.code == "invalid-param"
+
+
+def test_launch_rejects_prompt_for_broker(shed):
+    """claude-broker has no pane to type into, so a prompt is rejected (the guest
+    rejects it too). Launching broker without a prompt stays valid (covered by
+    test_launch_agent_kind_gets_environment_url)."""
+    shed.refresh()
+    with pytest.raises(ShedError) as exc:
+        shed.rc_launch("hello-world", kind="claude-broker", initial_prompt="nope")
+    assert exc.value.code == "invalid-param"

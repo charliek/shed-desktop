@@ -16,6 +16,22 @@ public enum RcKind: String, Codable, Sendable, CaseIterable {
     case shell
 
     public static let `default`: RcKind = .claudeRc
+
+    /// Whether this kind accepts a typed kickoff line — an initial prompt for
+    /// `claude-rc`, an initial command for `shell`. Mirrors the guest's
+    /// `AcceptsTypedInput` (the source of truth, `shed-extensions/internal/rc`):
+    /// every kind except `claude-broker`, whose input is a remote URL, not the pane.
+    public var acceptsTypedInput: Bool {
+        switch self {
+        case .claudeRc, .shell: return true
+        case .claudeBroker: return false
+        }
+    }
+
+    /// Kinds the New session sheet offers for creation. `rc.launch` over IPC
+    /// still accepts any decodable kind (e.g. `.claudeBroker`) so a session
+    /// created elsewhere round-trips and displays; this only governs the toggle.
+    public static let creatable: [RcKind] = [.claudeRc, .shell]
 }
 
 public enum RcState: String, Codable, Sendable, Equatable {
@@ -141,6 +157,56 @@ public enum RemoteControl {
         if let w = workdir, !w.isEmpty { a += ["--workdir", w] }
         if hasPrompt { a += ["--prompt-stdin"] }
         return a
+    }
+
+    /// True when `s` carries no control characters. A superset-strict guard over
+    /// the guest's `HasControlChars` (which rejects only `<= 0x1f` and `0x7f`):
+    /// this also rejects a few Unicode format chars, which is safe — the client
+    /// stays stricter than the guest, never sending a value the guest would reject.
+    public static func isSafeRCValue(_ s: String) -> Bool {
+        !s.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+
+    /// Normalize + validate a caller-supplied kickoff line. Leading/trailing
+    /// whitespace (incl. newlines) is trimmed; an empty/blank value returns `nil`
+    /// so the caller omits `--prompt-stdin` rather than feeding the guest an empty
+    /// stdin (a guest hard-error). After trimming, throws `RcError.badRequest` for
+    /// an embedded control character, an over-long value (>2000 UTF-8 bytes), or a
+    /// prompt on a kind that doesn't accept typed input. Mirrors shed-remote-agent's
+    /// create-request normalization: trim first, then validate the trimmed value
+    /// (so a surrounding newline normalizes away rather than being rejected).
+    public static func normalizeRcPrompt(_ raw: String?, kind: RcKind) throws -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        guard kind.acceptsTypedInput else {
+            throw RcError.badRequest("kind \(kind.rawValue) does not accept an initial prompt")
+        }
+        guard isSafeRCValue(trimmed) else {
+            throw RcError.badRequest("initial prompt must not contain control characters")
+        }
+        // Orchestrator-layer cap (the guest enforces none): matches shed-remote-agent's
+        // 2000-char create limit and bounds what gets typed into the pane. Counted in
+        // UTF-8 bytes — what actually crosses stdin.
+        guard trimmed.utf8.count <= 2000 else {
+            throw RcError.badRequest("initial prompt exceeds 2000 bytes")
+        }
+        return trimmed
+    }
+
+    /// Build the `create` argv and its stdin together, so the `--prompt-stdin`
+    /// flag and the stdin payload can never disagree. `prompt` must already be
+    /// normalized (see `normalizeRcPrompt`); it is dropped for a kind that doesn't
+    /// accept typed input. The line is delivered verbatim (no trailing newline;
+    /// `normalizeRcPrompt`/`isSafeRCValue` already forbid embedded newlines).
+    public static func createInvocation(
+        kind: RcKind, name: String, slug: String, workdir: String?,
+        createdBy: String, target: String, prompt: String?
+    ) -> (argv: [String], stdin: String?) {
+        let effective = kind.acceptsTypedInput ? prompt : nil
+        let argv = createArgv(
+            kind: kind, name: name, slug: slug, workdir: workdir,
+            createdBy: createdBy, target: target, hasPrompt: effective != nil)
+        return (argv, effective)
     }
 
     public static func listArgv() -> [String] { [binaryName(), "list"] }
