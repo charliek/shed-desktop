@@ -308,6 +308,9 @@ final class AppModel: NSObject, UiBridge {
         state.onImagesRefresh = { [weak self] in
             Task { [weak self] in _ = await self?.refreshImages() }
         }
+        state.onEgressRefresh = { [weak self] in
+            Task { [weak self] in _ = await self?.refreshEgressProfiles() }
+        }
         state.onOpenURL = { url in
             if let u = URL(string: url) { NSWorkspace.shared.open(u) }
         }
@@ -437,6 +440,7 @@ final class AppModel: NSObject, UiBridge {
     private var inflightRefresh: Task<Void, Never>?
     private var inflightSystemRefresh: Task<Void, Never>?
     private var inflightImageRefresh: Task<Void, Never>?
+    private var inflightEgressRefresh: Task<Void, Never>?
 
     /// Serialize refreshes: chain each after any in-flight one so a slow
     /// older poll can't resolve late and overwrite a newer refresh's state.
@@ -563,6 +567,35 @@ final class AppModel: NSObject, UiBridge {
         if Task.isCancelled { return }
         result.sort { $0.host < $1.host }
         state.imagesByHost = result
+    }
+
+    func refreshEgressProfiles() async -> [HostEgressProfiles] {
+        let previous = inflightEgressRefresh
+        let task = Task { [weak self] in
+            await previous?.value
+            await self?.doEgressRefresh()
+        }
+        inflightEgressRefresh = task
+        await task.value
+        return state.egressProfiles
+    }
+
+    private func doEgressRefresh() async {
+        let clients = Array(self.clients.values)
+        var result: [HostEgressProfiles] = []
+        await withTaskGroup(of: HostEgressProfiles.self) { group in
+            for client in clients {
+                group.addTask {
+                    // Unreachable host / egress disabled → a row with an error, never a hard failure.
+                    do { return HostEgressProfiles(host: client.serverName, profiles: try await client.egressProfiles()) }
+                    catch { return HostEgressProfiles(host: client.serverName, profiles: [], error: "\(error)") }
+                }
+            }
+            for await item in group { result.append(item) }
+        }
+        if Task.isCancelled { return }
+        result.sort { $0.host < $1.host }
+        state.egressProfiles = result
     }
 
     // MARK: - windows

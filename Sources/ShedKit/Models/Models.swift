@@ -404,6 +404,50 @@ public struct WindowState: Codable, Sendable, Equatable {
     }
 }
 
+/// One egress profile fragment (`allow`/`deny` domain globs, an optional CEL
+/// `rule`, `mode: audit`). Mirrors shed-server's `config.EgressProfile` wire
+/// shape (all keys lowercase single words → no CodingKeys needed).
+public struct EgressProfile: Codable, Sendable, Equatable {
+    public var mode: String?
+    public var allow: [String]?
+    public var deny: [String]?
+    public var rule: String?
+    public init(mode: String? = nil, allow: [String]? = nil, deny: [String]? = nil, rule: String? = nil) {
+        self.mode = mode
+        self.allow = allow
+        self.deny = deny
+        self.rule = rule
+    }
+}
+
+/// One entry of `GET /api/egress/profiles`: a named profile plus whether it
+/// comes from the server config (read-only baseline) or the runtime user store.
+public struct EgressProfileInfo: Codable, Sendable, Equatable, Identifiable {
+    public var name: String
+    public var source: String // "config" | "user"
+    public var profile: EgressProfile
+    public var id: String { name }
+    public init(name: String, source: String, profile: EgressProfile) {
+        self.name = name
+        self.source = source
+        self.profile = profile
+    }
+}
+
+/// A server's egress profiles (or the per-host fetch error), for the desktop's
+/// fan-out across hosts. Not a wire type.
+public struct HostEgressProfiles: Sendable, Equatable, Identifiable {
+    public var host: String
+    public var profiles: [EgressProfileInfo]
+    public var error: String?
+    public var id: String { host }
+    public init(host: String, profiles: [EgressProfileInfo], error: String? = nil) {
+        self.host = host
+        self.profiles = profiles
+        self.error = error
+    }
+}
+
 /// The sidebar panes the dashboard exposes; also the `ui.navigate` target
 /// vocabulary.
 public enum DashboardPane: String, Codable, Sendable, CaseIterable {
