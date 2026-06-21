@@ -16,7 +16,9 @@ struct EgressProfilesView: View {
     private struct Row: Identifiable, Equatable {
         let host: String
         let info: EgressProfileInfo
-        var id: String { host + "/" + info.name }
+        // Include source so the id is unique even if a host ever returns a
+        // config and user profile of the same name (the server dedupes today).
+        var id: String { host + "/" + info.source + "/" + info.name }
     }
 
     private var rows: [Row] {
@@ -29,7 +31,9 @@ struct EgressProfilesView: View {
     var body: some View {
         Group {
             if rows.isEmpty {
-                emptyState
+                // Surface host failures (egress disabled / unreachable) instead of
+                // a misleading "no profiles" when a fetch actually errored.
+                if errorRows.isEmpty { emptyState } else { errorState }
             } else {
                 HSplitView {
                     list.frame(minWidth: 220, idealWidth: 280, maxWidth: 360)
@@ -129,6 +133,20 @@ struct EgressProfilesView: View {
             .background((isUser ? Theme.accent : Theme.textMuted).opacity(0.18))
             .foregroundStyle(isUser ? Theme.accent : Theme.textSecondary)
             .clipShape(Capsule())
+    }
+
+    private var errorState: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Text("Couldn't load egress profiles.").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
+            ForEach(errorRows) { e in
+                Text("\(e.host): \(e.error ?? "unavailable")")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                    .multilineTextAlignment(.center).frame(maxWidth: 420)
+            }
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var emptyState: some View {

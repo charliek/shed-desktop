@@ -41,4 +41,26 @@ final class ShedServerClientEgressTests: XCTestCase {
         let profiles = try await client().egressProfiles()
         XCTAssertTrue(profiles.isEmpty)
     }
+
+    // Optional fields may be explicitly null, omitted entirely, or partially
+    // present — the decoder must tolerate all three (the server uses omitempty).
+    func testEgressProfilesOptionalFields() async throws {
+        let body = """
+            [
+              {"name":"a","source":"config","profile":{"mode":null,"allow":null,"deny":null,"rule":null}},
+              {"name":"b","source":"user","profile":{}},
+              {"name":"c","source":"user","profile":{"allow":["x.com"]}}
+            ]
+            """
+        StubURLProtocol.reset([.init(status: 200, body: Data(body.utf8))])
+
+        let profiles = try await client().egressProfiles()
+        XCTAssertEqual(profiles.count, 3)
+        XCTAssertNil(profiles[0].profile.mode)
+        XCTAssertNil(profiles[0].profile.allow)
+        XCTAssertNil(profiles[1].profile.allow) // omitted → nil
+        XCTAssertNil(profiles[1].profile.rule)
+        XCTAssertEqual(profiles[2].profile.allow, ["x.com"])
+        XCTAssertNil(profiles[2].profile.deny)
+    }
 }
