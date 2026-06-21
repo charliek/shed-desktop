@@ -36,6 +36,8 @@ public final class AppState: ObservableObject {
     @Published public var systemUsage: [HostDiskUsage] = []
     /// Per-host installed images (the New-Shed picker), keyed by host name.
     @Published public var imagesByHost: [HostImageList] = []
+    /// Per-host egress profiles (the read-only Egress → Profiles view).
+    @Published public var egressProfiles: [HostEgressProfiles] = []
 
     // Action seams the app wires up (the UI module can't reach AppModel
     // directly, so it calls these). All run on the main actor. Contract:
@@ -63,6 +65,8 @@ public final class AppState: ObservableObject {
     public var onSystemRefresh: (() -> Void)?
     /// Refresh per-host installed images (the New-Shed picker).
     public var onImagesRefresh: (() -> Void)?
+    /// Refresh per-host egress profiles (the Egress → Profiles view).
+    public var onEgressRefresh: (() -> Void)?
     public var onOpenURL: ((String) -> Void)?
     /// Decide a pending approval: (request, choice). The choice carries scope/
     /// TTL and whether to persist a per-shed always-allow / always-deny rule.

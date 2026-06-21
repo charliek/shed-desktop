@@ -133,6 +133,17 @@ public struct ShedServerClient: Sendable {
         }
     }
 
+    /// `GET /api/egress/profiles` → this server's egress profiles (config
+    /// baseline + user store), each tagged with its source. Read-only.
+    public func egressProfiles() async throws -> [EgressProfileInfo] {
+        let data = try await get("/api/egress/profiles")
+        do {
+            return try JSONDecoder().decode([EgressProfileInfo].self, from: data)
+        } catch {
+            throw ShedClientError.decode("\(error)")
+        }
+    }
+
     // MARK: - lifecycle (M1)
 
     public func start(name: String) async throws { try await send("POST", "/api/sheds/\(name)/start") }
