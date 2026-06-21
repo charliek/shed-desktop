@@ -72,7 +72,7 @@ func usage() -> Never {
     USAGE:
       shedctl identify
       shedctl ui state
-      shedctl ui navigate <sheds|approvals|agents|activity|system>
+      shedctl ui navigate <sheds|approvals|agents|activity|egress|system>
       shedctl ui set-ssh-approval [--method M] [--scope S] [--ttl T]
       shedctl ui show-window
       shedctl ui hide-window

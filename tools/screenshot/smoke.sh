@@ -20,7 +20,7 @@ echo "==> screenshots -> $OUT"
 "$CTL" ui show-window >/dev/null
 "$CTL" sheds refresh >/dev/null || true
 
-for pane in sheds approvals agents activity; do
+for pane in sheds approvals agents activity egress system; do
   "$CTL" ui navigate "$pane" >/dev/null
   "$CTL" screenshot --surface window --scale 2 --out "$OUT/pane-$pane.png"
 done
@@ -32,7 +32,7 @@ done
 {
   echo "# shed-desktop smoke screenshots"
   echo
-  for f in pane-sheds pane-approvals pane-agents pane-activity menu; do
+  for f in pane-sheds pane-approvals pane-agents pane-activity pane-egress pane-system menu; do
     echo "- $f.png"
   done
 } > "$OUT/manifest.md"
