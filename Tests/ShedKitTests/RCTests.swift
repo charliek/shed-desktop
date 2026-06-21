@@ -143,9 +143,24 @@ final class RCBinaryTests: XCTestCase {
     }
 
     func testNormalizeRcPromptRejects() {
-        XCTAssertThrowsError(try RemoteControl.normalizeRcPrompt("a\nb", kind: .claudeRc))            // control char
-        XCTAssertThrowsError(try RemoteControl.normalizeRcPrompt(String(repeating: "a", count: 2001), kind: .shell))  // over cap
-        XCTAssertThrowsError(try RemoteControl.normalizeRcPrompt("hello", kind: .claudeBroker))       // kind rejects typed input
+        // Pin the specific badRequest reason — these strings are the IPC
+        // invalid-param message contract, so a plain "throws" check would hide a
+        // regression in the mapping.
+        func assertBadRequest(_ run: @autoclosure () throws -> String?,
+                              reasonContains needle: String, line: UInt = #line) {
+            XCTAssertThrowsError(try run(), line: line) { error in
+                guard case RcError.badRequest(let reason) = error else {
+                    return XCTFail("expected RcError.badRequest, got \(error)", line: line)
+                }
+                XCTAssertTrue(reason.contains(needle), "unexpected reason: \(reason)", line: line)
+            }
+        }
+        assertBadRequest(try RemoteControl.normalizeRcPrompt("a\nb", kind: .claudeRc),
+                         reasonContains: "control characters")
+        assertBadRequest(try RemoteControl.normalizeRcPrompt(String(repeating: "a", count: 2001), kind: .shell),
+                         reasonContains: "exceeds 2000 bytes")
+        assertBadRequest(try RemoteControl.normalizeRcPrompt("hello", kind: .claudeBroker),
+                         reasonContains: "does not accept an initial prompt")
     }
 
     func testCreateInvocationPairsFlagAndStdin() {
