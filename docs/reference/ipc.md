@@ -60,9 +60,11 @@ menu requires it to be open first (`ui.open_menu {open:true}`).
 | `rc.inject_test` | `shed`, `slug`, `kind?`, `state?`, `managed?`, `display_name?`, `created_by?`, … | `{}` — **test mode only**; injects a session (e.g. a legacy row) into the table |
 
 `initial_prompt` is an optional one-line kickoff delivered once the session is ready (an
-initial prompt for `claude-rc`, an initial command for `shell`). It is trimmed; a blank value
-sends nothing. A control character, a value over 2000 UTF-8 bytes, or any prompt for a kind
-that doesn't accept typed input (`claude-broker`) is rejected with `invalid-param`.
+initial prompt for `claude-rc`, an initial command for `shell`). Leading/trailing whitespace
+(including newlines) is trimmed, and a blank value sends nothing. After trimming, an embedded
+control character, a value over 2000 UTF-8 bytes, or any prompt for a kind that doesn't accept
+typed input (`claude-broker`) is rejected with `invalid-param`. (Mirrors shed-remote-agent's
+create-request normalization.)
 
 Each `RcSession` carries the [RC Session Convention v1](rc-sessions.md) metadata:
 `managed`, and (when managed) `rc_id`, `created_by`, `created_at`, `target_label`.

@@ -167,11 +167,14 @@ public enum RemoteControl {
         !s.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
     }
 
-    /// Normalize + validate a caller-supplied kickoff line. Returns the trimmed
-    /// prompt, or `nil` when there is nothing to send — so the caller omits
-    /// `--prompt-stdin` rather than feeding the guest an empty stdin (a guest
-    /// hard-error). Throws `RcError.badRequest` for a control char, an over-long
-    /// value, or a prompt on a kind that doesn't accept typed input.
+    /// Normalize + validate a caller-supplied kickoff line. Leading/trailing
+    /// whitespace (incl. newlines) is trimmed; an empty/blank value returns `nil`
+    /// so the caller omits `--prompt-stdin` rather than feeding the guest an empty
+    /// stdin (a guest hard-error). After trimming, throws `RcError.badRequest` for
+    /// an embedded control character, an over-long value (>2000 UTF-8 bytes), or a
+    /// prompt on a kind that doesn't accept typed input. Mirrors shed-remote-agent's
+    /// create-request normalization: trim first, then validate the trimmed value
+    /// (so a surrounding newline normalizes away rather than being rejected).
     public static func normalizeRcPrompt(_ raw: String?, kind: RcKind) throws -> String? {
         guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
               !trimmed.isEmpty else { return nil }

@@ -138,6 +138,9 @@ final class RCBinaryTests: XCTestCase {
         XCTAssertNil(try RemoteControl.normalizeRcPrompt("   \n ", kind: .claudeRc))
         XCTAssertEqual(try RemoteControl.normalizeRcPrompt("  hi there  ", kind: .claudeRc), "hi there")
         XCTAssertEqual(try RemoteControl.normalizeRcPrompt("npm test", kind: .shell), "npm test")
+        // Surrounding whitespace/newlines are trimmed (not rejected), matching
+        // shed-remote-agent; only an *embedded* control char is rejected.
+        XCTAssertEqual(try RemoteControl.normalizeRcPrompt("\n  npm test \n", kind: .shell), "npm test")
         // A 2000-byte value is the boundary and is allowed.
         XCTAssertEqual(try RemoteControl.normalizeRcPrompt(String(repeating: "a", count: 2000), kind: .shell)?.utf8.count, 2000)
     }
