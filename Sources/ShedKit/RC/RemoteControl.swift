@@ -27,6 +27,11 @@ public enum RcKind: String, Codable, Sendable, CaseIterable {
         case .claudeBroker: return false
         }
     }
+
+    /// Kinds the New session sheet offers for creation. `rc.launch` over IPC
+    /// still accepts any decodable kind (e.g. `.claudeBroker`) so a session
+    /// created elsewhere round-trips and displays; this only governs the toggle.
+    public static let creatable: [RcKind] = [.claudeRc, .shell]
 }
 
 public enum RcState: String, Codable, Sendable, Equatable {

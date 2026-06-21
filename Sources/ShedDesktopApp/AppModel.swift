@@ -276,11 +276,15 @@ final class AppModel: NSObject, UiBridge {
             do { _ = try self.startCreate(host: host, request: request) }
             catch { self.state.lastError = "create \(request.name): \(error)" }
         }
-        state.onRcLaunch = { [weak self] host, shed, kind, name in
+        state.onRcLaunch = { [weak self] input in
             Task { [weak self] in
                 guard let self else { return }
-                do { _ = try await self.rcLaunch(host: host, shed: shed, kind: kind, displayName: name, workdir: nil, initialPrompt: nil) }
-                catch { self.state.lastError = "launch \(shed): \(error)" }
+                do {
+                    _ = try await self.rcLaunch(
+                        host: input.host, shed: input.shed, kind: input.kind,
+                        displayName: input.displayName, workdir: nil,
+                        initialPrompt: input.initialPrompt)
+                } catch { self.state.lastError = "launch \(input.shed): \(error)" }
             }
         }
         state.onRcKill = { [weak self] session in

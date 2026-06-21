@@ -8,6 +8,25 @@
 import AppKit
 import Foundation
 
+/// A request to launch a remote-control session, passed from the UI to the app
+/// as one value so the launch fields can't be transposed positionally (the
+/// sheet builds it; `AppState.onRcLaunch` carries it). `workdir` is resolved by
+/// the binary, so the sheet doesn't supply one.
+public struct RcLaunchInput: Sendable {
+    public let host: String?
+    public let shed: String
+    public let kind: RcKind
+    public let displayName: String?
+    public let initialPrompt: String?
+    public init(host: String?, shed: String, kind: RcKind, displayName: String?, initialPrompt: String?) {
+        self.host = host
+        self.shed = shed
+        self.kind = kind
+        self.displayName = displayName
+        self.initialPrompt = initialPrompt
+    }
+}
+
 @MainActor
 public protocol UiBridge: AnyObject {
     /// The NSWindow backing a capturable `surface`, for `app.screenshot`.

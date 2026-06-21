@@ -128,6 +128,11 @@ final class RCBinaryTests: XCTestCase {
         XCTAssertFalse(RcKind.claudeBroker.acceptsTypedInput)
     }
 
+    func testCreatableKindsExcludeBroker() {
+        XCTAssertEqual(RcKind.creatable, [.claudeRc, .shell])
+        XCTAssertFalse(RcKind.creatable.contains(.claudeBroker))
+    }
+
     func testNormalizeRcPromptTrimsAndAllows() throws {
         XCTAssertNil(try RemoteControl.normalizeRcPrompt(nil, kind: .claudeRc))
         XCTAssertNil(try RemoteControl.normalizeRcPrompt("   \n ", kind: .claudeRc))
