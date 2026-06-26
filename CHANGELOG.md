@@ -2,6 +2,19 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.12 — 2026-06-26
+
+### Added
+- **Optional initial prompt/command when launching a session** (#24) — the New
+  session sheet accepts an initial prompt (for `claude-rc`) or command (for `shell`),
+  delivered once the session is ready.
+- **Egress → Profiles view** (#23) — a read-only pane showing each shed's resolved
+  egress profiles and rules.
+
+### Changed
+- **Egress pane discoverability** (#22) — the egress pane is surfaced in the UI and in
+  the `shedctl` + smoke tooling so it's reachable rather than hidden.
+
 ## v0.0.11 — 2026-06-19
 
 ### Changed
