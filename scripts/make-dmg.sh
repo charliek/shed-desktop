@@ -64,11 +64,25 @@ if [ "${SHED_DESKTOP_DMG_FANCY:-0}" = "1" ] && command -v create-dmg >/dev/null 
 else
   echo "==> hdiutil -> ${DMG_OUT}"
   ln -s /Applications "${STAGING}/Applications"
-  hdiutil create \
-    -volname "shed desktop ${VERSION}" \
-    -srcfolder "${STAGING}" \
-    -ov -format UDZO \
-    "${DMG_OUT}" >/dev/null
+  # hdiutil intermittently fails with "Resource busy" on CI runners (transient
+  # device/Spotlight contention, often right after codesign touches the bundle —
+  # not a real error). Retry a few times before giving up.
+  for attempt in 1 2 3 4 5; do
+    if hdiutil create \
+         -volname "shed desktop ${VERSION}" \
+         -srcfolder "${STAGING}" \
+         -ov -format UDZO \
+         "${DMG_OUT}" >/dev/null; then
+      break
+    fi
+    if [ "${attempt}" -eq 5 ]; then
+      echo "error: hdiutil create failed after ${attempt} attempts" >&2
+      exit 1
+    fi
+    echo "    hdiutil create failed (attempt ${attempt}); retrying in 3s…" >&2
+    rm -f "${DMG_OUT}"
+    sleep 3
+  done
 fi
 
 echo "    Built: ${DMG_OUT} ($(du -h "${DMG_OUT}" | cut -f1))"
