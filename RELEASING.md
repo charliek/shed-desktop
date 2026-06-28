@@ -50,8 +50,9 @@ by `v0.0.1`.
 
 ## Code signing + notarization
 
-Developer ID signing + notarization are **wired and gated on the Apple secrets below**
-(`HAS_CERT` keys off `MACOS_CERTIFICATE_P12_BASE64`). When they're set, `release.yml`
+Developer ID signing + notarization are **wired and gated on the six Apple secrets below**
+(all gated together as `CAN_NOTARIZE` — all-or-nothing, since a signed-but-un-notarized
+DMG is still Gatekeeper-blocked). When all six are set, `release.yml`
 imports the cert into a throwaway keychain, `bundle.sh` signs with
 `SHED_DESKTOP_DEVELOPER_ID_IDENTITY` (hardened runtime + timestamp), and
 `scripts/notarize.sh` submits the DMG to Apple and staples the ticket — so a downloaded
@@ -64,7 +65,7 @@ not on cert presence — a Developer-ID-signed but un-notarized DMG is still blo
 
 | Secret | Purpose | Required? |
 |---|---|---|
-| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application cert+key, base64 of the `.p12` | required for a notarized build (its presence is the `HAS_CERT` gate) |
+| `MACOS_CERTIFICATE_P12_BASE64` | Developer ID Application cert+key, base64 of the `.p12` | required — part of the all-six `CAN_NOTARIZE` gate |
 | `MACOS_CERTIFICATE_PASSWORD` | `.p12` export password | required — same |
 | `SHED_DESKTOP_DEVELOPER_ID_IDENTITY` | codesign identity, e.g. `Developer ID Application: Name (TEAMID)` | required — same |
 | `APPLE_ID` | Apple ID email for notarytool | required for notarization |
