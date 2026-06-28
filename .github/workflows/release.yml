@@ -1,15 +1,16 @@
 name: release
 
 # Triggered by a vX.Y.Z tag (created by scripts/release/update-version.sh + the
-# release flow). Builds an ad-hoc-signed bundle (Sparkle.framework embedded) and
-# attaches a drag-install DMG to the GitHub release.
+# release flow). Builds the bundle (Sparkle.framework embedded), packages a
+# drag-install DMG, attaches it to the GitHub release, EdDSA-signs it for the
+# Sparkle appcast, and the release-bot App pushes docs/appcast.xml to main.
 #
-# REMAINING (one-time, see RELEASING.md): a `sparkle-appcast` job that
-# sign_update's the DMG with SPARKLE_ED_PRIVATE_KEY, runs
-# scripts/update-appcast.py, and the release-bot App pushes docs/appcast.xml to
-# main. Needs the App + RELEASE_BOT_* / SPARKLE_ED_PRIVATE_KEY secrets + the main
-# ruleset. Developer ID + notarization stay gated on
-# SHED_DESKTOP_DEVELOPER_ID_IDENTITY + Apple secrets.
+# Developer ID signing + notarization activate automatically once the Apple
+# secrets exist (HAS_CERT gates on MACOS_CERTIFICATE_P12_BASE64): the cert is
+# imported into a throwaway keychain, bundle.sh signs with
+# SHED_DESKTOP_DEVELOPER_ID_IDENTITY, and notarize.sh submits + staples the DMG.
+# Until then the DMG ships ad-hoc-signed (Gatekeeper-bypass note in the DMG).
+# See RELEASING.md for the full secret list.
 
 on:
   push:
@@ -22,6 +23,10 @@ permissions:
 jobs:
   build:
     runs-on: macos-15
+    env:
+      # Surfaced from secrets; empty when unset → ad-hoc signing + no notarization.
+      SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY }}
+      HAS_CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,20 +44,75 @@ jobs:
             echo "tag $TAG does not match VERSION $FILE" >&2
             exit 1
           fi
+
+      # Inert until the cert secret exists. When added, imports the Developer ID
+      # Application cert into a throwaway keychain so codesign (in bundle.sh) and
+      # notarization can use it.
+      - name: Import Developer ID certificate
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/shed-desktop-signing.keychain-db"
+          kp="$(openssl rand -base64 24)"
+          security create-keychain -p "$kp" "$kc"
+          security set-keychain-settings -lut 21600 "$kc"
+          security unlock-keychain -p "$kp" "$kc"
+          echo "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kp" "$kc"
+          # Prepend our keychain to the user search list, keeping the existing
+          # ones; the command substitution must word-split into separate paths.
+          # shellcheck disable=SC2046
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | sed 's/"//g')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
       - name: Build + bundle
         run: ./scripts/bundle.sh release
       - name: Unit tests
         run: swift test
       - name: Package DMG
         run: ./scripts/make-dmg.sh
+
+      # Notarize + staple BEFORE the upload + appcast signing: stapling rewrites
+      # the DMG bytes, so the EdDSA sign_update below must run against the
+      # stapled file. No-op without the APPLE_* secrets (notarize.sh exits 0).
+      - name: Notarize + staple (skipped without credentials)
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: ./scripts/notarize.sh "build/ShedDesktop-${GITHUB_REF_NAME#v}.dmg"
+
+      # What governs Gatekeeper on a downloaded DMG is whether it's *notarized*
+      # (a stapled ticket), not whether a signing cert exists — a Developer-ID-
+      # signed but un-notarized DMG is still blocked. Gate the release-note
+      # guidance on the real artifact state via `stapler validate`.
+      - name: Detect DMG notarization status
+        id: dmg_notarized
+        run: |
+          if xcrun stapler validate "build/ShedDesktop-${GITHUB_REF_NAME#v}.dmg" >/dev/null 2>&1; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
+          NOTARIZED: ${{ steps.dmg_notarized.outputs.value }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
+          if [ "${NOTARIZED}" = "true" ]; then
+            NOTES="Notarized Developer ID build (auto-updates via Sparkle). Drag to /Applications and open normally."
+          else
+            NOTES="Ad-hoc signed build (auto-updates via Sparkle). Not notarized yet — see FIRST-LAUNCH.txt in the DMG for the one-time Gatekeeper step."
+          fi
           gh release create "$GITHUB_REF_NAME" \
             --title "$GITHUB_REF_NAME" \
-            --notes "Ad-hoc signed build (auto-updates via Sparkle). Not notarized yet — see FIRST-LAUNCH.txt in the DMG for the one-time Gatekeeper step." \
+            --notes "${NOTES}" \
             "build/ShedDesktop-${VER}.dmg"
 
       # ---- Sparkle appcast: sign the DMG + publish the feed as the release bot ----
