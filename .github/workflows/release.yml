@@ -5,12 +5,12 @@ name: release
 # drag-install DMG, attaches it to the GitHub release, EdDSA-signs it for the
 # Sparkle appcast, and the release-bot App pushes docs/appcast.xml to main.
 #
-# Developer ID signing + notarization activate automatically once the Apple
-# secrets exist (HAS_CERT gates on MACOS_CERTIFICATE_P12_BASE64): the cert is
-# imported into a throwaway keychain, bundle.sh signs with
-# SHED_DESKTOP_DEVELOPER_ID_IDENTITY, and notarize.sh submits + staples the DMG.
-# Until then the DMG ships ad-hoc-signed (Gatekeeper-bypass note in the DMG).
-# See RELEASING.md for the full secret list.
+# Developer ID signing + notarization activate automatically once all six Apple
+# secrets exist (the CAN_NOTARIZE gate): the cert is imported into a throwaway
+# keychain, bundle.sh signs with SHED_DESKTOP_DEVELOPER_ID_IDENTITY, and
+# notarize.sh submits + staples the DMG. With any secret missing the DMG ships
+# ad-hoc-signed (Gatekeeper-bypass note in the DMG). See RELEASING.md for the
+# full secret list.
 
 on:
   push:
@@ -24,9 +24,13 @@ jobs:
   build:
     runs-on: macos-15
     env:
-      # Surfaced from secrets; empty when unset → ad-hoc signing + no notarization.
-      SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY }}
-      HAS_CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' }}
+      # Sign + notarize only when the FULL prerequisite set is present. Any
+      # missing secret → ad-hoc fallback: a Developer-ID-signed but un-notarized
+      # DMG is still Gatekeeper-blocked, so signing without notarizing has no
+      # value, and a partial secret set must not break the build or silently
+      # drop the first-launch note. The identity is handed to the bundle/DMG
+      # steps (below) only when this is true.
+      CAN_NOTARIZE: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY != '' && secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,11 +49,11 @@ jobs:
             exit 1
           fi
 
-      # Inert until the cert secret exists. When added, imports the Developer ID
-      # Application cert into a throwaway keychain so codesign (in bundle.sh) and
-      # notarization can use it.
+      # Inert until all six Apple secrets exist. When present, imports the
+      # Developer ID Application cert into a throwaway keychain so codesign (in
+      # bundle.sh) and notarization can use it.
       - name: Import Developer ID certificate
-        if: env.HAS_CERT == 'true'
+        if: env.CAN_NOTARIZE == 'true'
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -69,17 +73,26 @@ jobs:
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | sed 's/"//g')
           rm -f "$RUNNER_TEMP/cert.p12"
 
+      # The identity reaches bundle.sh / make-dmg.sh only when CAN_NOTARIZE —
+      # otherwise empty, so they take the ad-hoc path (and make-dmg keeps the
+      # FIRST-LAUNCH note).
       - name: Build + bundle
+        env:
+          SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ env.CAN_NOTARIZE == 'true' && secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY || '' }}
         run: ./scripts/bundle.sh release
       - name: Unit tests
         run: swift test
       - name: Package DMG
+        env:
+          SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ env.CAN_NOTARIZE == 'true' && secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY || '' }}
         run: ./scripts/make-dmg.sh
 
       # Notarize + staple BEFORE the upload + appcast signing: stapling rewrites
       # the DMG bytes, so the EdDSA sign_update below must run against the
-      # stapled file. No-op without the APPLE_* secrets (notarize.sh exits 0).
+      # stapled file. Gated on CAN_NOTARIZE so it never tries to notarize an
+      # ad-hoc DMG (notarize.sh also self-guards on the APPLE_* creds).
       - name: Notarize + staple (skipped without credentials)
+        if: env.CAN_NOTARIZE == 'true'
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
