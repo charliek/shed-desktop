@@ -2,6 +2,17 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.13 — 2026-06-28
+
+### Changed
+- **Developer ID signing + notarization** (#25) — release DMGs are now signed with a
+  Developer ID Application certificate and notarized by Apple, so a downloaded build
+  opens with a normal double-click (the Gatekeeper-bypass `FIRST-LAUNCH.txt` is omitted
+  on notarized builds). Existing ad-hoc installs auto-update across the transition —
+  Sparkle's EdDSA key is unchanged. Signing activates only when the full set of Apple
+  secrets is present (the all-or-nothing `CAN_NOTARIZE` gate), falling back to an
+  ad-hoc build otherwise.
+
 ## v0.0.12 — 2026-06-26
 
 ### Added
