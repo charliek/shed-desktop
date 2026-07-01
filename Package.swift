@@ -36,7 +36,8 @@ let package = Package(
     ],
     targets: [
         // Rust protocol core (Phase 1). ShedCoreFFI is the static Rust library
-        // (xcframework); ShedCore is the generated UniFFI Swift that links it.
+        // (xcframework); ShedRustCore is the generated UniFFI Swift that links it
+        // (named to avoid colliding with the generated `ShedCore` client type).
         // Both live under core/artifacts/ (gitignored), produced by
         // scripts/build-core.sh — run `make core` before a bare `swift build`.
         .binaryTarget(
@@ -44,7 +45,7 @@ let package = Package(
             path: "core/artifacts/ShedCoreFFI.xcframework"
         ),
         .target(
-            name: "ShedCore",
+            name: "ShedRustCore",
             dependencies: ["ShedCoreFFI"],
             path: "core/artifacts/ShedCoreSwift",
             // The generated UniFFI bindings aren't Swift-6-strict-concurrency
@@ -56,7 +57,7 @@ let package = Package(
         // NSBitmapImageRep in Screenshot and NSWindow types in UiBridge).
         .target(
             name: "ShedKit",
-            dependencies: ["ShedCore"],
+            dependencies: ["ShedRustCore"],
             path: "Sources/ShedKit"
         ),
         // SwiftUI views + the AppState view-model.
@@ -90,7 +91,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ShedKitTests",
-            dependencies: ["ShedKit", "ShedCore"],
+            dependencies: ["ShedKit", "ShedRustCore"],
             path: "Tests/ShedKitTests"
         ),
     ]

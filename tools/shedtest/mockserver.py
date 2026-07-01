@@ -57,6 +57,15 @@ _IMAGES_FIXTURE = {
 }
 
 
+# GET /api/egress/profiles: a config baseline + a user profile, so the egress
+# pane renders and the Rust/Swift backends decode the same shape.
+_EGRESS_FIXTURE = [
+    {"name": "default", "source": "config",
+     "profile": {"mode": "audit", "allow": ["*.github.com"], "deny": ["evil.example.com"]}},
+    {"name": "custom", "source": "user", "profile": {"allow": ["api.example.com"]}},
+]
+
+
 DEFAULT_INFO = {
     "name": "mock",
     "version": "0.0.0-mock",
@@ -198,6 +207,8 @@ class MockShedServer:
                     self._send(200, _DF_FIXTURE)
                 elif self.path == "/api/images":
                     self._send(200, _IMAGES_FIXTURE)
+                elif self.path == "/api/egress/profiles":
+                    self._send(200, _EGRESS_FIXTURE)
                 else:
                     self._send(404, {"error": "not found"})
 

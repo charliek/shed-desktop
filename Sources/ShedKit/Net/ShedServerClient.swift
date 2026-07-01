@@ -41,8 +41,12 @@ public struct ShedServerClient: Sendable {
     // Set when the client is misconfigured (a TLS pin on a non-https URL); every
     // request throws it instead of sending unpinned plaintext.
     private let configError: ShedClientError?
+    // When SHED_DESKTOP_RUST_CORE is on, read ops delegate to the Rust shed-core
+    // (nil otherwise → the URLSession path below). M2: reads only; write/create +
+    // the token/pin paths stay Swift until M3/M4.
+    private let rustAdapter: RustShedCoreAdapter?
 
-    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil) {
+    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil, useRustCore: Bool = false) {
         self.baseURL = baseURL
         self.serverName = serverName
         self.token = token
@@ -68,6 +72,12 @@ public struct ShedServerClient: Sendable {
             self.configError = .transport(
                 "TLS pin configured for a non-https URL \(baseURL.absoluteString); refusing to send unpinned plaintext")
         }
+
+        // Read ops go through the Rust core when the flag is on (M2). Built from
+        // the same injected base URL; a construction failure falls back to Swift.
+        self.rustAdapter = useRustCore
+            ? (try? RustShedCoreAdapter(baseURL: baseURL.absoluteString, serverName: serverName))
+            : nil
     }
 
     /// The bearer token to send. For a provider-backed (secure) client the host
@@ -92,6 +102,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/info`.
     public func info() async throws -> ServerInfo {
+        if let rustAdapter { return try await rustAdapter.info() }
         let data = try await get("/api/info")
         do {
             return try JSONDecoder().decode(ServerInfo.self, from: data)
@@ -104,6 +115,7 @@ public struct ShedServerClient: Sendable {
     /// `{"sheds": null}` (the real empty shape) decodes to []. The server
     /// omits `host`; the `Shed` decoder tolerates that and we stamp it here.
     public func listSheds() async throws -> [Shed] {
+        if let rustAdapter { return try await rustAdapter.listSheds() }
         let data = try await get("/api/sheds")
         do {
             let wrapper = try JSONDecoder().decode(ShedListWire.self, from: data)
@@ -115,6 +127,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/system/df` → this server's disk usage (M7).
     public func systemDF() async throws -> SystemDiskUsage {
+        if let rustAdapter { return try await rustAdapter.systemDF() }
         let data = try await get("/api/system/df")
         do {
             return try JSONDecoder().decode(SystemDiskUsage.self, from: data)
@@ -125,6 +138,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/images` → this server's installed images (for the picker).
     public func listImages() async throws -> [ShedImage] {
+        if let rustAdapter { return try await rustAdapter.listImages() }
         let data = try await get("/api/images")
         do {
             return try JSONDecoder().decode(ImageListWire.self, from: data).images ?? []
@@ -136,6 +150,7 @@ public struct ShedServerClient: Sendable {
     /// `GET /api/egress/profiles` → this server's egress profiles (config
     /// baseline + user store), each tagged with its source. Read-only.
     public func egressProfiles() async throws -> [EgressProfileInfo] {
+        if let rustAdapter { return try await rustAdapter.egressProfiles() }
         let data = try await get("/api/egress/profiles")
         do {
             return try JSONDecoder().decode([EgressProfileInfo].self, from: data)

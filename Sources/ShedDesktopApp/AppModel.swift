@@ -394,7 +394,7 @@ final class AppModel: NSObject, UiBridge {
             clients[entry.name] = ShedServerClient(
                 baseURL: baseURL, serverName: entry.name,
                 token: entry.controlToken, tlsCertFingerprint: pin,
-                tokenProvider: provider)
+                tokenProvider: provider, useRustCore: ShedBackend.shared.rustCore)
             diag?.log(.info, "config", "resolved server", [
                 ("server", entry.name),
                 ("endpoint", baseURL.absoluteString),

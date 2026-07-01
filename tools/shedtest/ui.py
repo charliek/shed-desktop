@@ -102,6 +102,10 @@ def launch(*, mock_base_url: str, config_path: Path, state_dir: Path,
     # Throwaway UserDefaults suite so preferences never touch the dev's real
     # defaults (the SHED_DESKTOP_STATE_DIR analog for UserDefaults).
     argv += ["--env", f"SHED_DESKTOP_DEFAULTS_SUITE={DEFAULTS_SUITE}"]
+    # Forward the Rust-core rollout flag when the harness set it, so the parity
+    # run actually exercises the Rust read path (confirmed via identify's `core`).
+    if os.environ.get("SHED_DESKTOP_RUST_CORE") == "1":
+        argv += ["--env", "SHED_DESKTOP_RUST_CORE=1"]
     argv += [str(APP)]
     subprocess.run(argv, check=True)
     wait_alive(mock_base_url=mock_base_url)
@@ -118,7 +122,13 @@ def wait_alive(*, mock_base_url: str, timeout: float = 30.0) -> None:
             c = ShedDesktop(socket_path())
             try:
                 info = c.identify()
-                if info.get("test_mode") and info.get("mock_base_url") == mock_base_url:
+                # Confirm the active backend matches the flag so a silent Rust->
+                # Swift fallback (the adapter is built with try?) can't make a
+                # parity run falsely green.
+                want_core = "rust" if os.environ.get("SHED_DESKTOP_RUST_CORE") == "1" else "swift"
+                if (info.get("test_mode")
+                        and info.get("mock_base_url") == mock_base_url
+                        and info.get("core") == want_core):
                     return
             finally:
                 c.close()

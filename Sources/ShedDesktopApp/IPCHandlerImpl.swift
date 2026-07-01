@@ -182,7 +182,8 @@ actor IPCHandlerImpl: IPCHandler {
             uiVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
             protocolVersion: ipcProtocolVersion,
             testMode: ShedBackend.shared.testMode,
-            mockBaseURL: ShedBackend.shared.mockBaseURL)
+            mockBaseURL: ShedBackend.shared.mockBaseURL,
+            core: ShedBackend.shared.rustCore ? "rust" : "swift")
     }
 
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
@@ -526,6 +527,7 @@ private struct IdentifyResult: Encodable, Sendable {
     let protocolVersion: UInt32
     let testMode: Bool
     let mockBaseURL: String?
+    let core: String
     enum CodingKeys: String, CodingKey {
         case socketPath = "socket_path"
         case pid
@@ -535,6 +537,7 @@ private struct IdentifyResult: Encodable, Sendable {
         case protocolVersion = "protocol_version"
         case testMode = "test_mode"
         case mockBaseURL = "mock_base_url"
+        case core
     }
 }
 

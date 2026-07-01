@@ -10,7 +10,7 @@
 // If this fails, the whole Phase 1 toolchain is blocked (plans/…/M0).
 
 import XCTest
-import ShedCore
+import ShedRustCore
 
 final class RustCoreFFISmokeTests: XCTestCase {
     /// Async method over FFI.

@@ -1,0 +1,100 @@
+// RustShedCoreAdapter.swift
+//
+// Bridges the Rust `ShedCore` read client (shed-core, over UniFFI) to the app's
+// Swift `Models`. Flag-gated by SHED_DESKTOP_RUST_CORE; when off, ShedServerClient
+// keeps its existing URLSession path.
+//
+// `@unchecked Sendable` is sound: the wrapped `ShedCore` is Arc-backed and its
+// reqwest client is Send+Sync, so concurrent calls across actors are safe (the
+// same justification as `PinningSessionDelegate`).
+//
+// The Rust records (see shed-core-ffi) mirror the wire DTOs; this file maps them
+// field-by-field to the Swift `Models` that double as IPC wire shapes. The M2
+// golden-JSON parity gate guards the two representations against drift. The Rust
+// types are qualified `ShedRustCore.*` because they share names with `Models`.
+
+import Foundation
+import ShedRustCore
+
+/// A read client backed by the Rust `shed-core`, returning Swift `Models`.
+final class RustShedCoreAdapter: @unchecked Sendable {
+    private let core: ShedRustCore.ShedCore
+
+    init(baseURL: String, serverName: String) throws {
+        self.core = try ShedRustCore.ShedCore(baseUrl: baseURL, serverName: serverName)
+    }
+
+    func info() async throws -> ServerInfo { Self.map(try await core.info()) }
+    func listSheds() async throws -> [Shed] { try await core.listSheds().map(Self.map) }
+    func systemDF() async throws -> SystemDiskUsage { Self.map(try await core.systemDf()) }
+    func listImages() async throws -> [ShedImage] { try await core.listImages().map(Self.map) }
+    func egressProfiles() async throws -> [EgressProfileInfo] {
+        try await core.egressProfiles().map(Self.map)
+    }
+
+    // MARK: - Rust record -> Swift Model
+
+    static func map(_ v: ShedRustCore.ServerInfo) -> ServerInfo {
+        ServerInfo(
+            name: v.name, version: v.version,
+            sshPort: v.sshPort.map(Int.init), httpPort: v.httpPort.map(Int.init),
+            backend: v.backend)
+    }
+
+    static func map(_ s: ShedRustCore.ShedStatus) -> ShedStatus {
+        switch s {
+        case .running: return .running
+        case .stopped: return .stopped
+        case .starting: return .starting
+        case .error: return .error
+        case .unknown: return .unknown
+        @unknown default: return .unknown
+        }
+    }
+
+    static func map(_ v: ShedRustCore.Shed) -> Shed {
+        Shed(
+            host: v.host, name: v.name, status: map(v.status),
+            backend: v.backend, repo: v.repo, image: v.image,
+            imageDigest: v.imageDigest, localDir: v.localDir, ipAddress: v.ipAddress,
+            cpus: v.cpus.map(Int.init), memoryMB: v.memoryMb.map(Int.init),
+            createdAt: v.createdAt, startedAt: v.startedAt,
+            activeNamespaces: v.activeNamespaces)
+    }
+
+    static func map(_ v: ShedRustCore.ShedImage) -> ShedImage {
+        ShedImage(
+            name: v.name, dockerRef: v.dockerRef, alias: v.alias,
+            isDefault: v.isDefault, cached: v.cached, inUse: v.inUse,
+            digest: v.digest, source: v.source, sizeBytes: v.sizeBytes)
+    }
+
+    static func map(_ v: ShedRustCore.DiskSize) -> DiskSize {
+        DiskSize(logicalBytes: v.logicalBytes, physicalBytes: v.physicalBytes)
+    }
+
+    static func map(_ v: ShedRustCore.DiskEntry) -> DiskEntry {
+        DiskEntry(name: v.name, dockerRef: v.dockerRef, size: map(v.size))
+    }
+
+    static func map(_ v: ShedRustCore.DiskTotals) -> DiskTotals {
+        DiskTotals(
+            images: map(v.images), sheds: map(v.sheds), snapshots: map(v.snapshots),
+            orphans: map(v.orphans), all: map(v.all))
+    }
+
+    static func map(_ v: ShedRustCore.SystemDiskUsage) -> SystemDiskUsage {
+        SystemDiskUsage(
+            serverName: v.serverName, backend: v.backend,
+            images: v.images.map(map), sheds: v.sheds.map(map),
+            orphans: v.orphans.map(map), totals: map(v.totals))
+    }
+
+    static func map(_ v: ShedRustCore.EgressProfile) -> EgressProfile {
+        EgressProfile(mode: v.mode, allow: v.allow, deny: v.deny, rule: v.rule)
+    }
+
+    static func map(_ v: ShedRustCore.EgressProfileInfo) -> EgressProfileInfo {
+        EgressProfileInfo(name: v.name, source: v.source, profile: map(v.profile))
+    }
+}
