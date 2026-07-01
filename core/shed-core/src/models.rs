@@ -14,7 +14,7 @@
 //! Scope (M1): the shed-server *read* DTOs. `CreateShedRequest` (a request
 //! body) lands with the create flow in M4.
 
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 /// Deserialize `T`, mapping an explicit JSON `null` to `T::default()`. serde's
 /// `#[serde(default)]` only covers an ABSENT field; shed-server sends `null` for
@@ -182,6 +182,27 @@ pub struct EgressProfileInfo {
     pub name: String,
     pub source: String,
     pub profile: EgressProfile,
+}
+
+/// Body for `POST /api/sheds`. Only non-null fields are sent (mirrors Swift's
+/// Codable, which omits nil optionals). `repo`/`local_dir` are mutually exclusive.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CreateShedRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_dir: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpus: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_mb: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub no_provision: Option<bool>,
 }
 
 #[cfg(test)]

@@ -20,3 +20,4 @@ uniffi = { workspace = true, features = ["cli", "tokio"] }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
+uuid = { workspace = true }

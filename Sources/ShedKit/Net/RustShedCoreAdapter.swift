@@ -44,6 +44,56 @@ final class RustShedCoreAdapter: @unchecked Sendable {
     func reset(name: String) async throws { try await core.reset(name: name) }
     func delete(name: String) async throws { try await core.delete(name: name) }
 
+    /// Bridges the Rust pull-based create (create_start + poll create_status) back
+    /// to the AsyncThrowingStream ShedServerClient exposes, so AppModel's create
+    /// flow is unchanged. onTermination cancels the Rust stream, since Task.cancel
+    /// does not propagate over the FFI (M0 finding).
+    func createShed(_ request: CreateShedRequest) -> AsyncThrowingStream<CreateEvent, Error> {
+        // The Rust ShedCore isn't Sendable, but it's Arc-backed + thread-safe, so
+        // box it to hand to the Task (bounded buffer mirrors the Swift path). The
+        // request is mapped inside the Task: the Swift CreateShedRequest is
+        // Sendable, but the generated FFI record is not.
+        let boxed = UncheckedSendable(core)
+        return AsyncThrowingStream(CreateEvent.self, bufferingPolicy: .bufferingNewest(256)) {
+            continuation in
+            let task = Task {
+                let core = boxed.value
+                let id = await core.createStart(request: Self.map(request))
+                var yielded = 0
+                while true {
+                    if Task.isCancelled {
+                        core.createCancel(id: id)
+                        continuation.finish()
+                        return
+                    }
+                    guard let progress = core.createStatus(id: id) else {
+                        continuation.finish()
+                        return
+                    }
+                    if progress.messages.count > yielded {
+                        for msg in progress.messages[yielded...] {
+                            continuation.yield(.progress(msg))
+                        }
+                        yielded = progress.messages.count
+                    }
+                    switch progress.state {
+                    case .complete:
+                        if let shed = progress.shed { continuation.yield(.complete(Self.map(shed))) }
+                        continuation.finish()
+                        return
+                    case .error:
+                        continuation.finish(
+                            throwing: RustCreateError(message: progress.error ?? "create failed"))
+                        return
+                    case .progress:
+                        try? await Task.sleep(for: .milliseconds(100))
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     // MARK: - Rust record -> Swift Model
 
     static func map(_ v: ShedRustCore.ServerInfo) -> ServerInfo {
@@ -109,4 +159,26 @@ final class RustShedCoreAdapter: @unchecked Sendable {
     static func map(_ v: ShedRustCore.EgressProfileInfo) -> EgressProfileInfo {
         EgressProfileInfo(name: v.name, source: v.source, profile: map(v.profile))
     }
+
+    static func map(_ v: CreateShedRequest) -> ShedRustCore.CreateShedRequest {
+        ShedRustCore.CreateShedRequest(
+            name: v.name, repo: v.repo, localDir: v.localDir, image: v.image,
+            backend: v.backend, cpus: v.cpus.map(Int64.init), memoryMb: v.memoryMB.map(Int64.init),
+            noProvision: v.noProvision)
+    }
+}
+
+/// A create error whose description IS the Rust message, so AppModel's
+/// `progress.error = "\(error)"` renders exactly what the Rust path stored
+/// (e.g. "create failed: ...") without double-wrapping it.
+private struct RustCreateError: Error, CustomStringConvertible {
+    let message: String
+    var description: String { message }
+}
+
+/// Boxes a value the caller asserts is safe to send across concurrency domains
+/// (here: the Arc-backed, thread-safe Rust `ShedCore`).
+private struct UncheckedSendable<T>: @unchecked Sendable {
+    let value: T
+    init(_ value: T) { self.value = value }
 }

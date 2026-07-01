@@ -13,11 +13,14 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use thiserror::Error;
 
 use crate::models::{
-    EgressProfileInfo, ImageList, ServerInfo, Shed, ShedImage, ShedList, SystemDiskUsage,
+    CreateShedRequest, EgressProfileInfo, ImageList, ServerInfo, Shed, ShedImage, ShedList,
+    SystemDiskUsage,
 };
+use crate::sse::SseParser;
 use crate::token::{ControlTokenProvider, TokenMinter};
 
 /// Mirrors Swift's `ShedClientError` (same cases, same messages).
@@ -37,9 +40,23 @@ pub enum ShedError {
 
 const GET_TIMEOUT: Duration = Duration::from_secs(8);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Max gap between SSE bytes during a create before we give up (a hung stream);
+/// generous so a healthy provision with periodic progress never trips it.
+const CREATE_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const USER_AGENT: &str = concat!("shed-desktop-core/", env!("CARGO_PKG_VERSION"));
 
-/// A read client for one shed-server host.
+/// Sink for create progress. shed-core streams the SSE and drives these; the FFI
+/// layer implements it to update a create-status store the Swift side polls.
+pub trait CreateSink: Send + Sync {
+    fn on_progress(&self, message: String);
+    fn on_complete(&self, shed: Shed);
+    fn on_error(&self, message: String);
+}
+
+/// A read client for one shed-server host. `Clone` is cheap (reqwest::Client and
+/// the token provider are Arc-backed) so a create task can own its own handle
+/// sharing the same token cache.
+#[derive(Clone)]
 pub struct Client {
     base_url: String,
     server_name: String,
@@ -139,7 +156,9 @@ impl Client {
     }
 
     async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ShedError> {
-        let bytes = self.request(reqwest::Method::GET, path, GET_TIMEOUT).await?;
+        let bytes = self
+            .request(reqwest::Method::GET, path, GET_TIMEOUT)
+            .await?;
         serde_json::from_slice(&bytes).map_err(|e| ShedError::Decode(e.to_string()))
     }
 
@@ -206,6 +225,91 @@ impl Client {
         self.lifecycle(reqwest::Method::DELETE, &format!("/api/sheds/{name}"))
             .await
     }
+
+    /// `POST /api/sheds` with `Accept: text/event-stream`: streams progress then
+    /// a final shed, delivered via `sink`. A transport/parse/error-event failure,
+    /// or a stream that ends without a `complete`, is delivered as
+    /// `sink.on_error`. Create mints its token inline once and does NOT 401-retry
+    /// (one-shot stream), never downgrading to the static token — mirroring
+    /// Swift's `createShed`.
+    pub async fn create_shed(&self, req: &CreateShedRequest, sink: &dyn CreateSink) {
+        if let Err(e) = self.create_stream(req, sink).await {
+            sink.on_error(e.to_string());
+        }
+    }
+
+    async fn create_stream(
+        &self,
+        req: &CreateShedRequest,
+        sink: &dyn CreateSink,
+    ) -> Result<(), ShedError> {
+        let url = format!("{}/api/sheds", self.base_url.trim_end_matches('/'));
+        let mut rb = self
+            .http
+            .post(&url)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(req);
+        if let Some(tok) = self.bearer().await {
+            rb = rb.bearer_auth(tok);
+        }
+        let resp = rb
+            .send()
+            .await
+            .map_err(|e| ShedError::Transport(e.to_string()))?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(ShedError::BadStatus(status));
+        }
+        let mut stream = resp.bytes_stream();
+        let mut parser = SseParser::new();
+        let mut saw_complete = false;
+        loop {
+            match tokio::time::timeout(CREATE_IDLE_TIMEOUT, stream.next()).await {
+                Err(_) => return Err(ShedError::Create("create stream idle timeout".into())),
+                Ok(None) => break,
+                Ok(Some(chunk)) => {
+                    let chunk = chunk.map_err(|e| ShedError::Transport(e.to_string()))?;
+                    for ev in parser.feed(&chunk) {
+                        self.handle_create_event(&ev, sink, &mut saw_complete)?;
+                    }
+                }
+            }
+        }
+        for ev in parser.finish() {
+            self.handle_create_event(&ev, sink, &mut saw_complete)?;
+        }
+        if !saw_complete {
+            return Err(ShedError::Create(
+                "stream ended before a complete event".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn handle_create_event(
+        &self,
+        ev: &crate::sse::SseEvent,
+        sink: &dyn CreateSink,
+        saw_complete: &mut bool,
+    ) -> Result<(), ShedError> {
+        match ev.event.as_str() {
+            "progress" => {
+                if let Some(msg) = decode_progress(&ev.data) {
+                    sink.on_progress(msg);
+                }
+            }
+            "complete" => {
+                let mut shed: Shed =
+                    serde_json::from_str(&ev.data).map_err(|e| ShedError::Decode(e.to_string()))?;
+                shed.host = self.server_name.clone(); // stamp host (SSE-complete path)
+                *saw_complete = true;
+                sink.on_complete(shed);
+            }
+            "error" => return Err(ShedError::Create(decode_error(&ev.data))),
+            _ => {}
+        }
+        Ok(())
+    }
 }
 
 fn build_http_client(pin: Option<&str>) -> Result<reqwest::Client, ShedError> {
@@ -225,6 +329,37 @@ fn build_http_client(pin: Option<&str>) -> Result<reqwest::Client, ShedError> {
     builder
         .build()
         .map_err(|e| ShedError::Transport(e.to_string()))
+}
+
+/// A progress event's `{"message": ...}`, or the raw data as a fallback.
+fn decode_progress(data: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Progress {
+        message: Option<String>,
+    }
+    if let Ok(p) = serde_json::from_str::<Progress>(data) {
+        if let Some(m) = p.message {
+            return Some(m);
+        }
+    }
+    if data.is_empty() {
+        None
+    } else {
+        Some(data.to_string())
+    }
+}
+
+/// An error event's `message ?? code ?? raw` (mirrors Swift's decodeErrorMessage).
+fn decode_error(data: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct ApiError {
+        code: Option<String>,
+        message: Option<String>,
+    }
+    if let Ok(e) = serde_json::from_str::<ApiError>(data) {
+        return e.message.or(e.code).unwrap_or_else(|| data.to_string());
+    }
+    data.to_string()
 }
 
 #[cfg(test)]
@@ -515,5 +650,104 @@ mod tests {
             None,
         );
         assert!(matches!(result, Err(ShedError::Config(_))));
+    }
+
+    #[derive(Default, Clone)]
+    struct RecordState {
+        messages: Vec<String>,
+        shed: Option<Shed>,
+        error: Option<String>,
+    }
+    #[derive(Default)]
+    struct RecordingSink {
+        state: std::sync::Mutex<RecordState>,
+    }
+    impl RecordingSink {
+        fn snapshot(&self) -> RecordState {
+            self.state.lock().unwrap().clone()
+        }
+    }
+    impl CreateSink for RecordingSink {
+        fn on_progress(&self, message: String) {
+            self.state.lock().unwrap().messages.push(message);
+        }
+        fn on_complete(&self, shed: Shed) {
+            self.state.lock().unwrap().shed = Some(shed);
+        }
+        fn on_error(&self, message: String) {
+            self.state.lock().unwrap().error = Some(message);
+        }
+    }
+
+    #[tokio::test]
+    async fn create_streams_progress_then_complete() {
+        let server = MockServer::start_async().await;
+        let sse = "event: progress\ndata: {\"message\":\"building\"}\n\n\
+                   event: complete\ndata: {\"name\":\"folio\",\"status\":\"running\"}\n\n";
+        server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds");
+                t.status(200)
+                    .header("content-type", "text/event-stream")
+                    .body(sse);
+            })
+            .await;
+        let sink = Arc::new(RecordingSink::default());
+        let req = CreateShedRequest {
+            name: "folio".into(),
+            repo: Some("charliek/folio".into()),
+            ..Default::default()
+        };
+        client(&server).create_shed(&req, sink.as_ref()).await;
+        let s = sink.snapshot();
+        assert_eq!(s.messages, vec!["building"]);
+        let shed = s.shed.expect("a complete shed");
+        assert_eq!(shed.name, "folio");
+        assert_eq!(shed.host, "mini2"); // stamped on the SSE-complete path
+        assert!(s.error.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_error_event_reports_error() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds");
+                t.status(200)
+                    .body("event: error\ndata: {\"message\":\"disk full\"}\n\n");
+            })
+            .await;
+        let sink = Arc::new(RecordingSink::default());
+        let req = CreateShedRequest {
+            name: "x".into(),
+            ..Default::default()
+        };
+        client(&server).create_shed(&req, sink.as_ref()).await;
+        assert_eq!(
+            sink.snapshot().error.as_deref(),
+            Some("create failed: disk full")
+        );
+    }
+
+    #[tokio::test]
+    async fn create_end_without_complete_reports_error() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds");
+                t.status(200)
+                    .body("event: progress\ndata: {\"message\":\"x\"}\n\n");
+            })
+            .await;
+        let sink = Arc::new(RecordingSink::default());
+        let req = CreateShedRequest {
+            name: "x".into(),
+            ..Default::default()
+        };
+        client(&server).create_shed(&req, sink.as_ref()).await;
+        assert_eq!(
+            sink.snapshot().error.as_deref(),
+            Some("create failed: stream ended before a complete event")
+        );
     }
 }

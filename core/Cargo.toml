@@ -33,6 +33,7 @@ async-trait = "0.1"
 # unifies one provider); used for the leaf-cert pinning verifier.
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
 httpmock = "0.7"
 
 [profile.release]

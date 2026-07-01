@@ -187,6 +187,7 @@ public struct ShedServerClient: Sendable {
     /// stream of create events (`progress` messages then a final shed). The
     /// producer parses the SSE bytes; the caller consumes on its own actor.
     public func createShed(_ body: CreateShedRequest) -> AsyncThrowingStream<CreateEvent, Error> {
+        if let rustAdapter { return rustAdapter.createShed(body) }
         let baseURL = self.baseURL
         let serverName = self.serverName
         let session = self.session
