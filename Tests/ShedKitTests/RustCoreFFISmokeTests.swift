@@ -32,6 +32,19 @@ final class RustCoreFFISmokeTests: XCTestCase {
         task.cancel()
         _ = await task.value
     }
+
+    /// The real ShedCore read client (M2): constructing it and calling a method
+    /// against an unreachable base URL surfaces a typed ShedError — proving the
+    /// async read method + record/error bridge without a server.
+    func testShedCoreSurfacesTypedError() async throws {
+        let core = try ShedCore(baseUrl: "http://127.0.0.1:1", serverName: "unreachable")
+        do {
+            _ = try await core.info()
+            XCTFail("expected a ShedError against a closed port")
+        } catch is ShedError {
+            // Any variant is fine — this proves the FFI call + typed-error path.
+        }
+    }
 }
 
 /// A trivial `MinterProbe` conformer. `@unchecked Sendable`: its only state is

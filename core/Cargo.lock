@@ -1857,6 +1857,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "shed-core",
+ "thiserror 1.0.69",
  "tokio",
  "uniffi",
 ]
