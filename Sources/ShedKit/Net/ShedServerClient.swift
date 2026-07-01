@@ -166,10 +166,22 @@ public struct ShedServerClient: Sendable {
 
     // MARK: - lifecycle (M1)
 
-    public func start(name: String) async throws { try await send("POST", "/api/sheds/\(name)/start") }
-    public func stop(name: String) async throws { try await send("POST", "/api/sheds/\(name)/stop") }
-    public func reset(name: String) async throws { try await send("POST", "/api/sheds/\(name)/reset") }
-    public func delete(name: String) async throws { try await send("DELETE", "/api/sheds/\(name)") }
+    public func start(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.start(name: name) }
+        try await send("POST", "/api/sheds/\(name)/start")
+    }
+    public func stop(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.stop(name: name) }
+        try await send("POST", "/api/sheds/\(name)/stop")
+    }
+    public func reset(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.reset(name: name) }
+        try await send("POST", "/api/sheds/\(name)/reset")
+    }
+    public func delete(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.delete(name: name) }
+        try await send("DELETE", "/api/sheds/\(name)")
+    }
 
     /// `POST /api/sheds` with `Accept: text/event-stream`, surfaced as a
     /// stream of create events (`progress` messages then a final shed). The

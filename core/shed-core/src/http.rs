@@ -36,6 +36,7 @@ pub enum ShedError {
 }
 
 const GET_TIMEOUT: Duration = Duration::from_secs(8);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(15);
 const USER_AGENT: &str = concat!("shed-desktop-core/", env!("CARGO_PKG_VERSION"));
 
 /// A read client for one shed-server host.
@@ -92,9 +93,14 @@ impl Client {
         }
     }
 
-    async fn send_get(&self, path: &str) -> Result<Vec<u8>, ShedError> {
+    async fn send_once(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ShedError> {
         let url = format!("{}{}", self.base_url.trim_end_matches('/'), path);
-        let mut req = self.http.get(&url).timeout(GET_TIMEOUT);
+        let mut req = self.http.request(method, &url).timeout(timeout);
         if let Some(tok) = self.bearer().await {
             req = req.bearer_auth(tok);
         }
@@ -113,19 +119,33 @@ impl Client {
             .to_vec())
     }
 
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ShedError> {
-        // Provider path: a stale control token 401s → invalidate + retry once
-        // (at-most-once, mirrors the SDK/CLI). Static/no-token clients don't retry.
-        let bytes = match self.send_get(path).await {
+    /// Send once, and on a provider-backed 401 invalidate + retry once
+    /// (at-most-once, mirrors the SDK/CLI). Static/no-token clients don't retry.
+    async fn request(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, ShedError> {
+        match self.send_once(method.clone(), path, timeout).await {
             Err(ShedError::BadStatus(401)) if self.token_provider.is_some() => {
                 if let Some(p) = &self.token_provider {
                     p.invalidate().await;
                 }
-                self.send_get(path).await?
+                self.send_once(method, path, timeout).await
             }
-            other => other?,
-        };
+            other => other,
+        }
+    }
+
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, ShedError> {
+        let bytes = self.request(reqwest::Method::GET, path, GET_TIMEOUT).await?;
         serde_json::from_slice(&bytes).map_err(|e| ShedError::Decode(e.to_string()))
+    }
+
+    /// A lifecycle mutation (POST/DELETE, no response body). 15s timeout.
+    async fn lifecycle(&self, method: reqwest::Method, path: &str) -> Result<(), ShedError> {
+        self.request(method, path, WRITE_TIMEOUT).await.map(|_| ())
     }
 
     /// `GET /api/info`.
@@ -161,6 +181,30 @@ impl Client {
     /// `GET /api/egress/profiles`.
     pub async fn egress_profiles(&self) -> Result<Vec<EgressProfileInfo>, ShedError> {
         self.get_json("/api/egress/profiles").await
+    }
+
+    /// `POST /api/sheds/{name}/start`.
+    pub async fn start(&self, name: &str) -> Result<(), ShedError> {
+        self.lifecycle(reqwest::Method::POST, &format!("/api/sheds/{name}/start"))
+            .await
+    }
+
+    /// `POST /api/sheds/{name}/stop`.
+    pub async fn stop(&self, name: &str) -> Result<(), ShedError> {
+        self.lifecycle(reqwest::Method::POST, &format!("/api/sheds/{name}/stop"))
+            .await
+    }
+
+    /// `POST /api/sheds/{name}/reset`.
+    pub async fn reset(&self, name: &str) -> Result<(), ShedError> {
+        self.lifecycle(reqwest::Method::POST, &format!("/api/sheds/{name}/reset"))
+            .await
+    }
+
+    /// `DELETE /api/sheds/{name}`.
+    pub async fn delete(&self, name: &str) -> Result<(), ShedError> {
+        self.lifecycle(reqwest::Method::DELETE, &format!("/api/sheds/{name}"))
+            .await
     }
 }
 
@@ -313,6 +357,41 @@ mod tests {
             .await;
         let err = client(&server).info().await.unwrap_err();
         assert!(matches!(err, ShedError::Decode(_)));
+    }
+
+    #[tokio::test]
+    async fn lifecycle_start_posts() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds/hello/start");
+                t.status(200);
+            })
+            .await;
+        client(&server).start("hello").await.unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn lifecycle_delete_ok_and_stop_bad_status() {
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|w, t| {
+                w.method(DELETE).path("/api/sheds/gone");
+                t.status(200);
+            })
+            .await;
+        client(&server).delete("gone").await.unwrap();
+        server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds/x/stop");
+                t.status(500);
+            })
+            .await;
+        assert!(matches!(
+            client(&server).stop("x").await,
+            Err(ShedError::BadStatus(500))
+        ));
     }
 
     // A minter returning tok-1, tok-2, ... on successive mints.

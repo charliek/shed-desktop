@@ -401,4 +401,24 @@ impl ShedCore {
             .map(Into::into)
             .collect())
     }
+
+    /// `POST /api/sheds/{name}/start`.
+    pub async fn start(&self, name: String) -> Result<(), ShedError> {
+        Ok(self.client.start(&name).await?)
+    }
+
+    /// `POST /api/sheds/{name}/stop`.
+    pub async fn stop(&self, name: String) -> Result<(), ShedError> {
+        Ok(self.client.stop(&name).await?)
+    }
+
+    /// `POST /api/sheds/{name}/reset`.
+    pub async fn reset(&self, name: String) -> Result<(), ShedError> {
+        Ok(self.client.reset(&name).await?)
+    }
+
+    /// `DELETE /api/sheds/{name}`.
+    pub async fn delete(&self, name: String) -> Result<(), ShedError> {
+        Ok(self.client.delete(&name).await?)
+    }
 }

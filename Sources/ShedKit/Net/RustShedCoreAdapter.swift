@@ -39,6 +39,11 @@ final class RustShedCoreAdapter: @unchecked Sendable {
         try await core.egressProfiles().map(Self.map)
     }
 
+    func start(name: String) async throws { try await core.start(name: name) }
+    func stop(name: String) async throws { try await core.stop(name: name) }
+    func reset(name: String) async throws { try await core.reset(name: name) }
+    func delete(name: String) async throws { try await core.delete(name: name) }
+
     // MARK: - Rust record -> Swift Model
 
     static func map(_ v: ShedRustCore.ServerInfo) -> ServerInfo {
