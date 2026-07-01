@@ -1,0 +1,37 @@
+# shed-core Rust workspace — the shared shed-server protocol client + wire DTOs.
+# Conventions mirror ../roost (workspace, lints, release profile). Consumed by
+# the Swift app via the shed-core-ffi UniFFI wrapper, and (Phase 3) by a GTK app
+# linking shed-core directly.
+[workspace]
+resolver = "2"
+members = ["shed-core", "shed-core-ffi"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "warn"
+
+[workspace.lints.clippy]
+needless_collect = "warn"
+needless_pass_by_value = "warn"
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+futures-util = "0.3"
+uniffi = "0.28"
+async-trait = "0.1"
+httpmock = "0.7"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"

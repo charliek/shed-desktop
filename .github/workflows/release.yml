@@ -84,7 +84,7 @@ jobs:
           SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ env.CAN_NOTARIZE == 'true' && secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY || '' }}
         run: ./scripts/bundle.sh release
       - name: Unit tests
-        run: swift test
+        run: make test
       - name: Package DMG
         env:
           SHED_DESKTOP_DEVELOPER_ID_IDENTITY: ${{ env.CAN_NOTARIZE == 'true' && secrets.SHED_DESKTOP_DEVELOPER_ID_IDENTITY || '' }}

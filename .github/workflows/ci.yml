@@ -19,12 +19,20 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
-      - name: Toolchain
+      - name: Swift toolchain
         run: swift --version
-      - name: Build
-        run: swift build
-      - name: Unit tests
-        run: swift test
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustc --version && cargo --version
+      - name: Build (Rust core + Swift)
+        # `make build` runs scripts/build-core.sh (staticlib + UniFFI bindings +
+        # xcframework) before `swift build` — the .binaryTarget path must exist.
+        run: make build
+      - name: Rust core — test + clippy
+        run: make core-test core-lint
+      - name: Swift unit tests
+        run: make test
       - name: Bundle
         run: ./scripts/bundle.sh debug
       - name: Install uv

@@ -18,7 +18,7 @@ help:  ## List available targets
 # ---- build ------------------------------------------------------------
 
 .PHONY: build bundle dmg run
-build:  ## swift build the package
+build: core  ## swift build the package
 	swift build
 
 bundle:  ## Build + assemble ShedDesktop.app (debug)
@@ -31,10 +31,28 @@ dmg:  ## Build a release bundle + package a drag-install DMG
 run: bundle  ## Build the bundle and launch it
 	open $(APP)
 
+# ---- rust core --------------------------------------------------------
+# The Swift package links a static xcframework generated from the Rust core, so
+# `core` must run before any bare `swift build`/`swift test` (build/test depend
+# on it; bundle.sh builds it itself). See plans/phase-1-rust-core.md.
+
+.PHONY: core core-test core-lint core-fmt
+core:  ## Build the Rust core + generate Swift UniFFI bindings (xcframework)
+	./scripts/build-core.sh debug
+
+core-test:  ## cargo test the Rust core workspace
+	cd core && cargo test
+
+core-lint:  ## cargo clippy the Rust core (deny warnings)
+	cd core && cargo clippy --workspace --all-targets -- -D warnings
+
+core-fmt:  ## cargo fmt the Rust core
+	cd core && cargo fmt --all
+
 # ---- test -------------------------------------------------------------
 
 .PHONY: test e2e e2e-ci smoke smoke-real-launch smoke-launch-window
-test:  ## swift test (ShedKit unit tests)
+test: core  ## swift test (ShedKit unit tests + Rust FFI canary)
 	swift test
 
 e2e:  ## pytest functional harness against a running/auto-launched app

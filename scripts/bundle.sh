@@ -39,6 +39,12 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
+# Rust protocol core (Phase 1): build the staticlib + regenerate the Swift
+# bindings/xcframework the package links, matching this bundle's config, before
+# SwiftPM loads (the .binaryTarget path must exist). See scripts/build-core.sh.
+echo "==> Building Rust core (${CONFIG})"
+"${SCRIPT_DIR}/build-core.sh" "${CONFIG}"
+
 # Version: the top-level VERSION file is the single source of truth for a
 # pure-Swift package. The release workflow overrides via the git tag.
 FILE_VERSION="$(tr -d '[:space:]' < "${REPO_ROOT}/VERSION" 2>/dev/null || echo "")"
@@ -191,6 +197,16 @@ else
   codesign_framework_or_die "${APP_DIR}/Contents/Frameworks/Sparkle.framework"
   codesign_or_die "${APP_DIR}"
 fi
+
+# Static-link gate (Phase 1): the Rust core must be sealed into every Mach-O that
+# links it — the app AND the embedded shedctl (via ShedKit→ShedCore) — never a
+# separate dylib, otherwise notarization gains a new signable artifact.
+for macho in "${APP_DIR}/Contents/MacOS/${APP_NAME}" "${APP_DIR}/Contents/Resources/bin/shedctl"; do
+  if otool -L "${macho}" | grep -qiE 'shed_core|libshed'; then
+    echo "error: ${macho} has a Rust-core dylib load command — expected a static link" >&2
+    exit 1
+  fi
+done
 
 echo "==> Bundled: ${APP_DIR}"
 echo "    Bundle ID:    ${BUNDLE_ID}"

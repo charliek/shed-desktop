@@ -13,6 +13,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Rust core (Phase 1) — build output + generated FFI artifacts
+core/target/
+core/artifacts/
+
 # macOS
 .DS_Store
 

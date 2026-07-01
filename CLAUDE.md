@@ -33,7 +33,7 @@ so the screenshot op has a stable `NSWindow` and show/hide is deterministic.
 ## The change loop
 
 ```bash
-swift build && swift test          # compile + unit tests
+make build && make test            # compile (Rust core + Swift) + unit tests
 make bundle                        # build/ShedDesktop.app (ad-hoc signed)
 make e2e-ci                        # hermetic functional harness (mock shed-server)
 # Eyeball a change against a running app:
