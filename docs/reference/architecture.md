@@ -6,9 +6,12 @@ remote-control agents, and brokers the credential-approval gate. It holds no cre
 it coordinates the processes that do.
 
 It is built as a SwiftUI app with a deliberate **core/UI split**: all I/O and logic live in
-a UI-free core (`ShedKit`) so they're unit-testable without a running app, and so a future
-Linux port can reuse the core. A first-class design goal is that the app is **drivable and
-observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
+a UI-free core (`ShedKit`) so they're unit-testable without a running app. The shed-server
+protocol layer (HTTP/SSE, decoding, control-token auth, TLS pinning) is being extracted
+further into a shared **Rust core** (`shed-core`) so the same logic can back a future GTK
+app and mobile without re-implementation — see [Rust core](rust-core.md); it's flag-gated
+(`SHED_DESKTOP_RUST_CORE`) and off by default. A first-class design goal is that the app is
+**drivable and observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
 
 ## Why a native app
 

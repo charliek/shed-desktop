@@ -1,6 +1,6 @@
 # Phase 1 — Rust protocol core behind a UniFFI bridge
 
-Status: **panel-reviewed (Codex + Kimi K2.6 + CodeRabbit), revised, ready to implement**
+Status: **IMPLEMENTED — M0–M5 committed on `feat/rust-core` (flag off by default).** Read/lifecycle/create all route through the Rust core with e2e green on both backends. Deferred: byte-level golden-JSON cross-backend diff + a release binary-size/cold-launch budget check. Next: Phase 2 (approval spine), Phase 3 (GTK).
 Branch: `feat/rust-core`
 Owner loop: every commit → `/simplify` → `/codex:rescue` (fallback `/cursor:rescue`) → `make test` (builds the core first) + `swift format lint` + `cargo clippy -- -D warnings` + `make e2e-ci` → commit. **Realism guardrail (per panel):** M0–M2 are reviewed before each lands (the FFI/callback boundaries are new); M3–M4 proceed autonomously only when the prior milestone is green and no unproven FFI boundary remains; **stop and report** if an FFI/threading boundary resists ~2 focused attempts, or on any destructive/ambiguous fork.
 

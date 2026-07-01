@@ -42,6 +42,11 @@ jobs:
         # in-process so no screen-recording TCC grant is needed. Slower CI
         # gets a wider wait budget.
         run: SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+      - name: Hermetic E2E (Rust-core parity)
+        # The same suite with reads/lifecycle/create routed through the Rust core.
+        # wait_alive asserts identify.core=rust, so a silent Swift fallback fails
+        # rather than passing a false-green parity run.
+        run: SHED_DESKTOP_RUST_CORE=1 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
       - name: Real-launch smoke
         # Non-test launch on a fresh runner (undetermined notification auth) —
         # exercises the real SystemNotificationPresenter path the hermetic suite
