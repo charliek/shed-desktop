@@ -6,6 +6,8 @@
 
 pub mod http;
 pub mod models;
+pub mod tls;
+pub mod token;
 
 /// M0 canary health check, exercised through the FFI bridge until the real
 /// client lands in M2. Async so the UniFFI async-over-tokio path is proven early.

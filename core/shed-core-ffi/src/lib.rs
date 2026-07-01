@@ -291,6 +291,50 @@ impl From<models::EgressProfileInfo> for EgressProfileInfo {
     }
 }
 
+/// The foreign (Swift) control-token mint primitive. shed-core's
+/// `ControlTokenProvider` FSM caches/refreshes around this; a throw is
+/// fail-closed (the client then sends no token — never a static downgrade).
+#[uniffi::export(with_foreign)]
+#[async_trait::async_trait]
+pub trait TokenMinter: Send + Sync {
+    async fn mint(&self, server: String) -> Result<MintedToken, ShedError>;
+}
+
+/// A minted control token + optional expiry as unix seconds (Swift parses the
+/// host agent's ISO-8601 expiry to epoch before returning it, keeping timestamp
+/// parsing on the Swift side).
+#[derive(uniffi::Record)]
+pub struct MintedToken {
+    pub token: String,
+    pub expires_at_unix: Option<u64>,
+}
+
+/// Adapts the foreign `TokenMinter` to shed-core's pure `TokenMinter` trait.
+struct ForeignMinterBridge(Arc<dyn TokenMinter>);
+
+#[async_trait::async_trait]
+impl shed_core::token::TokenMinter for ForeignMinterBridge {
+    async fn mint(&self, server: &str) -> Result<shed_core::token::MintedToken, CoreError> {
+        match self.0.mint(server.to_string()).await {
+            Ok(m) => Ok(shed_core::token::MintedToken {
+                token: m.token,
+                expires_at_unix: m.expires_at_unix,
+            }),
+            Err(e) => Err(core_error_from_ffi(e)),
+        }
+    }
+}
+
+fn core_error_from_ffi(e: ShedError) -> CoreError {
+    match e {
+        ShedError::BadStatus { status } => CoreError::BadStatus(status),
+        ShedError::Transport { message } => CoreError::Transport(message),
+        ShedError::Decode { message } => CoreError::Decode(message),
+        ShedError::Create { message } => CoreError::Create(message),
+        ShedError::Config { message } => CoreError::Config(message),
+    }
+}
+
 /// A read client for one shed-server host. The base URL is injected by the app
 /// (the core is env-agnostic); `server_name` is stamped onto listed sheds.
 #[derive(uniffi::Object)]
@@ -301,9 +345,17 @@ pub struct ShedCore {
 #[uniffi::export(async_runtime = "tokio")]
 impl ShedCore {
     #[uniffi::constructor]
-    pub fn new(base_url: String, server_name: String) -> Result<Arc<Self>, ShedError> {
+    pub fn new(
+        base_url: String,
+        server_name: String,
+        token: String,
+        pin: Option<String>,
+        minter: Option<Arc<dyn TokenMinter>>,
+    ) -> Result<Arc<Self>, ShedError> {
+        let core_minter = minter
+            .map(|m| Arc::new(ForeignMinterBridge(m)) as Arc<dyn shed_core::token::TokenMinter>);
         Ok(Arc::new(Self {
-            client: Client::new(base_url, server_name)?,
+            client: Client::new(base_url, server_name, token, pin, core_minter)?,
         }))
     }
 

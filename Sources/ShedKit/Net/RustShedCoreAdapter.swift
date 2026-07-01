@@ -20,8 +20,15 @@ import ShedRustCore
 final class RustShedCoreAdapter: @unchecked Sendable {
     private let core: ShedRustCore.ShedCore
 
-    init(baseURL: String, serverName: String) throws {
-        self.core = try ShedRustCore.ShedCore(baseUrl: baseURL, serverName: serverName)
+    init(baseURL: String, serverName: String, token: String, pin: String?, hostAgent: HostAgentClient?)
+        throws
+    {
+        // A secure server's control token is minted by the host agent; the Rust
+        // FSM caches/refreshes around it. Open servers have no host agent → the
+        // static `token` (if any) is used instead.
+        let minter: (any ShedRustCore.TokenMinter)? = hostAgent.map { HostAgentTokenMinter(hostAgent: $0) }
+        self.core = try ShedRustCore.ShedCore(
+            baseUrl: baseURL, serverName: serverName, token: token, pin: pin, minter: minter)
     }
 
     func info() async throws -> ServerInfo { Self.map(try await core.info()) }

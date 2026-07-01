@@ -37,7 +37,9 @@ final class RustCoreFFISmokeTests: XCTestCase {
     /// against an unreachable base URL surfaces a typed ShedError — proving the
     /// async read method + record/error bridge without a server.
     func testShedCoreSurfacesTypedError() async throws {
-        let core = try ShedCore(baseUrl: "http://127.0.0.1:1", serverName: "unreachable")
+        let core = try ShedCore(
+            baseUrl: "http://127.0.0.1:1", serverName: "unreachable",
+            token: "", pin: nil, minter: nil)
         do {
             _ = try await core.info()
             XCTFail("expected a ShedError against a closed port")

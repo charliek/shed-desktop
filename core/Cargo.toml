@@ -29,6 +29,10 @@ thiserror = "1"
 futures-util = "0.3"
 uniffi = "0.28"
 async-trait = "0.1"
+# rustls with the ring provider to match reqwest's rustls-tls stack (so cargo
+# unifies one provider); used for the leaf-cert pinning verifier.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+sha2 = "0.10"
 httpmock = "0.7"
 
 [profile.release]

@@ -46,7 +46,7 @@ public struct ShedServerClient: Sendable {
     // the token/pin paths stay Swift until M3/M4.
     private let rustAdapter: RustShedCoreAdapter?
 
-    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil, useRustCore: Bool = false) {
+    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil, useRustCore: Bool = false, hostAgent: HostAgentClient? = nil) {
         self.baseURL = baseURL
         self.serverName = serverName
         self.token = token
@@ -73,10 +73,15 @@ public struct ShedServerClient: Sendable {
                 "TLS pin configured for a non-https URL \(baseURL.absoluteString); refusing to send unpinned plaintext")
         }
 
-        // Read ops go through the Rust core when the flag is on (M2). Built from
-        // the same injected base URL; a construction failure falls back to Swift.
+        // Read ops go through the Rust core when the flag is on. Built from the
+        // same injected base URL + static token + pin + host-agent minter; a
+        // construction failure (e.g. a pin on a non-https URL) falls back to the
+        // Swift path, which fails closed the same way.
         self.rustAdapter = useRustCore
-            ? (try? RustShedCoreAdapter(baseURL: baseURL.absoluteString, serverName: serverName))
+            ? (try? RustShedCoreAdapter(
+                baseURL: baseURL.absoluteString, serverName: serverName,
+                token: token, pin: tlsCertFingerprint.isEmpty ? nil : tlsCertFingerprint,
+                hostAgent: hostAgent))
             : nil
     }
 
