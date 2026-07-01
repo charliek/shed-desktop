@@ -8,9 +8,12 @@ publish.workspace = true
 [lints]
 workspace = true
 
-# M0 uses only serde/tokio. reqwest/thiserror/futures-util/httpmock land in M2
-# when the HTTP client does — they stay in the workspace catalog until then.
 [dependencies]
 tokio = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+httpmock = { workspace = true }

@@ -4,6 +4,7 @@
 //! GTK app links this crate directly. Decoders in `models` must reproduce the
 //! defensive semantics pinned by shed-desktop's `ModelDecodingTests` exactly.
 
+pub mod http;
 pub mod models;
 
 /// M0 canary health check, exercised through the FFI bridge until the real
