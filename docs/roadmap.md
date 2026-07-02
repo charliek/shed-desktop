@@ -1,9 +1,45 @@
 # Roadmap & ideas
 
-Directions we may take shed-desktop, not commitments or a schedule. Today's app is a
-complete control surface — dashboard + lifecycle, the remote-control launcher, the
-SSH-credential approval gate, the System (disk) pane, and Sparkle auto-update. The items
-below are deliberately *out of scope right now*; they're recorded so the gaps are explicit.
+Directions we may take, not a schedule. Today's app is a complete macOS control surface —
+dashboard + lifecycle, the remote-control launcher, the SSH-credential approval gate, the
+System (disk) pane, and notarized Sparkle auto-update. The **active** thrust is the shared
+Rust core and the multi-client story it unlocks; the rest are recorded so the gaps are
+explicit.
+
+## Shared Rust core & multi-client (active)
+
+The shed-server protocol layer is being extracted into a shared **Rust core** (`shed-core`)
+so the same logic backs every client instead of being re-implemented per language
+(Swift/Dart/TypeScript/Go). The arc is sequenced so each step de-risks the next:
+
+- **Phase 1 — the core (shipped).** `shed-core` — a *pure* Rust crate: HTTP/SSE clients,
+  the defensive wire decoders, the control-token FSM, and leaf-cert TLS pinning — plus a
+  thin `shed-core-ffi` UniFFI wrapper consumed by the Swift app behind
+  `SHED_DESKTOP_RUST_CORE` (off by default), with dual-backend e2e parity. See
+  `plans/phase-1-rust-core.md` and [Rust core](reference/rust-core.md).
+- **Phase 2 — prove it across platforms (in progress).** Make the Rust core the **default**
+  on macOS, get `shed-core` building/testing on **Linux**, and stand up a **GTK/Linux app**
+  on the same crate — mirroring `../roost`'s rust+gtk toolchain (gtk4-rs + libadwaita, a
+  pytest-over-IPC drivability harness under headless Xvfb, an nfpm `.deb`). The GTK app
+  links `shed-core` directly (no UniFFI — that's Swift-only). `shed-host-agent` stays a
+  **separate** process on both platforms; it already runs on Linux, so nothing is bundled or
+  supervised. See `plans/phase-2-rust-clients.md`.
+- **Next — a third client.** A Flutter mobile spike on the same core, to exercise the API
+  boundary from a very different runtime before it's frozen.
+- **Then — consolidation.** Once the clients prove the foundation: move `shed-core` into the
+  `shed` repo, pull `shed-extensions` in alongside it, and **replace `shed-host-agent` with
+  a Rust implementation** on the shared core — retiring the separately-distributed broker
+  binary and shrinking the install to one thing. This is the large, invisible-to-users
+  refactor, deliberately sequenced **last** — and the broker rewrite, being security-critical
+  (it holds the real keys; the app deliberately holds none today), lands on the most-proven
+  foundation.
+
+Why this order: a second and third consumer of `shed-core` validate its API *before* it's
+entangled with `shed`'s build; user-facing multi-platform value ships before the plumbing
+refactor; and the riskiest piece — the credential broker — comes last rather than first. The
+alternative (absorbing the broker up front) was scoped and rejected for now: it's ~8,900 LOC
+of key-holding Go, needs a Rust `shed/sdk` that doesn't exist yet, and would reverse the
+"app holds no credentials" invariant. The Phase 2 plan records that analysis.
 
 ## Credentials
 
@@ -13,6 +49,10 @@ below are deliberately *out of scope right now*; they're recorded so the gaps ar
   agent side — gated behind a clean policy story so frequent STS refreshes don't become
   prompt fatigue. See [Credential approvals](reference/approvals.md).
 - **Auto-approve with constraints** — e.g. docker limited to a registry allowlist.
+- **A GTK approval pane.** The Mac approval spine (PolicyEngine, AuditStore, the host-agent
+  protocol codec, the domain models) is pure, key-free logic; porting it into `shed-core`
+  would let the GTK client show approvals too (with libnotify + a non-biometric gate on
+  Linux). A Phase 2 fast-follow, not part of the first GTK milestone.
 
 ## Broader control surface
 
@@ -27,9 +67,10 @@ independently useful:
 
 ## Distribution
 
-- **Notarized builds.** Releases are ad-hoc signed today (auto-update authenticity rests on
-  the Sparkle EdDSA signature). A Developer-ID certificate + notarization would remove the
-  first-launch Gatekeeper step.
+- **DMG (macOS) + `.deb` (Linux).** The macOS app ships a Developer-ID-signed, notarized DMG
+  with an EdDSA-signed Sparkle appcast. The GTK/Linux client will ship an nfpm `.deb`
+  (mirroring `../roost`'s release), so each platform is a thin native shell over the one
+  Rust core.
 
 ## Larger bets
 
@@ -37,6 +78,5 @@ independently useful:
   app; an in-app console (xterm.js in a `WKWebView`, or SwiftTerm) is a revisit only if that
   proves insufficient.
 - **In-app host management** — writing `~/.shed/config.yaml` instead of read-only reflection.
-- **A Linux/GTK sibling** reusing the UI-free core (`ShedKit`).
 
 Have an idea or a need? Open an issue.
