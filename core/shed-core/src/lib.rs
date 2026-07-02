@@ -4,6 +4,7 @@
 //! GTK app links this crate directly. Decoders in `models` must reproduce the
 //! defensive semantics pinned by shed-desktop's `ModelDecodingTests` exactly.
 
+pub mod create;
 pub mod http;
 pub mod models;
 pub mod sse;

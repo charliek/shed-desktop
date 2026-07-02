@@ -71,6 +71,27 @@ jobs:
         # dashboard and reopening the running app reaches it. Guards issue #4.
         run: ./scripts/smoke-launch-window.sh
 
+  core-linux:
+    name: core-linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc --version && cargo --version
+      - name: C toolchain (ring's crypto backend needs build-essential)
+        run: sudo apt-get update && sudo apt-get install -y build-essential
+      - name: shed-core — test + clippy (Linux)
+        # Scoped to -p shed-core so the macOS-only shed-core-ffi (uniffi) is never
+        # dragged in. --all-targets runs the pinned-TLS verifier + redirect/
+        # non-https fail-closed tests here; the GTK e2e's plain-HTTP mock never
+        # exercises the pin/token paths, so they stay cargo-only on Linux.
+        working-directory: core
+        run: |
+          cargo test -p shed-core --all-targets --locked
+          cargo clippy -p shed-core --all-targets --locked -- -D warnings
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
@@ -85,7 +106,7 @@ jobs:
   # leg (and release.yml's ci-gate can poll this one name).
   ci-success:
     name: ci-success
-    needs: [swift, docs]
+    needs: [swift, core-linux, docs]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "build · test · e2e + docs are green"
+      - run: echo "build · test · e2e + core-linux + docs are green"

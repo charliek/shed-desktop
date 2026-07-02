@@ -1929,6 +1929,7 @@ dependencies = [
  "sha2",
  "thiserror 1.0.69",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1940,7 +1941,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "uniffi",
- "uuid",
 ]
 
 [[package]]

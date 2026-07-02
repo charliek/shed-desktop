@@ -1,7 +1,7 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0
-done** (2026-07-01); M1–M6 pending. All Rust-core + client work lives on the single
+**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M1
+done** (2026-07-01); M2–M6 pending. All Rust-core + client work lives on the single
 `feat/rust-core` branch.
 
 ## Context
@@ -168,7 +168,21 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
   diff clean; size/cold-launch within budget; arm64-only assumption verified; all Swift unit
   suites green; the bundle `otool -L` no-dylib gate still holds.
 
-### M1 — `shed-core` builds + tests on Linux, and the create orchestration moves into it
+### M1 — `shed-core` builds + tests on Linux, and the create orchestration moves into it — ✅ DONE (2026-07-01)
+
+> **Landed:** the create orchestration (`create_start`/`create_status`/`create_cancel`)
+> is hoisted into pure `shed-core` as `create::CreateStore` (an owned, `Arc`-backed store
+> that spawns the SSE task on an injected `tokio::runtime::Handle` — the FFI passes
+> `Handle::current()`, GTK will pass its `rt_handle`); the FFI keeps a process-wide
+> singleton + `From` conversions and is now a thin delegate (byte-identical Swift API —
+> both e2e legs stay green, 64 each). `shed-core` builds + tests on Linux via a
+> `core-linux` CI job (bare `ubuntu-latest`, `-p shed-core --all-targets --locked` +
+> clippy) and `make core-linux` (`Dockerfile.linux`, ubuntu:24.04 + build-essential for
+> `ring`); proven locally in Docker (aarch64) and on Mac — **56 tests + clippy + fmt
+> clean**. Added a rustls pin-verifier accept/reject test + a redirect-fail-closed test so
+> the pin/redirect paths run on Linux (the GTK e2e's plain-HTTP mock never reaches them);
+> a full pinned-TLS *handshake* integration test is deferred (tracked in
+> `docs/enhancements.md`).
 
 - Add a `core-linux` CI job (bare `ubuntu-latest`): `cargo test -p shed-core --all-targets
   --locked` + `cargo clippy -p shed-core --all-targets -- -D warnings`. Scope to

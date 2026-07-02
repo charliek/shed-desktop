@@ -126,4 +126,27 @@ mod tests {
         assert!(!pin_matches(der, "sha256:deadbeef"));
         assert!(!pin_matches(b"world", good));
     }
+
+    #[test]
+    fn verifier_accepts_matching_leaf_and_rejects_mismatch() {
+        // verify_server_cert hashes the raw DER, so arbitrary bytes stand in for a
+        // leaf cert (the pin path does no X.509 parse). This exercises the actual
+        // rustls ServerCertVerifier decision on Linux, not just the pin_matches
+        // helper — the GTK e2e's plain-HTTP mock never reaches this path.
+        let leaf = CertificateDer::from(b"pretend-leaf-der".to_vec());
+        let provider = rustls::crypto::ring::default_provider();
+        let verifier = LeafPinVerifier {
+            pin: fingerprint(leaf.as_ref()),
+            supported: provider.signature_verification_algorithms,
+        };
+        let name = ServerName::try_from("shed.local").unwrap();
+        let now = UnixTime::since_unix_epoch(std::time::Duration::from_secs(0));
+        assert!(verifier
+            .verify_server_cert(&leaf, &[], &name, &[], now)
+            .is_ok());
+        let other = CertificateDer::from(b"different-der".to_vec());
+        assert!(verifier
+            .verify_server_cert(&other, &[], &name, &[], now)
+            .is_err());
+    }
 }

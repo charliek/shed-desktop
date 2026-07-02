@@ -337,8 +337,7 @@ fn core_error_from_ffi(e: ShedError) -> CoreError {
 
 // ---- create (SSE) — a pull-based store the Swift side polls (M4) ----
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// The state of an in-flight create (maps to Swift's CreateState wire strings).
 #[derive(uniffi::Enum, Clone, PartialEq)]
@@ -346,6 +345,16 @@ pub enum CreateState {
     Progress,
     Complete,
     Error,
+}
+
+impl From<shed_core::create::CreateState> for CreateState {
+    fn from(s: shed_core::create::CreateState) -> Self {
+        match s {
+            shed_core::create::CreateState::Progress => CreateState::Progress,
+            shed_core::create::CreateState::Complete => CreateState::Complete,
+            shed_core::create::CreateState::Error => CreateState::Error,
+        }
+    }
 }
 
 /// A snapshot of an in-flight create, polled by Swift via `create_status`.
@@ -356,6 +365,18 @@ pub struct CreateProgress {
     pub messages: Vec<String>,
     pub shed: Option<Shed>,
     pub error: Option<String>,
+}
+
+impl From<shed_core::create::CreateProgress> for CreateProgress {
+    fn from(p: shed_core::create::CreateProgress) -> Self {
+        Self {
+            id: p.id,
+            state: p.state.into(),
+            messages: p.messages,
+            shed: p.shed.map(Into::into),
+            error: p.error,
+        }
+    }
 }
 
 /// Body for POST /api/sheds (FFI mirror of shed_core::models::CreateShedRequest).
@@ -386,41 +407,12 @@ impl From<CreateShedRequest> for shed_core::models::CreateShedRequest {
     }
 }
 
-struct StoredProgress {
-    state: CreateProgress,
-    abort: Option<tokio::task::AbortHandle>,
-}
-
-/// In-flight create state, keyed by id. Process-wide because `create_status(id)`
-/// carries no host (each per-host ShedCore shares this one store).
-fn create_store() -> &'static Mutex<HashMap<String, StoredProgress>> {
-    static STORE: OnceLock<Mutex<HashMap<String, StoredProgress>>> = OnceLock::new();
-    STORE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// A CreateSink that writes progress/complete/error into the store.
-struct StoreSink {
-    id: String,
-}
-
-impl shed_core::http::CreateSink for StoreSink {
-    fn on_progress(&self, message: String) {
-        if let Some(p) = create_store().lock().unwrap().get_mut(&self.id) {
-            p.state.messages.push(message);
-        }
-    }
-    fn on_complete(&self, shed: shed_core::models::Shed) {
-        if let Some(p) = create_store().lock().unwrap().get_mut(&self.id) {
-            p.state.state = CreateState::Complete;
-            p.state.shed = Some(shed.into());
-        }
-    }
-    fn on_error(&self, message: String) {
-        if let Some(p) = create_store().lock().unwrap().get_mut(&self.id) {
-            p.state.state = CreateState::Error;
-            p.state.error = Some(message);
-        }
-    }
+/// Process-wide create store. Host-less by contract: `create_status(id)` carries
+/// no host, so every per-host `ShedCore` shares this one store. The orchestration
+/// itself lives in pure `shed-core` (the GTK app makes its own per-App instance).
+fn create_store() -> &'static shed_core::create::CreateStore {
+    static STORE: OnceLock<shed_core::create::CreateStore> = OnceLock::new();
+    STORE.get_or_init(shed_core::create::CreateStore::new)
 }
 
 /// A read client for one shed-server host. The base URL is injected by the app
@@ -511,52 +503,27 @@ impl ShedCore {
     }
 
     /// Start a create: POST /api/sheds streamed in the background; returns an id
-    /// whose progress the caller polls via `create_status`.
+    /// whose progress the caller polls via `create_status`. Async so it runs on
+    /// the tokio runtime — the store spawns the SSE task on the ambient handle (a
+    /// sync FFI method would have no runtime context to spawn on).
     pub async fn create_start(&self, request: CreateShedRequest) -> String {
-        let id = uuid::Uuid::new_v4().to_string();
-        create_store().lock().unwrap().insert(
-            id.clone(),
-            StoredProgress {
-                state: CreateProgress {
-                    id: id.clone(),
-                    state: CreateState::Progress,
-                    messages: Vec::new(),
-                    shed: None,
-                    error: None,
-                },
-                abort: None,
-            },
-        );
-        let client = self.client.clone();
-        let core_req: shed_core::models::CreateShedRequest = request.into();
-        let sink = StoreSink { id: id.clone() };
-        let handle = tokio::spawn(async move {
-            client.create_shed(&core_req, &sink).await;
-        });
-        if let Some(p) = create_store().lock().unwrap().get_mut(&id) {
-            p.abort = Some(handle.abort_handle());
-        }
-        id
+        create_store().start(
+            &tokio::runtime::Handle::current(),
+            &self.client,
+            request.into(),
+        )
     }
 
     /// Snapshot of an in-flight create (poll until state is complete/error).
     #[allow(clippy::needless_pass_by_value)] // uniffi exports take owned params
     pub fn create_status(&self, id: String) -> Option<CreateProgress> {
-        create_store()
-            .lock()
-            .unwrap()
-            .get(&id)
-            .map(|p| p.state.clone())
+        create_store().status(&id).map(Into::into)
     }
 
     /// Abort a create's stream + drop its state. The Swift stream's onTermination
     /// calls this, since Task.cancel doesn't propagate over the FFI (M0 finding).
     #[allow(clippy::needless_pass_by_value)] // uniffi exports take owned params
     pub fn create_cancel(&self, id: String) {
-        if let Some(p) = create_store().lock().unwrap().remove(&id) {
-            if let Some(h) = p.abort {
-                h.abort();
-            }
-        }
+        create_store().cancel(&id);
     }
 }

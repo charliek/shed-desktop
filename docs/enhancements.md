@@ -16,6 +16,12 @@ Check items off (or strike them) as they land.
   rollback for that window).
 - [ ] **Generalize the golden-JSON cross-backend diff** beyond M0's set to all
   backend-sensitive IPC payloads, as a standing parity guard.
+- [ ] **Full pinned-HTTPS handshake integration test.** M1 added a verifier-level
+  accept/reject test (`tls.rs`) + a redirect fail-closed test (`http.rs`) that run
+  on Linux CI, alongside the existing non-https config-error test — covering the
+  pin *decision* and the redirect policy. A true end-to-end pinned-TLS *handshake*
+  test (a local rustls server with a self-signed cert via `rcgen`, hit through a
+  pinned `Client`) is deferred: heavier test infra for incremental assurance.
 
 ## CI & build
 

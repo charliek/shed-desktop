@@ -36,7 +36,7 @@ run: bundle  ## Build the bundle and launch it
 # `core` must run before any bare `swift build`/`swift test` (build/test depend
 # on it; bundle.sh builds it itself). See plans/phase-1-rust-core.md.
 
-.PHONY: core core-test core-lint core-fmt
+.PHONY: core core-test core-lint core-fmt core-linux
 core:  ## Build the Rust core + generate Swift UniFFI bindings (xcframework)
 	./scripts/build-core.sh debug
 
@@ -48,6 +48,17 @@ core-lint:  ## cargo clippy the Rust core (deny warnings)
 
 core-fmt:  ## cargo fmt the Rust core
 	cd core && cargo fmt --all
+
+core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
+	docker build -t shed-core-linux:latest - < Dockerfile.linux
+	docker run --rm \
+	  -v "$(CURDIR)/core:/work:ro" \
+	  -v shed-core-linux-target:/target \
+	  -v shed-core-linux-cargo:/usr/local/cargo/registry \
+	  -e CARGO_TARGET_DIR=/target \
+	  -w /work shed-core-linux:latest \
+	  bash -lc 'cargo test -p shed-core --all-targets --locked && \
+	            cargo clippy -p shed-core --all-targets --locked -- -D warnings'
 
 # ---- test -------------------------------------------------------------
 

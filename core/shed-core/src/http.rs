@@ -652,6 +652,27 @@ mod tests {
         assert!(matches!(result, Err(ShedError::Config(_))));
     }
 
+    #[tokio::test]
+    async fn redirect_to_non_https_is_not_followed() {
+        // The https-only redirect policy must NOT follow a redirect to a
+        // non-https URL (a plaintext downgrade) — it stops, surfacing the 3xx
+        // rather than dialing the target. Exercised on Linux since the GTK
+        // e2e's plain-HTTP mock never trips the pin/redirect paths.
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|w, t| {
+                w.method(GET).path("/api/info");
+                t.status(302)
+                    .header("location", "http://example.invalid/api/info");
+            })
+            .await;
+        // BadStatus(302), not a transport error from dialing example.invalid.
+        match client(&server).info().await {
+            Err(ShedError::BadStatus(302)) => {}
+            other => panic!("expected the redirect to be stopped (BadStatus 302), got {other:?}"),
+        }
+    }
+
     #[derive(Default, Clone)]
     struct RecordState {
         messages: Vec<String>,
