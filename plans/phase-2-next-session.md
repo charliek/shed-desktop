@@ -28,9 +28,12 @@ that way — commit onto `feat/rust-core`; don't spin up a new branch per phase.
   (`make m0-gates` / a CI step) assert arm64-only + size + cold-launch + a **byte-identical
   cross-backend golden diff**. M1: the create orchestration is hoisted into pure
   `shed-core` (`create::CreateStore`), and `shed-core` builds + tests on **Linux** (a
-  `core-linux` CI job + `make core-linux` Docker) — **56 tests + clippy clean** on Mac and
-  aarch64 Linux. **M2 is next.** The shed-based GTK test loop is validated end-to-end, and
-  a provisioned `sd-gtk-dev` shed is **stopped and ready** (`tools/shed/shed-test.sh`).
+  `core-linux` CI job + `make core-linux` Docker). **M2 is in progress**: the config
+  parser is ported (`shed_core::config`, byte-parity-tested against the Swift parser via
+  `core/fixtures/config_sample.yaml`) — **62 shed-core tests + clippy/fmt clean** on Mac
+  and aarch64 Linux; Swift suite 122. **Next: the `shed-gtk` crate** (the remaining M2).
+  The shed-based GTK test loop is validated end-to-end, and a provisioned `sd-gtk-dev`
+  shed is **stopped and ready** (`tools/shed/shed-test.sh`).
 
 ## Your task
 
@@ -41,7 +44,11 @@ Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
 - **M1** — `shed-core` on Linux CI + hoist the create orchestration into pure
   `shed-core`. ✅ **DONE (2026-07-01).**
 - **M2** — `shed-gtk` skeleton + minimal IPC (identify/wait_alive/sheds.list) +
-  the full-schema config parser. ← **START HERE next.**
+  the full-schema config parser. **Config parser DONE** (2026-07-02:
+  `shed_core::config` + a cross-language parity fixture/test). ← **START HERE
+  next: the `shed-gtk` crate** (GTK build in Docker/shed, the tokio↔glib async
+  bridge, minimal IPC). This is the highest-risk part — obey the M2 panic-trap
+  rules and use the `shedtest-linux` loop.
 - **M3** — GTK drivability: a `dashboard.dump` truth op + screenshot + pytest under
   Xvfb.
 - **M4** — GTK lifecycle + create (+ the deadlock/cancel tests).

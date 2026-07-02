@@ -203,7 +203,15 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
   macOS dual-backend e2e still green. No source changes expected in the read path (reqwest-
   rustls/ring/tokio are cross-platform); fix any that surface.
 
-### M2 — `shed-gtk` skeleton: read-only dashboard, verifiable over IPC
+### M2 — `shed-gtk` skeleton: read-only dashboard, verifiable over IPC — 🚧 IN PROGRESS
+
+> **Config module landed** (2026-07-02): `shed_core::config` ports the Swift `ShedConfig`
+> (indentation parser + all per-server fields + `default_server` + `resolvedEndpoint`), with
+> a cross-language parity fixture (`core/fixtures/config_sample.yaml`) asserted byte-identical
+> by both a Rust test and `Tests/ShedKitTests/ConfigParityTests.swift`. **Remaining:** the
+> `shed-gtk` crate itself (workspace member + `default-members`/`--exclude shed-gtk`, the
+> tokio↔glib async bridge, the minimal IPC server, the libadwaita dashboard) — build it in
+> Docker/a shed via the `shedtest-linux` loop.
 
 - New workspace member `core/shed-gtk` (a `lib.rs` testable surface + a `main.rs` binary),
   deps: `gtk4 = "0.10"` (v4_12), `libadwaita = "0.8"` (v1_4), `glib = "0.21"`, `tokio`, and
