@@ -17,6 +17,10 @@ __pycache__/
 core/target/
 core/artifacts/
 
+# shed-gtk .deb packaging staging + output (linux/scripts/build-deb.sh)
+dist/
+out/
+
 # macOS
 .DS_Store
 

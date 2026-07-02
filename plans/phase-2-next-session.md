@@ -17,27 +17,25 @@ that way — commit onto `feat/rust-core`; don't spin up a new branch per phase.
 
 ## Where things stand
 
-- **Phase 1 (done):** `core/shed-core` — a *pure* Rust crate (HTTP/SSE, defensive
-  decoders, control-token FSM, TLS pinning) — plus `core/shed-core-ffi` (a UniFFI
-  staticlib) consumed by the Swift app behind `SHED_DESKTOP_RUST_CORE` (currently
-  **off** by default), with dual-backend e2e parity.
-- **Phase 2 (in progress):** the panel-hardened plan is
-  `plans/phase-2-rust-clients.md`. **M0 + M1 are done** (2026-07-01). M0: the Rust core
-  is the macOS default (`SHED_DESKTOP_RUST_CORE=0` forces Swift), a per-host Rust-adapter
-  failure fails loudly instead of downgrading, the harness is inverted, and the ship-gates
-  (`make m0-gates` / a CI step) assert arm64-only + size + cold-launch + a **byte-identical
-  cross-backend golden diff**. M1: the create orchestration is hoisted into pure
-  `shed-core` (`create::CreateStore`), and `shed-core` builds + tests on **Linux** (a
-  `core-linux` CI job + `make core-linux` Docker). **M2 is in progress**: the config
-  parser is ported (`shed_core::config`, byte-parity-tested against the Swift parser via
-  `core/fixtures/config_sample.yaml`) — **62 shed-core tests + clippy/fmt clean** on Mac
-  and aarch64 Linux; Swift suite 122. **Next: the `shed-gtk` crate** (the remaining M2).
-  The shed-based GTK test loop is validated end-to-end, and a provisioned `sd-gtk-dev`
-  shed is **stopped and ready** (`tools/shed/shed-test.sh`).
+- **Phase 1 (done):** `core/shed-core` (pure Rust: HTTP/SSE, decoders, control-token FSM,
+  TLS pinning) + `core/shed-core-ffi` (UniFFI staticlib) consumed by the Swift app.
+- **Phase 2 (✅ DONE, 2026-07-02 — M0–M5):** the Rust core is the macOS **default**
+  (`SHED_DESKTOP_RUST_CORE=0` forces Swift; loud per-host fail; golden cross-backend diff +
+  size/cold-launch ship-gates); `shed-core` builds/tests on **Linux** (CI + Docker) with the
+  create orchestration + `config` parser hoisted in; and a **`shed-gtk`** GTK4/libadwaita
+  client stands on it — dashboard + lifecycle + create, drivable over IPC (`dashboard.dump`
+  truth op + `screenshot`), tested under Xvfb (`tools/shedgtktest`) and packaged as a `.deb`
+  (install-validated in a clean container). **Mac-native GTK** (Homebrew) is a first-class
+  dev loop; **Linux is the shipped target**. Docs (architecture/rust-core/CLAUDE) updated.
+- **Only M6 remains** (scoped but DEFERRED — after Flutter, per `docs/roadmap.md`): the GTK
+  approval pane. The `sd-gtk-dev` shed is provisioned + stopped (`tools/shed/shed-test.sh`)
+  and the Mac Homebrew GTK loop is faster for most GTK dev.
 
 ## Your task
 
-Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
+Phase 2 (M0–M5) is complete. The remaining scoped work is **M6** (the GTK approval pane),
+which the plan explicitly defers until after the Flutter spike — do NOT start it without a
+fresh go-ahead. Milestone order from `plans/phase-2-rust-clients.md`:
 
 - **M0** — make the Rust core the macOS **default** (properly gated). ✅ **DONE
   (2026-07-01).**
@@ -55,14 +53,14 @@ Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
   IPC shed.{start,stop,reset,delete} + create.{start,status,cancel} on the pure CreateStore
   + a live create-progress banner; shedgtktest lifecycle/create/cancel/deadlock tests (8/8
   on Mac + a headless-Linux smoke).
-- **M5** — `.deb` packaging + docs. ← **START HERE next.** nfpm `.deb` for shed-gtk (+
-  `.desktop`/icon), install-validate in a clean ubuntu:24.04 container; fix the stale
-  `architecture.md`/`rust-core.md` references; update `CLAUDE.md` (GTK build targets, the
-  Docker/Mac-GTK loop, the GTK IPC socket path); flip this plan's status.
-- **M5** — `.deb` packaging + docs (fix the stale `architecture.md`/`rust-core.md`
-  references; update `CLAUDE.md`).
-- **M6** — GTK approval pane. **Scoped but deferred** — do NOT start it as part of
-  Phase 2.
+- **M5** — `.deb` packaging + docs. ✅ **DONE (2026-07-02):** nfpm `.deb` + install-validate
+  in a clean ubuntu:24.04 container + a `deb` CI job; stale `architecture.md`/`rust-core.md`
+  references fixed; `CLAUDE.md` updated; plan status flipped.
+- **M6** — GTK approval pane. **Scoped but DEFERRED** — after Flutter (per the roadmap); not
+  part of Phase 2. **This is the only remaining Phase 2 milestone.** Port the key-free
+  approval spine (PolicyEngine, AuditStore, host-agent protocol codec, models) into
+  `shed-core`; add a Linux gate (libnotify + a PIN/passphrase dialog — biometrics stay
+  macOS-only); the host-agent stays the separate key-holder over its UDS.
 
 ## The flow — follow it every time
 

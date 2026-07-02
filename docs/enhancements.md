@@ -63,9 +63,9 @@ Check items off (or strike them) as they land.
 
 ## Docs hygiene
 
-- [ ] **Fix stale references** (scheduled in Phase 2 M5; tracked here so they're not
-  lost): `docs/reference/architecture.md` still says the Rust flag is off by
-  default; `docs/reference/rust-core.md` still labels approvals "Phase 2" / GTK
-  "Phase 3".
+- [x] **Fix stale references** — DONE (Phase 2 M5): `architecture.md` +
+  `rust-core.md` now reflect the Rust core as the macOS default and the shipped
+  `shed-gtk` GTK/Linux client (was: "flag off by default" / approvals "Phase 2" /
+  GTK "Phase 3").
 - [ ] **Tighten a count**: "64 pytest fns / 37 IPC ops" (the two are sometimes
   conflated as "64 ops").

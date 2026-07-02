@@ -53,7 +53,9 @@ core-fmt:  ## cargo fmt the Rust core
 # shed-gtk is a workspace member but NOT a default member, so the targets above
 # never build GTK. Building it is opt-in. On macOS: `brew install gtk4 libadwaita`.
 
-.PHONY: gtk-build gtk-run gtk-lint gtk-build-linux
+DEB_VERSION ?= 0.0.1-dev
+
+.PHONY: gtk-build gtk-run gtk-lint gtk-build-linux deb deb-validate
 gtk-build:  ## Build shed-gtk (Homebrew GTK on macOS; libgtk-4-dev on Linux)
 	cd core && cargo build -p shed-gtk
 
@@ -74,6 +76,21 @@ gtk-build-linux:  ## Build + clippy shed-gtk on Linux in Docker (ubuntu:24.04 + 
 	  bash -lc 'cargo build -p shed-gtk --locked && \
 	            cargo clippy -p shed-gtk --all-targets --locked -- -D warnings && \
 	            cargo test -p shed-gtk --lib --locked'
+
+deb:  ## Build the shed-gtk .deb in Docker (ubuntu:24.04 + GTK + nfpm) → out/ (DEB_VERSION=x)
+	docker build -t shed-core-linux:latest - < Dockerfile.linux
+	docker run --rm \
+	  -v "$(CURDIR):/repo" \
+	  -v shed-core-linux-target:/target \
+	  -v shed-core-linux-cargo:/usr/local/cargo/registry \
+	  -e CARGO_TARGET_DIR=/target \
+	  -w /repo shed-core-linux:latest \
+	  bash -lc 'echo "deb [trusted=yes] https://repo.goreleaser.com/apt/ /" > /etc/apt/sources.list.d/goreleaser.list && \
+	            apt-get update -qq && apt-get install -y -qq nfpm >/dev/null && \
+	            ./linux/scripts/build-deb.sh $(DEB_VERSION)'
+
+deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 container
+	./linux/scripts/validate-deb.sh $$(ls -t out/shed-gtk_*.deb | head -1)
 
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux

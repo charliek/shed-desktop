@@ -25,7 +25,13 @@ Core/UI split (see `docs/reference/architecture.md`):
   approval coordinator), `IPCHandlerImpl`, `SystemNotificationPresenter`, the Sparkle
   updater, `PreferencesStore`.
 - `Sources/shedctl/` — CLI driver for the socket.
-- `tools/shedtest/` — pytest functional harness + in-process mock shed-server.
+- `core/` — the shared **Rust core** (a cargo workspace): `shed-core` (pure: HTTP/SSE,
+  defensive decoders, control-token FSM, TLS pinning, the `config` parser, the `create`
+  store), `shed-core-ffi` (the UniFFI staticlib the Swift app links — the macOS **default**
+  backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), and `shed-gtk` (the
+  GTK4/libadwaita **Linux client** on `shed-core`; also runs on macOS via Homebrew GTK).
+- `tools/shedtest/` — pytest functional harness + in-process mock shed-server (macOS app).
+- `tools/shedgtktest/` — pytest harness for `shed-gtk` (reuses the same mock; Xvfb on CI).
 
 The dashboard + menu are AppKit windows hosting SwiftUI (`NSHostingController`/`NSPopover`)
 so the screenshot op has a stable `NSWindow` and show/hide is deterministic.
@@ -47,6 +53,25 @@ The harness is hermetic: it launches the app with `SHED_DESKTOP_TEST_MODE=1` +
 shed-server is touched. `identify` is checked up front to confirm hermeticity. Use
 condition-waits (`wait_until`), never sleeps.
 
+### The GTK/Linux client (`shed-gtk`)
+
+`shed-gtk` is a workspace member but NOT a `default-member`, so the commands above never
+build GTK. Building it is opt-in (`brew install gtk4 libadwaita` on macOS):
+
+```bash
+make gtk-run             # build + launch shed-gtk natively (Mac via Homebrew GTK / Linux)
+make e2e-gtk             # hermetic GTK pytest (tools/shedgtktest; needs a display)
+make core-linux          # shed-core cargo test/clippy on Linux (Docker)
+make gtk-build-linux     # shed-gtk build + clippy + lib tests on Linux (Docker)
+make deb-validate        # build the .deb + install-validate in a clean ubuntu:24.04 container
+```
+
+Linux is the shipped target; the Mac GTK run is a dev / UI-comparison loop (users run the
+Swift app). `shed-gtk` speaks the same JSON IPC (`{id,op,params}`) over
+`$XDG_RUNTIME_DIR/shed-gtk/shed-gtk.sock` (a `/tmp/shed-gtk-<uid>` fallback); its hermeticity
+hooks are `SHED_GTK_TEST_MODE` / `SHED_GTK_MOCK_BASE_URL` / `SHED_GTK_SHED_CONFIG`. Its async
+bridge obeys the tokio↔glib panic-trap rules (`plans/phase-2-rust-clients.md` M2).
+
 ## Conventions
 
 - Swift 6 strict concurrency. Keep `ShedKit` free of SwiftUI. The IPC handler is an actor;
@@ -66,6 +91,11 @@ remote-control agent launcher; the **credential-approval gate** (a Unix socket t
 `shed-host-agent` — multi-server, SSH-gated, fail-closed — with a policy engine,
 notifications, and a merged audit feed); the System disk-usage pane; preferences +
 launch-at-login; and Sparkle auto-update (DMG + EdDSA appcast — see `RELEASING.md`).
+
+The shed-server protocol layer is a shared **Rust core** (`shed-core`) — the macOS **default**
+backend (Phase 2) and the base for **`shed-gtk`**, a GTK4/libadwaita Linux client with the same
+lifecycle + create + IPC drivability (`dashboard.dump`/`screenshot`), packaged as a `.deb`. See
+`plans/phase-2-rust-clients.md` (the GTK approval pane, M6, is deferred).
 
 Deferred directions (AWS/Docker gating, sessions/snapshots/images panes, notarization) live
 in `docs/roadmap.md`.

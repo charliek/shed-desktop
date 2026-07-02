@@ -1,8 +1,9 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M4 done**
-(2026-07-02); M5 pending, M6 deferred. Plan revised 2026-07-02 to add a **Mac-native GTK dev
-target** (Homebrew). All Rust-core + client work lives on the single `feat/rust-core` branch.
+**Status:** ✅ **M0–M5 DONE** (2026-07-02) — **Phase 2 complete**; **M6** (the GTK approval
+pane) is scoped but deferred (after Flutter, per the roadmap). Panel-reviewed (Codex + Kimi +
+CodeRabbit); revised 2026-07-02 to add a **Mac-native GTK dev target** (Homebrew). All
+Rust-core + client work lives on the single `feat/rust-core` branch.
 
 ## Context
 
@@ -332,7 +333,19 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
 - **Acceptance:** the GTK app drives full lifecycle and shows live create-progress; the
   cancellation + deadlock tests pass; the GTK e2e suite is green.
 
-### M5 — packaging (`.deb`) + docs
+### M5 — packaging (`.deb`) + docs — ✅ DONE (2026-07-02)
+
+> **Landed:** an nfpm `.deb` for `shed-gtk` (`packaging/nfpm.yaml` + `linux/scripts/
+> build-deb.sh`): `/usr/bin/shed-gtk`, a `.desktop` entry, hicolor icons, runtime deps
+> `libgtk-4-1`/`libadwaita-1-0`/`libc6`. **Install-validated** in a clean `ubuntu:24.04`
+> container (`linux/scripts/validate-deb.sh` + `deb_identify_check.py`) — apt resolves the
+> deps, the binary launches under Xvfb + answers `identify`; run via `make deb-validate` +
+> a `deb` CI job (build + validate), folded into `ci-success`. Release wiring (apt repo /
+> GitHub asset) is deferred (build-in-CI ≠ shipped; `docs/enhancements.md`). Docs: fixed the
+> stale `architecture.md` ("flag off by default") + `rust-core.md` (approvals "Phase 2" / GTK
+> "Phase 3") references, and updated `CLAUDE.md` (the Rust core + `shed-gtk`, the GTK dev
+> loop + `.deb` targets, the GTK IPC socket path). Three versions still coexist (Mac app,
+> Rust workspace, `.deb`) — a unified release workflow is future work.
 
 - An nfpm `.deb` for `shed-gtk` (roost's `linux/scripts/build-deb.sh` + `packaging/nfpm.yaml`
   pattern): `/usr/bin/shed-gtk` (consider also a `shedctl`-equivalent CLI as roost ships

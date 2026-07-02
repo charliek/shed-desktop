@@ -145,6 +145,28 @@ jobs:
         if: failure()
         run: find "${TMPDIR:-/tmp}" -name shed-gtk.log -path '*shed-gtk-e2e-*' -exec sh -c 'echo "== $1 =="; cat "$1"' _ {} \; || true
 
+  deb:
+    name: deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc --version && cargo --version
+      - name: GTK dev libs + nfpm
+        run: |
+          sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update && sudo apt-get install -y nfpm
+      - name: Build the .deb
+        run: ./linux/scripts/build-deb.sh 0.0.1-ci
+      - name: Install-validate in a clean container
+        # apt-installs the .deb (resolving its runtime deps) in a fresh ubuntu:24.04
+        # and asserts the binary launches under Xvfb + answers identify. Build-in-CI
+        # only; apt-repo / release-asset wiring is deferred (see docs/enhancements.md).
+        run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-gtk_*.deb | head -1)"
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
@@ -159,7 +181,7 @@ jobs:
   # leg (and release.yml's ci-gate can poll this one name).
   ci-success:
     name: ci-success
-    needs: [swift, core-linux, gtk-build, e2e-gtk, docs]
+    needs: [swift, core-linux, gtk-build, e2e-gtk, deb, docs]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "build · test · e2e + core-linux + gtk-build + e2e-gtk + docs are green"
+      - run: echo "build · test · e2e + core-linux + gtk-build + e2e-gtk + deb + docs are green"

@@ -1,0 +1,41 @@
+# nfpm config for the shed-gtk Linux .deb.
+#
+# Built by linux/scripts/build-deb.sh, which stages the binary into ./dist/ and
+# sets SHED_GTK_VERSION + SHED_GTK_ARCH. nfpm expands ${ENV} in this file at
+# package time. Paths are relative to the repo root (build-deb.sh runs there).
+#
+# Output: shed-gtk_${SHED_GTK_VERSION}_${SHED_GTK_ARCH}.deb
+name: shed-gtk
+arch: ${SHED_GTK_ARCH}
+version: ${SHED_GTK_VERSION}
+platform: linux
+section: utils
+priority: optional
+maintainer: Charlie Knudsen <charlie.knudsen@gmail.com>
+vendor: Stride Labs
+homepage: https://github.com/charliek/shed-desktop
+license: MIT
+description: |
+  GTK4/libadwaita client for the shed toolchain.
+  shed-gtk is the Linux desktop client for shed-server, built on the shared Rust
+  shed-core (the same protocol layer as the macOS app): a dashboard of sheds with
+  lifecycle + create, drivable + observable over a JSON IPC socket.
+
+# Runtime libs. GTK 4.12 matches the gtk4-rs v4_12 feature; libadwaita 1.4 gates
+# the AdwBanner/AdwApplicationWindow this UI uses. Ubuntu 24.04 ships both.
+depends:
+  - libgtk-4-1 (>= 4.12)
+  - libadwaita-1-0 (>= 1.4)
+  - libc6 (>= 2.31)
+
+contents:
+  - src: ./dist/shed-gtk
+    dst: /usr/bin/shed-gtk
+  - src: ./packaging/shed-gtk.desktop
+    dst: /usr/share/applications/ai.stridelabs.ShedGtk.desktop
+  - src: ./packaging/icons/hicolor/256x256/apps/shed-gtk.png
+    dst: /usr/share/icons/hicolor/256x256/apps/shed-gtk.png
+  - src: ./packaging/icons/hicolor/512x512/apps/shed-gtk.png
+    dst: /usr/share/icons/hicolor/512x512/apps/shed-gtk.png
+  - src: ./packaging/copyright
+    dst: /usr/share/doc/shed-gtk/copyright
