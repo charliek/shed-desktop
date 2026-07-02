@@ -43,11 +43,37 @@ core:  ## Build the Rust core + generate Swift UniFFI bindings (xcframework)
 core-test:  ## cargo test the Rust core workspace
 	cd core && cargo test
 
-core-lint:  ## cargo clippy the Rust core (deny warnings)
-	cd core && cargo clippy --workspace --all-targets -- -D warnings
+core-lint:  ## cargo clippy the Rust core (deny warnings; excludes GTK)
+	cd core && cargo clippy --workspace --exclude shed-gtk --all-targets -- -D warnings
 
 core-fmt:  ## cargo fmt the Rust core
 	cd core && cargo fmt --all
+
+# ---- shed-gtk (Linux client; also builds on macOS via Homebrew GTK) ----
+# shed-gtk is a workspace member but NOT a default member, so the targets above
+# never build GTK. Building it is opt-in. On macOS: `brew install gtk4 libadwaita`.
+
+.PHONY: gtk-build gtk-run gtk-lint gtk-build-linux
+gtk-build:  ## Build shed-gtk (Homebrew GTK on macOS; libgtk-4-dev on Linux)
+	cd core && cargo build -p shed-gtk
+
+gtk-run: gtk-build  ## Build + launch shed-gtk (native window on macOS/Linux)
+	cd core && cargo run -p shed-gtk
+
+gtk-lint:  ## clippy shed-gtk (needs GTK dev libs)
+	cd core && cargo clippy -p shed-gtk --all-targets -- -D warnings
+
+gtk-build-linux:  ## Build + clippy shed-gtk on Linux in Docker (ubuntu:24.04 + GTK)
+	docker build -t shed-core-linux:latest - < Dockerfile.linux
+	docker run --rm \
+	  -v "$(CURDIR)/core:/work:ro" \
+	  -v shed-core-linux-target:/target \
+	  -v shed-core-linux-cargo:/usr/local/cargo/registry \
+	  -e CARGO_TARGET_DIR=/target \
+	  -w /work shed-core-linux:latest \
+	  bash -lc 'cargo build -p shed-gtk --locked && \
+	            cargo clippy -p shed-gtk --all-targets --locked -- -D warnings && \
+	            cargo test -p shed-gtk --lib --locked'
 
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux

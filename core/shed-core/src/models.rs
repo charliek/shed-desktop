@@ -36,7 +36,7 @@ fn unknown_name() -> String {
 /// A shed's lifecycle status. Lenient like the Swift enum: an unrecognized value
 /// (`#[serde(other)]`) OR an absent field (`default` on the field) both decode
 /// to `Unknown`, so a new server status never breaks decode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ShedStatus {
     Running,
@@ -60,7 +60,7 @@ pub struct ServerInfo {
 
 /// A shed. `host` is absent from shed-server JSON (the client stamps it after
 /// decode); it defaults to "" here to mirror `Shed.init(from:)`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Shed {
     #[serde(default)]
     pub host: String,

@@ -1,8 +1,9 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M1
-done** (2026-07-01); M2–M6 pending. All Rust-core + client work lives on the single
-`feat/rust-core` branch.
+**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M2 done**
+(2026-07-02); M3 in progress (the `screenshot` op landed early); M4–M6 pending. Plan revised
+2026-07-02 to add a **Mac-native GTK dev target** (Homebrew). All Rust-core + client work lives
+on the single `feat/rust-core` branch.
 
 ## Context
 
@@ -91,11 +92,20 @@ grows an approval pane.
 
 ## Development environment
 
-Development is on macOS, but GTK4/libadwaita and the e2e loop are Linux. Two tiers, matching
-the shed ecosystem's convention (see the `shedtest-linux` skill):
+Development is on macOS; **Linux is the primary *target*, but GTK4/libadwaita builds + runs
+on macOS too** (revised 2026-07-02 — proven: `shed-gtk` builds, runs, and screenshots on the
+dev Mac). Three tiers, matching the shed ecosystem's convention (see the `shedtest-linux`
+skill):
 
-- **Docker on macOS** for fast Linux *unit* tests (`cargo test -p shed-core`) — no GUI.
-- **A shed (Linux VM)** or bare Linux for the full GTK *e2e* (GTK + Xvfb + pytest).
+- **Mac-native GTK (Homebrew)** — `brew install gtk4 libadwaita`, then `make gtk-run` /
+  `make gtk-build`: the fastest inner loop for eyeballing + IPC-driving the UI. `shed-gtk` is
+  a workspace member but **not** a `default-member`, so the macOS app's `make
+  core-test`/`core-lint` never build GTK — it's opt-in. Linux stays the shipped target; this
+  is a dev / UI-comparison convenience (mirrors `../roost`, which runs its `roost-linux` GTK
+  UI on Mac the same way). Users run the native Swift app; the Mac GTK run is dev-only.
+- **Docker on macOS** — `make core-linux` / `make gtk-build-linux`: Linux build/test parity
+  (no GUI needed for the crate build + lib tests).
+- **A shed (Linux VM)** or bare Linux for the full GTK *e2e* (GTK + Xvfb + pytest, M3).
 
 **GL/headless parity is a real trap** (CodeRabbit): roost's `e2e-gtk` runs on bare
 `ubuntu-latest`, which ships mesa/llvmpipe, so `render_window_png` works headless with only
@@ -203,15 +213,21 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
   macOS dual-backend e2e still green. No source changes expected in the read path (reqwest-
   rustls/ring/tokio are cross-platform); fix any that surface.
 
-### M2 — `shed-gtk` skeleton: read-only dashboard, verifiable over IPC — 🚧 IN PROGRESS
+### M2 — `shed-gtk` skeleton: read-only dashboard, verifiable over IPC — ✅ DONE (2026-07-02)
 
-> **Config module landed** (2026-07-02): `shed_core::config` ports the Swift `ShedConfig`
-> (indentation parser + all per-server fields + `default_server` + `resolvedEndpoint`), with
-> a cross-language parity fixture (`core/fixtures/config_sample.yaml`) asserted byte-identical
-> by both a Rust test and `Tests/ShedKitTests/ConfigParityTests.swift`. **Remaining:** the
-> `shed-gtk` crate itself (workspace member + `default-members`/`--exclude shed-gtk`, the
-> tokio↔glib async bridge, the minimal IPC server, the libadwaita dashboard) — build it in
-> Docker/a shed via the `shedtest-linux` loop.
+> **Landed:** `shed_core::config` (the Swift `ShedConfig` port, parity-tested via
+> `core/fixtures/config_sample.yaml` + `ConfigParityTests.swift`); the `core/shed-gtk` crate —
+> a workspace member but **not** a `default-member`, so Mac `core-test`/`core-lint` stay
+> GTK-free. It has a libadwaita dashboard listing sheds fetched via shed-core, the tokio↔glib
+> async bridge (one-shot read: `rt.spawn` + the `JoinHandle` awaited inside
+> `glib::spawn_future_local`; a `UiRequest` mpsc drained on the glib thread for `!Send` ops),
+> and a newline-JSON IPC server — `identify` (echoing core=rust / platform=gtk / hermeticity),
+> `sheds.list`, and `screenshot` (rendered via the window's own `GskRenderer`, an M3 op pulled
+> forward for UI comparison). Verified on **both** aarch64 Linux (Docker) and this Mac
+> (Homebrew GTK): `cargo build`/`clippy`/`--lib` tests green, and an over-the-socket drive
+> returns the fixture sheds + a real PNG. **Mac-native GTK is proven + folded into the plan**
+> (see Development environment). **Remaining for M3:** a `dashboard.dump` truth op + the
+> `tools/shedgtktest` pytest harness under Xvfb + the `e2e-gtk` CI gate.
 
 - New workspace member `core/shed-gtk` (a `lib.rs` testable surface + a `main.rs` binary),
   deps: `gtk4 = "0.10"` (v4_12), `libadwaita = "0.8"` (v1_4), `glib = "0.21"`, `tokio`, and

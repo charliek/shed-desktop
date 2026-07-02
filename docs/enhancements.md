@@ -45,12 +45,21 @@ Check items off (or strike them) as they land.
   wire up actual shipping (apt repo / GitHub release asset) as a follow-up.
 - [ ] **Ship a `shedctl`-equivalent CLI in the `.deb`** (roost ships both `roost`
   and `roostctl`) if a Linux CLI driver proves useful.
+- [ ] **Single-instance flock for shed-gtk** (target M4): mirror roost's
+  `single_instance::acquire` so a second launch activates the running window
+  instead of unlinking its live socket. M2 defers this to the harness (which owns
+  the process lifecycle) — see the comment in `shed-gtk/src/ipc.rs` `bind`.
+- [ ] **Parallel multi-host `list_sheds`** in shed-gtk: `join_all` the per-host
+  fetches. Sequential is fine at one host (M2); at 2+ hosts a slow/down host stalls
+  the rest by up to shed-core's 8s per-request timeout.
 
 ## macOS dev QoL
 
-- [ ] **Run the GTK app on macOS natively** (Homebrew `gtk4` + `libadwaita`) for
-  quick cross-platform UI eyeballing from a Mac. Nice-to-have; the primary run
-  target stays Linux (a shed), so this is convenience, not a gate.
+- [x] **Run the GTK app on macOS natively** — DONE (2026-07-02, pulled into Phase 2
+  M2): `shed-gtk` builds, runs, and screenshots on this Mac via Homebrew `gtk4` +
+  `libadwaita` (`make gtk-run` / `make gtk-build`). `shed-gtk` is a workspace member
+  but not a `default-member`, so the macOS app's `core-test`/`core-lint` stay
+  GTK-free. Linux remains the shipped target; the Mac run is a dev/UI-comparison loop.
 
 ## Docs hygiene
 

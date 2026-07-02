@@ -44,13 +44,16 @@ Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
 - **M1** — `shed-core` on Linux CI + hoist the create orchestration into pure
   `shed-core`. ✅ **DONE (2026-07-01).**
 - **M2** — `shed-gtk` skeleton + minimal IPC (identify/wait_alive/sheds.list) +
-  the full-schema config parser. **Config parser DONE** (2026-07-02:
-  `shed_core::config` + a cross-language parity fixture/test). ← **START HERE
-  next: the `shed-gtk` crate** (GTK build in Docker/shed, the tokio↔glib async
-  bridge, minimal IPC). This is the highest-risk part — obey the M2 panic-trap
-  rules and use the `shedtest-linux` loop.
+  the full-schema config parser. ✅ **DONE (2026-07-02):** the `core/shed-gtk`
+  crate (libadwaita dashboard + tokio↔glib async bridge + newline-JSON IPC:
+  identify/sheds.list/screenshot), verified on aarch64 Linux (Docker) **and this
+  Mac** (Homebrew GTK — now a first-class dev loop; `make gtk-run`/`gtk-build`).
 - **M3** — GTK drivability: a `dashboard.dump` truth op + screenshot + pytest under
-  Xvfb.
+  Xvfb. ← **START HERE next.** The `screenshot` op already exists (pulled into M2);
+  M3 adds `dashboard.dump` (rendered rows as data — the assertion backbone), the
+  `tools/shedgtktest` pytest harness (reusing `tools/shedtest/mockserver.py`), and
+  the bare-`ubuntu-latest` `e2e-gtk` Xvfb CI job. Mac-native GTK makes the inner
+  loop fast; the CI gate stays Linux/Xvfb.
 - **M4** — GTK lifecycle + create (+ the deadlock/cancel tests).
 - **M5** — `.deb` packaging + docs (fix the stale `architecture.md`/`rust-core.md`
   references; update `CLAUDE.md`).

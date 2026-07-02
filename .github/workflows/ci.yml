@@ -92,6 +92,26 @@ jobs:
           cargo test -p shed-core --all-targets --locked
           cargo clippy -p shed-core --all-targets --locked -- -D warnings
 
+  gtk-build:
+    name: gtk-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc --version && cargo --version
+      - name: GTK + C toolchain (gtk4-rs build scripts need the -dev packages)
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+      - name: shed-gtk — build + clippy + lib tests (Linux)
+        # The lib tests (IPC dispatch + config) run without a display; the full
+        # window/screenshot e2e under Xvfb lands with the pytest harness (M3).
+        working-directory: core
+        run: |
+          cargo build -p shed-gtk --locked
+          cargo clippy -p shed-gtk --all-targets --locked -- -D warnings
+          cargo test -p shed-gtk --lib --locked
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
@@ -106,7 +126,7 @@ jobs:
   # leg (and release.yml's ci-gate can poll this one name).
   ci-success:
     name: ci-success
-    needs: [swift, core-linux, docs]
+    needs: [swift, core-linux, gtk-build, docs]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "build · test · e2e + core-linux + docs are green"
+      - run: echo "build · test · e2e + core-linux + gtk-build + docs are green"

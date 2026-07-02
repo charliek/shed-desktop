@@ -1,0 +1,45 @@
+[package]
+name = "shed-gtk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "shed-gtk — the GTK4/libadwaita client for the shed toolchain, on the shared shed-core. Primary target Linux; also builds+runs on macOS via Homebrew GTK for dev/UI comparison."
+
+# `lib.rs` is the display-free testable surface (IPC dispatch, config, env);
+# the `shed-gtk` bin is a thin wrapper wiring gtk4-rs onto it (mirrors
+# roost-linux's lib/bin split so `cargo test -p shed-gtk` runs without a display).
+[lib]
+name = "shed_gtk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "shed-gtk"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+shed-core = { path = "../shed-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# getuid() for the /tmp/shed-gtk-<uid> socket fallback (cross-platform; roost
+# uses the same primitive). Already in the tree transitively via tokio.
+libc = "0.2"
+
+# gtk4-rs + libadwaita-rs (versions/features mirror ../roost's roost-linux).
+# v4_12 / v1_4 gate the minimum GTK/Adw API; Homebrew's GTK 4.22 + libadwaita
+# 1.9 and Ubuntu 24.04's GTK 4.14 both satisfy them.
+gtk4 = { version = "0.10", features = ["v4_12"] }
+libadwaita = { version = "0.8", features = ["v1_4"] }
+glib = "0.21"
+
+# base64-encode screenshot PNG bytes for the JSON IPC `screenshot` op (the same
+# wire shape as shed-desktop's app.screenshot → `{png, width, height}`).
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+httpmock = { workspace = true }
