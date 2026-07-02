@@ -51,9 +51,14 @@ Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
 - **M3** — GTK drivability: a `dashboard.dump` truth op + screenshot + pytest under
   Xvfb. ✅ **DONE (2026-07-02):** `dashboard.dump` + `tools/shedgtktest` (4 tests) +
   an `e2e-gtk` Xvfb CI job; verified on Mac (native) and headless Linux (Docker+Xvfb).
-- **M4** — GTK lifecycle + create (+ the deadlock/cancel tests). ← **START HERE next.**
-  Reuse the pure `shed_core::create::CreateStore` (from M1); stream create-progress via
-  a channel drained on the glib thread; cancel must cancel the tokio task + UI polling.
+- **M4** — GTK lifecycle + create (+ the deadlock/cancel tests). ✅ **DONE (2026-07-02):**
+  IPC shed.{start,stop,reset,delete} + create.{start,status,cancel} on the pure CreateStore
+  + a live create-progress banner; shedgtktest lifecycle/create/cancel/deadlock tests (8/8
+  on Mac + a headless-Linux smoke).
+- **M5** — `.deb` packaging + docs. ← **START HERE next.** nfpm `.deb` for shed-gtk (+
+  `.desktop`/icon), install-validate in a clean ubuntu:24.04 container; fix the stale
+  `architecture.md`/`rust-core.md` references; update `CLAUDE.md` (GTK build targets, the
+  Docker/Mac-GTK loop, the GTK IPC socket path); flip this plan's status.
 - **M5** — `.deb` packaging + docs (fix the stale `architecture.md`/`rust-core.md`
   references; update `CLAUDE.md`).
 - **M6** — GTK approval pane. **Scoped but deferred** — do NOT start it as part of

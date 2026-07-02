@@ -1,8 +1,8 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M3 done**
-(2026-07-02); M4–M6 pending. Plan revised 2026-07-02 to add a **Mac-native GTK dev target**
-(Homebrew). All Rust-core + client work lives on the single `feat/rust-core` branch.
+**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M4 done**
+(2026-07-02); M5 pending, M6 deferred. Plan revised 2026-07-02 to add a **Mac-native GTK dev
+target** (Homebrew). All Rust-core + client work lives on the single `feat/rust-core` branch.
 
 ## Context
 
@@ -307,7 +307,20 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
 - **Acceptance:** headless pytest drives the GTK app — `dashboard.dump` matches the fixture
   sheds, `screenshot` returns a non-empty PNG — green in CI and local Docker.
 
-### M4 — `shed-gtk` lifecycle + create
+### M4 — `shed-gtk` lifecycle + create — ✅ DONE (2026-07-02)
+
+> **Landed:** IPC `shed.{start,stop,reset,delete}` (backend resolves the client by host, or
+> `default_server`) + `sheds.refresh` (a `UiRequest::Refresh` re-fetches + re-renders on the
+> glib thread); `create.{start,status,cancel}` on the **pure `shed_core::create::CreateStore`**
+> (from M1) — the SSE runs on the tokio runtime, polled by id; cancel aborts the task + drops
+> the entry. A live create-progress **banner** (an AdwBanner driven by a glib-timeout poll of
+> `create_status`, with a generation guard so a newer create supersedes an older's timer).
+> `tools/shedgtktest` gains `test_gtk_lifecycle` + `test_gtk_create` (stream→complete, cancel,
+> and the **deadlock test**: `sheds.list` during a create stays responsive). Verified: 8/8 on
+> Mac + a headless-Linux (Docker+Xvfb) smoke drives lifecycle + create. Reviewed via a quality
+> agent (clean) + a Cursor correctness pass — fixed `default_server` host resolution + the
+> concurrent-banner supersession it surfaced; parallel multi-host fetch stays deferred
+> (`docs/enhancements.md`).
 
 - start / stop / reset / delete + create-with-live-SSE-progress in the GTK UI, on the **pure
   `shed-core` create orchestration** (from M1); create-progress streamed via a channel drained

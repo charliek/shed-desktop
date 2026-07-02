@@ -56,6 +56,13 @@ def gtk(app):
 
 
 @pytest.fixture(autouse=True)
-def _reset_mock(mock):
+def _reset(mock, app):
+    """Reset the mock AND re-sync the (session-scoped) app's dashboard to it, so a
+    prior test's create/lifecycle mutation can't leak into dashboard.dump."""
     mock.reset()
+    c = GtkClient(app.socket_path)
+    try:
+        c.sheds_refresh()
+    finally:
+        c.close()
     yield

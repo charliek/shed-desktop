@@ -81,6 +81,34 @@ class GtkClient:
         r = self.call("app.screenshot", {"scale": scale})
         return base64.b64decode(r["png"]), r["width"], r["height"]
 
+    def sheds_refresh(self) -> None:
+        """Re-fetch + re-render the dashboard (so dashboard.dump reflects a change)."""
+        self.call("sheds.refresh")
+
+    def shed_action(self, action: str, name: str, host: str | None = None) -> None:
+        params: dict = {"name": name}
+        if host:
+            params["host"] = host
+        self.call(f"shed.{action}", params)
+
+    def create_start(self, name: str, host: str | None = None, **fields) -> str:
+        params: dict = {"name": name, **fields}
+        if host:
+            params["host"] = host
+        return self.call("create.start", params)["create_id"]
+
+    def create_status(self, create_id: str) -> dict:
+        return self.call("create.status", {"create_id": create_id})
+
+    def create_cancel(self, create_id: str) -> None:
+        self.call("create.cancel", {"create_id": create_id})
+
+    def shed_status(self, name: str) -> str | None:
+        for s in self.sheds_list():
+            if s["name"] == name:
+                return s["status"]
+        return None
+
     def wait_until(self, pred, timeout: float = 10.0, what: str = "condition") -> None:
         eff = scaled_timeout(timeout)
         deadline = time.monotonic() + eff

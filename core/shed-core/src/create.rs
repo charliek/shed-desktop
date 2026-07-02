@@ -20,7 +20,8 @@ use crate::http::{Client, CreateSink};
 use crate::models::{CreateShedRequest, Shed};
 
 /// The state of an in-flight create (maps to Swift's `CreateState` wire strings).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CreateState {
     Progress,
     Complete,
@@ -28,7 +29,7 @@ pub enum CreateState {
 }
 
 /// A snapshot of an in-flight create, returned by [`CreateStore::status`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct CreateProgress {
     pub id: String,
     pub state: CreateState,

@@ -21,6 +21,7 @@ use libadwaita::{Application, ApplicationWindow};
 use tokio::runtime::Handle;
 use tokio::sync::mpsc;
 
+use shed_core::create::CreateState;
 use shed_core::models::{Shed, ShedStatus};
 use shed_gtk::backend::Backend;
 use shed_gtk::ipc::UiRequest;
@@ -52,8 +53,12 @@ impl App {
         let header = libadwaita::HeaderBar::new();
         header.set_title_widget(Some(&libadwaita::WindowTitle::new("shed", "")));
 
+        // A live create-progress banner, revealed only while a create runs.
+        let banner = libadwaita::Banner::new("");
+
         let root = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
         root.append(&header);
+        root.append(&banner);
         root.append(&scrolled);
 
         let window = ApplicationWindow::builder()
@@ -65,27 +70,26 @@ impl App {
             .build();
         window.present();
 
-        // Shared rendered-sheds state (glib-thread only): the bootstrap fetch
-        // writes it; `dashboard.dump` reads it. Rc<RefCell> is the idiomatic
-        // single-thread shared-mutable; the borrow is always cloned out before a
-        // reply, so no borrow is ever held across an `.await`.
+        // Shared rendered-sheds state (glib-thread only): fetches write it;
+        // `dashboard.dump` reads it. Rc<RefCell> is the idiomatic single-thread
+        // shared-mutable; the borrow is always cloned out before a reply/await, so
+        // no borrow is ever held across an `.await`.
         let sheds_state: Rc<RefCell<Vec<Shed>>> = Rc::new(RefCell::new(Vec::new()));
+        // Banner generation: concurrent creates share one banner, so only the
+        // latest owns it — an older timer stops once the generation moves on.
+        let banner_gen: Rc<RefCell<u64>> = Rc::new(RefCell::new(0));
 
-        // Bootstrap fetch — the one-shot read bridge. `list_weak` (a !Send GTK
-        // ref) is captured only by this local future; the reqwest work runs on
-        // the tokio runtime via `rt.spawn`, whose `JoinHandle` we await here.
-        let list_weak = list.downgrade();
-        let state_for_boot = sheds_state.clone();
-        glib::spawn_future_local(async move {
-            let sheds = rt
-                .spawn(async move { backend.list_sheds().await })
-                .await
-                .unwrap_or_default();
-            *state_for_boot.borrow_mut() = sheds.clone();
-            if let Some(list) = list_weak.upgrade() {
-                render_sheds(&list, &sheds);
-            }
-        });
+        // Bootstrap fetch (the one-shot read bridge). `refresh_dashboard` is the
+        // shared fetch→store→render path, reused by `sheds.refresh`.
+        {
+            let rt = rt.clone();
+            let backend = backend.clone();
+            let state = sheds_state.clone();
+            let list_weak = list.downgrade();
+            glib::spawn_future_local(async move {
+                refresh_dashboard(&rt, &backend, &state, &list_weak).await;
+            });
+        }
 
         // Drain UiRequests on the glib main thread (the !Send bridge): each op
         // touches GTK widgets / UI state here, replying over its oneshot. Only the
@@ -93,6 +97,9 @@ impl App {
         if let Some(mut ui_rx) = ui_rx {
             let window_for_drain = window.clone();
             let state_for_drain = sheds_state.clone();
+            let list_weak = list.downgrade();
+            let banner_for_drain = banner.clone();
+            let banner_gen_for_drain = banner_gen.clone();
             glib::spawn_future_local(async move {
                 while let Some(req) = ui_rx.recv().await {
                     match req {
@@ -103,6 +110,22 @@ impl App {
                             let rows = state_for_drain.borrow().clone();
                             let _ = reply.send(rows);
                         }
+                        UiRequest::Refresh { reply } => {
+                            refresh_dashboard(&rt, &backend, &state_for_drain, &list_weak).await;
+                            let _ = reply.send(());
+                        }
+                        UiRequest::CreateStarted { id, name } => {
+                            *banner_gen_for_drain.borrow_mut() += 1;
+                            let gen = *banner_gen_for_drain.borrow();
+                            show_create_progress(
+                                &banner_for_drain,
+                                &backend,
+                                id,
+                                name,
+                                banner_gen_for_drain.clone(),
+                                gen,
+                            );
+                        }
                     }
                 }
             });
@@ -110,6 +133,80 @@ impl App {
 
         Self
     }
+}
+
+/// Fetch sheds via shed-core on the tokio runtime, then store + render on the
+/// glib thread. The one-shot read bridge: the reqwest work is spawned on `rt` and
+/// its `JoinHandle` awaited here; the `RefCell` borrow is taken only after the
+/// await, never across it.
+async fn refresh_dashboard(
+    rt: &Handle,
+    backend: &Arc<Backend>,
+    state: &Rc<RefCell<Vec<Shed>>>,
+    list_weak: &glib::WeakRef<gtk4::ListBox>,
+) {
+    let backend = backend.clone();
+    let sheds = rt
+        .spawn(async move { backend.list_sheds().await })
+        .await
+        .unwrap_or_default();
+    *state.borrow_mut() = sheds.clone();
+    if let Some(list) = list_weak.upgrade() {
+        render_sheds(&list, &sheds);
+    }
+}
+
+/// Reveal a live create-progress banner and poll `create_status` on a glib
+/// timeout (a sync store read — no reqwest, so no runtime needed) until the
+/// create completes/errors, or is cancelled (its entry is gone).
+fn show_create_progress(
+    banner: &libadwaita::Banner,
+    backend: &Arc<Backend>,
+    id: String,
+    name: String,
+    gen_cell: Rc<RefCell<u64>>,
+    my_gen: u64,
+) {
+    banner.set_title(&format!("Creating {name}\u{2026}"));
+    banner.set_revealed(true);
+    let banner = banner.clone();
+    let backend = backend.clone();
+    glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+        // A newer create superseded this one → stop; the newer timer owns the banner.
+        if *gen_cell.borrow() != my_gen {
+            return glib::ControlFlow::Break;
+        }
+        match backend.create_status(&id) {
+            None => {
+                banner.set_revealed(false);
+                glib::ControlFlow::Break
+            }
+            Some(p) => match p.state {
+                CreateState::Progress => {
+                    if let Some(msg) = p.messages.last() {
+                        banner.set_title(&format!("Creating {name}: {msg}"));
+                    }
+                    glib::ControlFlow::Continue
+                }
+                CreateState::Complete => {
+                    banner.set_title(&format!("Created {name}"));
+                    let b = banner.clone();
+                    let gen_cell = gen_cell.clone();
+                    glib::timeout_add_local_once(std::time::Duration::from_secs(3), move || {
+                        if *gen_cell.borrow() == my_gen {
+                            b.set_revealed(false);
+                        }
+                    });
+                    glib::ControlFlow::Break
+                }
+                CreateState::Error => {
+                    let e = p.error.as_deref().unwrap_or("unknown error");
+                    banner.set_title(&format!("Create failed: {e}"));
+                    glib::ControlFlow::Break
+                }
+            },
+        }
+    });
 }
 
 fn render_sheds(list: &gtk4::ListBox, sheds: &[Shed]) {

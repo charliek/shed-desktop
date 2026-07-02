@@ -17,9 +17,10 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedReadHalf;
 use tokio::net::{UnixListener, UnixStream};
+use tokio::runtime::Handle;
 use tokio::sync::{mpsc, oneshot};
 
-use shed_core::models::Shed;
+use shed_core::models::{CreateShedRequest, Shed};
 
 use crate::backend::Backend;
 use crate::env::Env;
@@ -50,6 +51,12 @@ pub enum UiRequest {
     /// assertion backbone (unlike the best-effort screenshot). Returns the sheds
     /// the UI currently shows (its rendered state), read on the glib thread.
     Dump { reply: oneshot::Sender<Vec<Shed>> },
+    /// Re-fetch sheds via shed-core, update the dashboard's rendered state, and
+    /// re-render — so `dashboard.dump` reflects a lifecycle/create change.
+    Refresh { reply: oneshot::Sender<()> },
+    /// A create just started; the UI shows a live-progress banner (polling
+    /// `create_status` on a glib timeout) until it completes/errors.
+    CreateStarted { id: String, name: String },
 }
 
 /// Services one op at a time; owned by the server and shared across connections.
@@ -77,7 +84,15 @@ impl Handler {
         match op {
             "identify" => Ok(self.identify()),
             "sheds.list" => Ok(json!({ "sheds": self.backend.list_sheds().await })),
+            "sheds.refresh" => self.sheds_refresh().await,
             "dashboard.dump" => self.dashboard_dump().await,
+            "shed.start" => self.shed_action(params, "start").await,
+            "shed.stop" => self.shed_action(params, "stop").await,
+            "shed.reset" => self.shed_action(params, "reset").await,
+            "shed.delete" => self.shed_action(params, "delete").await,
+            "create.start" => self.create_start(params).await,
+            "create.status" => self.create_status(params),
+            "create.cancel" => self.create_cancel(params),
             "app.screenshot" => self.screenshot(params).await,
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
@@ -104,6 +119,92 @@ impl Handler {
             Ok(rows) => Ok(json!({ "rows": rows })),
             Err(_) => Err(err("ui_unavailable", "UI dropped the dump request")),
         }
+    }
+
+    /// `shed.{start,stop,reset,delete}` → the lifecycle action on `{host?, name}`.
+    async fn shed_action(&self, params: &Value, action: &str) -> Result<Value, (String, String)> {
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("bad_request", "missing 'name'"))?;
+        let host = params.get("host").and_then(Value::as_str);
+        let result = match action {
+            "start" => self.backend.start(host, name).await,
+            "stop" => self.backend.stop(host, name).await,
+            "reset" => self.backend.reset(host, name).await,
+            _ => self.backend.delete(host, name).await,
+        };
+        result
+            .map(|()| json!({}))
+            .map_err(|e| err("action_failed", e.to_string()))
+    }
+
+    /// `sheds.refresh` → re-fetch + re-render the dashboard (so `dashboard.dump`
+    /// reflects a lifecycle/create change), on the glib thread.
+    async fn sheds_refresh(&self) -> Result<Value, (String, String)> {
+        let (reply, rx) = oneshot::channel();
+        self.ui_tx
+            .send(UiRequest::Refresh { reply })
+            .map_err(|_| err("ui_unavailable", "GTK UI not running"))?;
+        match rx.await {
+            Ok(()) => Ok(json!({})),
+            Err(_) => Err(err("ui_unavailable", "UI dropped the refresh request")),
+        }
+    }
+
+    /// `create.start` → kick off a create on the pure shed-core CreateStore (its
+    /// SSE stream runs on the tokio runtime); returns `{create_id}` to poll.
+    async fn create_start(&self, params: &Value) -> Result<Value, (String, String)> {
+        let name = params
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("bad_request", "missing 'name'"))?;
+        let host = params.get("host").and_then(Value::as_str);
+        let s = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+        let req = CreateShedRequest {
+            name: name.to_string(),
+            repo: s("repo"),
+            local_dir: s("local_dir"),
+            image: s("image"),
+            backend: s("backend"),
+            cpus: params.get("cpus").and_then(Value::as_i64),
+            memory_mb: params.get("memory_mb").and_then(Value::as_i64),
+            no_provision: params.get("no_provision").and_then(Value::as_bool),
+        };
+        let id = self
+            .backend
+            .create_start(&Handle::current(), host, req)
+            .map_err(|e| err("action_failed", e.to_string()))?;
+        // Best-effort: tell the UI to show a live-progress banner. A dropped send
+        // (no UI) is fine — the create still runs and is pollable via create.status.
+        let _ = self.ui_tx.send(UiRequest::CreateStarted {
+            id: id.clone(),
+            name: name.to_string(),
+        });
+        Ok(json!({ "create_id": id }))
+    }
+
+    /// `create.status` → the in-flight create's progress snapshot, or
+    /// `{state: "unknown"}` once it's cancelled/gone.
+    fn create_status(&self, params: &Value) -> Result<Value, (String, String)> {
+        let id = params
+            .get("create_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("bad_request", "missing 'create_id'"))?;
+        match self.backend.create_status(id) {
+            Some(progress) => Ok(json!(progress)),
+            None => Ok(json!({ "state": "unknown" })),
+        }
+    }
+
+    /// `create.cancel` → abort a create's stream + drop its state (idempotent).
+    fn create_cancel(&self, params: &Value) -> Result<Value, (String, String)> {
+        let id = params
+            .get("create_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| err("bad_request", "missing 'create_id'"))?;
+        self.backend.create_cancel(id);
+        Ok(json!({}))
     }
 
     /// `app.screenshot` → render the window on the GTK thread and return
