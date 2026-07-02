@@ -1,7 +1,7 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
 **Status:** PLANNED — panel-reviewed (Codex + Kimi + CodeRabbit), hardened, awaiting
-implementation on `feat/rust-clients`.
+implementation. All Rust-core + client work lives on the single `feat/rust-core` branch.
 
 ## Context
 

@@ -4,7 +4,8 @@ Directions we may take, not a schedule. Today's app is a complete macOS control 
 dashboard + lifecycle, the remote-control launcher, the SSH-credential approval gate, the
 System (disk) pane, and notarized Sparkle auto-update. The **active** thrust is the shared
 Rust core and the multi-client story it unlocks; the rest are recorded so the gaps are
-explicit.
+explicit. Smaller quality-of-life items and deferred follow-ups are collected in
+[Known enhancements](enhancements.md).
 
 ## Shared Rust core & multi-client (active)
 
