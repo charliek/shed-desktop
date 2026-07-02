@@ -1,7 +1,8 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** PLANNED — panel-reviewed (Codex + Kimi + CodeRabbit), hardened, awaiting
-implementation. All Rust-core + client work lives on the single `feat/rust-core` branch.
+**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0
+done** (2026-07-01); M1–M6 pending. All Rust-core + client work lives on the single
+`feat/rust-core` branch.
 
 ## Context
 
@@ -120,7 +121,19 @@ the phase's only user-facing risk. **M1 (Linux core) must be green before M0 shi
 default**, and M0's real ship-gate is the Phase-1 deferred safety nets below (not merely a
 green e2e). The GTK milestones (M2–M5) can proceed in parallel with M0's dogfooding window.
 
-### M0 — macOS: the Rust core becomes the default (properly gated)
+### M0 — macOS: the Rust core becomes the default (properly gated) — ✅ DONE (2026-07-01)
+
+> **Landed:** `ShedBackend` defaults `rustCore` on (`!= "0"`); `ShedServerClient` fails a
+> host **loudly** (via `configError`) when the Rust adapter can't construct instead of a
+> silent Swift downgrade; `tools/shedtest/ui.py` inverted (unset ⇒ rust, `=0` forwarded).
+> Ship-gates realized as `tools/shedtest/m0_ship_gates.py` (`make m0-gates`) + a CI step:
+> arm64-only Mach-Os, a binary-size budget, a cold-launch budget, and a **byte-identical
+> cross-backend golden diff** of `sheds.list`/`system.df`/`images.list` (Rust vs Swift).
+> Verified: build, 121 Swift units, both e2e legs (rust default + `=0` swift, 64 each), and
+> the gate on debug + release bundles all green; release binary 8.6 MB, arm64-only. The
+> stale `architecture.md`/`rust-core.md` "flag off by default" lines are fixed in **M5**
+> (tracked in `docs/enhancements.md`); the dogfooding window before a release ships is the
+> maintainer's gate.
 
 Code change (small): default `SHED_DESKTOP_RUST_CORE` **on** in `ShedBackend.start`
 (`Sources/ShedKit/Backend/ShedBackend.swift:74`); `SHED_DESKTOP_RUST_CORE=0` forces the Swift

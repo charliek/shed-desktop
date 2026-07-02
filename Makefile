@@ -51,15 +51,22 @@ core-fmt:  ## cargo fmt the Rust core
 
 # ---- test -------------------------------------------------------------
 
-.PHONY: test e2e e2e-ci smoke smoke-real-launch smoke-launch-window
+.PHONY: test e2e e2e-ci e2e-swift m0-gates smoke smoke-real-launch smoke-launch-window
 test: core  ## swift test (ShedKit unit tests + Rust FFI canary)
 	swift test
 
 e2e:  ## pytest functional harness against a running/auto-launched app
 	uv run --group test pytest tools/shedtest
 
-e2e-ci: bundle  ## E2E at CI parity: fresh, test-mode, hermetic mock server
+e2e-ci: bundle  ## E2E at CI parity: fresh, test-mode, hermetic mock (Rust core, default)
 	SHED_DESKTOP_TEST_MODE=1 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+
+e2e-swift: bundle  ## E2E with the Rust core forced off (SHED_DESKTOP_RUST_CORE=0 fallback leg)
+	SHED_DESKTOP_TEST_MODE=1 SHED_DESKTOP_RUST_CORE=0 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+
+m0-gates:  ## M0 ship-gates (release bundle): arm64/size/cold-launch + golden cross-backend byte-diff
+	./scripts/bundle.sh release
+	SHED_DESKTOP_SIZE_BUDGET_MB=20 uv run --group test python tools/shedtest/m0_ship_gates.py
 
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh

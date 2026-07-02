@@ -30,10 +30,11 @@ public final class ShedBackend {
     /// harness can fail fast if a run isn't actually hermetic.
     public private(set) var mockBaseURL: String?
 
-    /// `SHED_DESKTOP_RUST_CORE=1` — route read ops through the Rust shed-core
-    /// (Phase 1 rollout flag; default off). Reported by `identify` as `core` so
-    /// the parity run can confirm the backend actually switched.
-    public private(set) var rustCore: Bool = false
+    /// Route read/lifecycle/create ops through the Rust shed-core. Default **on**
+    /// (M0); `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift `URLSession` path
+    /// (a rollback escape hatch kept for ≥2 releases). Reported by `identify` as
+    /// `core` so the parity run can confirm which backend is active.
+    public private(set) var rustCore: Bool = true
 
     /// Path to the shed config the app should read. Defaults to
     /// ~/.shed/config.yaml; overridable via `SHED_DESKTOP_SHED_CONFIG` so
@@ -71,7 +72,7 @@ public final class ShedBackend {
         let env = ProcessInfo.processInfo.environment
         self.testMode = env["SHED_DESKTOP_TEST_MODE"] == "1"
         self.mockBaseURL = env["SHED_DESKTOP_MOCK_BASE_URL"]
-        self.rustCore = env["SHED_DESKTOP_RUST_CORE"] == "1"
+        self.rustCore = env["SHED_DESKTOP_RUST_CORE"] != "0"
 
         let home = (env["HOME"] ?? NSHomeDirectory()) as NSString
         self.shedConfigPath = env["SHED_DESKTOP_SHED_CONFIG"]

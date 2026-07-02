@@ -23,6 +23,10 @@ Check items off (or strike them) as they land.
   shed); add an `x86_64-unknown-linux-gnu` CI leg so both are covered.
 - [ ] **CI path-filter (`changes`) job** so the Linux/GTK/Xvfb jobs skip Mac-only
   and docs-only PRs (mirror roost's `changes` job) — keeps Mac PR feedback fast.
+- [ ] **Release-bundle size gate in CI.** M0's CI step runs arm64 + cold-launch +
+  the golden cross-backend byte-diff against the *debug* bundle (fast, per-PR);
+  the release-size budget is enforced by `make m0-gates` (pre-ship). Fold a
+  release-bundle size check into CI if the debug proxy proves too loose.
 - [ ] **Snapshot-cache the GTK test box.** `tools/shed/shed-test.sh --snapshot-base`
   the `sd-gtk-dev` shed (and/or a CI image) so cold boots skip the provision hook.
 

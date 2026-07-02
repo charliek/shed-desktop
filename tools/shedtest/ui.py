@@ -102,10 +102,12 @@ def launch(*, mock_base_url: str, config_path: Path, state_dir: Path,
     # Throwaway UserDefaults suite so preferences never touch the dev's real
     # defaults (the SHED_DESKTOP_STATE_DIR analog for UserDefaults).
     argv += ["--env", f"SHED_DESKTOP_DEFAULTS_SUITE={DEFAULTS_SUITE}"]
-    # Forward the Rust-core rollout flag when the harness set it, so the parity
-    # run actually exercises the Rust read path (confirmed via identify's `core`).
-    if os.environ.get("SHED_DESKTOP_RUST_CORE") == "1":
-        argv += ["--env", "SHED_DESKTOP_RUST_CORE=1"]
+    # The Rust core is the default (M0). Forward SHED_DESKTOP_RUST_CORE verbatim
+    # whenever the harness set it, so the `=0` Swift-fallback leg is exercised
+    # (and an explicit `=1` still works). Unset ⇒ the app defaults to rust.
+    rust_core = os.environ.get("SHED_DESKTOP_RUST_CORE")
+    if rust_core is not None:
+        argv += ["--env", f"SHED_DESKTOP_RUST_CORE={rust_core}"]
     argv += [str(APP)]
     subprocess.run(argv, check=True)
     wait_alive(mock_base_url=mock_base_url)
@@ -123,9 +125,11 @@ def wait_alive(*, mock_base_url: str, timeout: float = 30.0) -> None:
             try:
                 info = c.identify()
                 # Confirm the active backend matches the flag so a silent Rust->
-                # Swift fallback (the adapter is built with try?) can't make a
-                # parity run falsely green.
-                want_core = "rust" if os.environ.get("SHED_DESKTOP_RUST_CORE") == "1" else "swift"
+                # Swift downgrade can't make a run falsely green. A per-host Rust
+                # adapter failure now fails loudly via configError (see
+                # ShedServerClient) rather than quietly serving over Swift.
+                # Default-on (M0): unset ⇒ rust; only an explicit `=0` selects swift.
+                want_core = "swift" if os.environ.get("SHED_DESKTOP_RUST_CORE") == "0" else "rust"
                 if (info.get("test_mode")
                         and info.get("mock_base_url") == mock_base_url
                         and info.get("core") == want_core):

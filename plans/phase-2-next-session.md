@@ -21,20 +21,24 @@ that way — commit onto `feat/rust-core`; don't spin up a new branch per phase.
   decoders, control-token FSM, TLS pinning) — plus `core/shed-core-ffi` (a UniFFI
   staticlib) consumed by the Swift app behind `SHED_DESKTOP_RUST_CORE` (currently
   **off** by default), with dual-backend e2e parity.
-- **Phase 2 (planned + de-risked; implementation NOT started):** the panel-hardened
-  plan is `plans/phase-2-rust-clients.md`. Already proven: `shed-core` builds + **51
-  tests pass + clippy clean on aarch64 Linux** (Docker and a shed). The shed-based
-  GTK test loop is validated end-to-end, and a provisioned `sd-gtk-dev` shed is
-  **stopped and ready** (`tools/shed/shed-test.sh`).
+- **Phase 2 (in progress):** the panel-hardened plan is
+  `plans/phase-2-rust-clients.md`. **M0 is done** (2026-07-01): the Rust core is the
+  macOS default (`SHED_DESKTOP_RUST_CORE=0` forces Swift), a per-host Rust-adapter
+  failure fails loudly instead of downgrading to Swift, the harness is inverted, and
+  the ship-gates (`make m0-gates` / a CI step) assert arm64-only + size + cold-launch
+  + a **byte-identical cross-backend golden diff**. **M1 is next.** Already proven for
+  the GTK legs: `shed-core` builds + **51 tests pass + clippy clean on aarch64 Linux**
+  (Docker and a shed); the shed-based GTK test loop is validated end-to-end, and a
+  provisioned `sd-gtk-dev` shed is **stopped and ready** (`tools/shed/shed-test.sh`).
 
 ## Your task
 
 Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
 
-- **M0** — make the Rust core the macOS **default** (properly gated). *Start here* —
-  it's the one milestone buildable + verifiable natively on the Mac.
+- **M0** — make the Rust core the macOS **default** (properly gated). ✅ **DONE
+  (2026-07-01).**
 - **M1** — `shed-core` on Linux CI + hoist the create orchestration into pure
-  `shed-core`.
+  `shed-core`. ← **START HERE next.**
 - **M2** — `shed-gtk` skeleton + minimal IPC (identify/wait_alive/sheds.list) +
   the full-schema config parser.
 - **M3** — GTK drivability: a `dashboard.dump` truth op + screenshot + pytest under

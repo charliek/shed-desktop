@@ -37,16 +37,30 @@ jobs:
         run: ./scripts/bundle.sh debug
       - name: Install uv
         uses: astral-sh/setup-uv@v6
-      - name: Hermetic E2E
-        # Headless GUI launch via `open`; the screenshot op renders
-        # in-process so no screen-recording TCC grant is needed. Slower CI
-        # gets a wider wait budget.
+      - name: Hermetic E2E (Rust core — default)
+        # Default-on since M0: with no flag the Rust shed-core backs reads/
+        # lifecycle/create. Headless GUI launch via `open`; the screenshot op
+        # renders in-process so no screen-recording TCC grant is needed.
+        # wait_alive asserts identify.core=rust, and a Rust-adapter construction
+        # failure now fails the host loudly (no silent Swift fallback), so a
+        # false-green can't slip through. Slower CI gets a wider wait budget.
         run: SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
-      - name: Hermetic E2E (Rust-core parity)
-        # The same suite with reads/lifecycle/create routed through the Rust core.
-        # wait_alive asserts identify.core=rust, so a silent Swift fallback fails
-        # rather than passing a false-green parity run.
-        run: SHED_DESKTOP_RUST_CORE=1 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+      - name: Hermetic E2E (Swift fallback — SHED_DESKTOP_RUST_CORE=0)
+        # The rollback escape hatch (kept ≥2 releases): the legacy Swift URLSession
+        # path. wait_alive asserts identify.core=swift, so the fallback stays
+        # reachable and green.
+        run: SHED_DESKTOP_RUST_CORE=0 SHED_DESKTOP_TEST_TIMEOUT_SCALE=4 uv run --group test pytest tools/shedtest -q
+      - name: M0 ship-gates (arm64 + cold-launch + golden cross-backend byte-diff)
+        # The deferred Phase-1 safety nets for the default flip: arm64-only Mach-Os,
+        # a cold-launch budget, and a BYTE-IDENTICAL Rust-vs-Swift IPC payload diff
+        # (the cross-backend parity guard). Runs against the debug bundle here for a
+        # continuous per-PR guard; `make m0-gates` runs the same checks on a release
+        # bundle for the pre-ship size budget. A slower CI runner gets a wider
+        # cold-launch budget.
+        run: >
+          SHED_DESKTOP_TEST_TIMEOUT_SCALE=4
+          SHED_DESKTOP_COLD_LAUNCH_BUDGET_S=30
+          uv run --group test python tools/shedtest/m0_ship_gates.py
       - name: Real-launch smoke
         # Non-test launch on a fresh runner (undetermined notification auth) —
         # exercises the real SystemNotificationPresenter path the hermetic suite
