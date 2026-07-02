@@ -19,6 +19,8 @@ use tokio::net::unix::OwnedReadHalf;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 
+use shed_core::models::Shed;
+
 use crate::backend::Backend;
 use crate::env::Env;
 
@@ -44,6 +46,10 @@ pub enum UiRequest {
         scale: u32,
         reply: oneshot::Sender<ScreenshotResult>,
     },
+    /// Snapshot the dashboard's rendered sheds as data — the deterministic
+    /// assertion backbone (unlike the best-effort screenshot). Returns the sheds
+    /// the UI currently shows (its rendered state), read on the glib thread.
+    Dump { reply: oneshot::Sender<Vec<Shed>> },
 }
 
 /// Services one op at a time; owned by the server and shared across connections.
@@ -71,6 +77,7 @@ impl Handler {
         match op {
             "identify" => Ok(self.identify()),
             "sheds.list" => Ok(json!({ "sheds": self.backend.list_sheds().await })),
+            "dashboard.dump" => self.dashboard_dump().await,
             "app.screenshot" => self.screenshot(params).await,
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
@@ -85,6 +92,18 @@ impl Handler {
             "test_mode": self.env.test_mode,
             "mock_base_url": self.env.mock_base_url,
         })
+    }
+
+    /// `dashboard.dump` → the sheds the UI currently shows, as data (`{rows: [...]}`).
+    async fn dashboard_dump(&self) -> Result<Value, (String, String)> {
+        let (reply, rx) = oneshot::channel();
+        self.ui_tx
+            .send(UiRequest::Dump { reply })
+            .map_err(|_| err("ui_unavailable", "GTK UI not running"))?;
+        match rx.await {
+            Ok(rows) => Ok(json!({ "rows": rows })),
+            Err(_) => Err(err("ui_unavailable", "UI dropped the dump request")),
+        }
     }
 
     /// `app.screenshot` → render the window on the GTK thread and return

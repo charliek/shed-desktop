@@ -88,7 +88,7 @@ core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring need
 
 # ---- test -------------------------------------------------------------
 
-.PHONY: test e2e e2e-ci e2e-swift m0-gates smoke smoke-real-launch smoke-launch-window
+.PHONY: test e2e e2e-ci e2e-swift e2e-gtk m0-gates smoke smoke-real-launch smoke-launch-window
 test: core  ## swift test (ShedKit unit tests + Rust FFI canary)
 	swift test
 
@@ -104,6 +104,9 @@ e2e-swift: bundle  ## E2E with the Rust core forced off (SHED_DESKTOP_RUST_CORE=
 m0-gates:  ## M0 ship-gates (release bundle): arm64/size/cold-launch + golden cross-backend byte-diff
 	./scripts/bundle.sh release
 	SHED_DESKTOP_SIZE_BUDGET_MB=20 uv run --group test python tools/shedtest/m0_ship_gates.py
+
+e2e-gtk: gtk-build  ## GTK e2e: hermetic pytest vs a harness-owned shed-gtk (needs a display; Xvfb on Linux)
+	uv run --group test pytest tools/shedgtktest -q
 
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh

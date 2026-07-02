@@ -10,6 +10,8 @@
 //! `Vec<Shed>`/PNG `Vec<u8>` out — the `glib::Bytes` texture is flattened to
 //! `Vec<u8>` on the main thread before it crosses the reply channel).
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gtk4::glib;
@@ -63,30 +65,43 @@ impl App {
             .build();
         window.present();
 
+        // Shared rendered-sheds state (glib-thread only): the bootstrap fetch
+        // writes it; `dashboard.dump` reads it. Rc<RefCell> is the idiomatic
+        // single-thread shared-mutable; the borrow is always cloned out before a
+        // reply, so no borrow is ever held across an `.await`.
+        let sheds_state: Rc<RefCell<Vec<Shed>>> = Rc::new(RefCell::new(Vec::new()));
+
         // Bootstrap fetch — the one-shot read bridge. `list_weak` (a !Send GTK
         // ref) is captured only by this local future; the reqwest work runs on
         // the tokio runtime via `rt.spawn`, whose `JoinHandle` we await here.
         let list_weak = list.downgrade();
+        let state_for_boot = sheds_state.clone();
         glib::spawn_future_local(async move {
             let sheds = rt
                 .spawn(async move { backend.list_sheds().await })
                 .await
                 .unwrap_or_default();
+            *state_for_boot.borrow_mut() = sheds.clone();
             if let Some(list) = list_weak.upgrade() {
                 render_sheds(&list, &sheds);
             }
         });
 
         // Drain UiRequests on the glib main thread (the !Send bridge): each op
-        // touches GTK widgets here, replying over its oneshot. Only the first
-        // (real) activation owns the receiver.
+        // touches GTK widgets / UI state here, replying over its oneshot. Only the
+        // first (real) activation owns the receiver.
         if let Some(mut ui_rx) = ui_rx {
             let window_for_drain = window.clone();
+            let state_for_drain = sheds_state.clone();
             glib::spawn_future_local(async move {
                 while let Some(req) = ui_rx.recv().await {
                     match req {
                         UiRequest::Screenshot { scale, reply } => {
                             let _ = reply.send(render_window_png(&window_for_drain, scale));
+                        }
+                        UiRequest::Dump { reply } => {
+                            let rows = state_for_drain.borrow().clone();
+                            let _ = reply.send(rows);
                         }
                     }
                 }

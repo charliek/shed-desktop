@@ -112,6 +112,39 @@ jobs:
           cargo clippy -p shed-gtk --all-targets --locked -- -D warnings
           cargo test -p shed-gtk --lib --locked
 
+  e2e-gtk:
+    name: e2e-gtk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustc --version && cargo --version
+      - name: GTK + Xvfb + mesa
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev libgl1-mesa-dri xvfb
+      - name: Build shed-gtk
+        working-directory: core
+        run: cargo build -p shed-gtk --locked
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+      - name: Hermetic GTK E2E (headless Xvfb)
+        # Virtual display via xvfb-run; GDK_BACKEND=x11. GSK_RENDERER=cairo forces
+        # the software renderer so the screenshot op doesn't depend on the runner's
+        # GL stack (the headless-GL trap) — dashboard.dump is the assertion gate;
+        # the screenshot only asserts a non-empty PNG. A wider timeout scale buys
+        # headroom on a shared runner (proven headless: Docker+Xvfb+cairo locally).
+        env:
+          GDK_BACKEND: x11
+          GSK_RENDERER: cairo
+          SHED_GTK_TEST_TIMEOUT_SCALE: "3"
+        run: >
+          xvfb-run -a --server-args="-screen 0 1600x1200x24"
+          uv run --group test pytest tools/shedgtktest -q
+      - name: GTK E2E diagnostics (on failure)
+        if: failure()
+        run: find "${TMPDIR:-/tmp}" -name shed-gtk.log -path '*shed-gtk-e2e-*' -exec sh -c 'echo "== $1 =="; cat "$1"' _ {} \; || true
+
   docs:
     name: docs build
     runs-on: ubuntu-latest
@@ -126,7 +159,7 @@ jobs:
   # leg (and release.yml's ci-gate can poll this one name).
   ci-success:
     name: ci-success
-    needs: [swift, core-linux, gtk-build, docs]
+    needs: [swift, core-linux, gtk-build, e2e-gtk, docs]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "build · test · e2e + core-linux + gtk-build + docs are green"
+      - run: echo "build · test · e2e + core-linux + gtk-build + e2e-gtk + docs are green"

@@ -1,9 +1,8 @@
 # Phase 2 — Prove the shared Rust core across platforms (macOS default-on + GTK/Linux client)
 
-**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M2 done**
-(2026-07-02); M3 in progress (the `screenshot` op landed early); M4–M6 pending. Plan revised
-2026-07-02 to add a **Mac-native GTK dev target** (Homebrew). All Rust-core + client work lives
-on the single `feat/rust-core` branch.
+**Status:** IN PROGRESS — panel-reviewed (Codex + Kimi + CodeRabbit), hardened. **M0–M3 done**
+(2026-07-02); M4–M6 pending. Plan revised 2026-07-02 to add a **Mac-native GTK dev target**
+(Homebrew). All Rust-core + client work lives on the single `feat/rust-core` branch.
 
 ## Context
 
@@ -278,7 +277,18 @@ Ship-gate (the deferred Phase-1 safety nets — this flip is exactly what they w
   `sheds.list` over IPC returns the fixture sheds. `cargo test -p shed-gtk` (the `lib.rs`
   surface: IPC dispatch, config parsing) runs **without a display**.
 
-### M3 — `shed-gtk` drivability: a data-dump truth op + screenshot + pytest under Xvfb
+### M3 — `shed-gtk` drivability: a data-dump truth op + screenshot + pytest under Xvfb — ✅ DONE (2026-07-02)
+
+> **Landed:** a `dashboard.dump` truth op (the App's rendered-sheds state, read on the glib
+> thread via the `UiRequest` bridge — the deterministic assertion backbone) alongside the
+> `screenshot` op (M2). A `tools/shedgtktest` pytest harness (harness-owned shed-gtk, temp
+> HOME + XDG_RUNTIME_DIR, fixture config, reusing `tools/shedtest/mockserver.py`; a
+> `SHED_GTK_TEST_TIMEOUT_SCALE` knob) with `test_gtk_identify` / `test_gtk_dashboard`
+> (dump + list vs fixtures) / `test_gtk_screenshot` (non-empty PNG). An `e2e-gtk` CI job on
+> bare `ubuntu-latest` under `xvfb-run` (`GDK_BACKEND=x11`, `GSK_RENDERER=cairo` so the render
+> is decoupled from the runner's GL stack), folded into `ci-success`. Verified green on **both**
+> this Mac (native display, 4/4) and **headless Linux** (Docker + Xvfb + cairo: identify +
+> dashboard.dump + a real screenshot PNG) — the flagged headless-GL trap is avoided by design.
 
 - **The assertion backbone is a data op, not the screenshot** (CodeRabbit): roost's
   determinism rests on `tab.dump` (state-as-text) with the screenshot as best-effort

@@ -49,12 +49,11 @@ Implement Phase 2 in milestone order from `plans/phase-2-rust-clients.md`:
   identify/sheds.list/screenshot), verified on aarch64 Linux (Docker) **and this
   Mac** (Homebrew GTK — now a first-class dev loop; `make gtk-run`/`gtk-build`).
 - **M3** — GTK drivability: a `dashboard.dump` truth op + screenshot + pytest under
-  Xvfb. ← **START HERE next.** The `screenshot` op already exists (pulled into M2);
-  M3 adds `dashboard.dump` (rendered rows as data — the assertion backbone), the
-  `tools/shedgtktest` pytest harness (reusing `tools/shedtest/mockserver.py`), and
-  the bare-`ubuntu-latest` `e2e-gtk` Xvfb CI job. Mac-native GTK makes the inner
-  loop fast; the CI gate stays Linux/Xvfb.
-- **M4** — GTK lifecycle + create (+ the deadlock/cancel tests).
+  Xvfb. ✅ **DONE (2026-07-02):** `dashboard.dump` + `tools/shedgtktest` (4 tests) +
+  an `e2e-gtk` Xvfb CI job; verified on Mac (native) and headless Linux (Docker+Xvfb).
+- **M4** — GTK lifecycle + create (+ the deadlock/cancel tests). ← **START HERE next.**
+  Reuse the pure `shed_core::create::CreateStore` (from M1); stream create-progress via
+  a channel drained on the glib thread; cancel must cancel the tokio task + UI polling.
 - **M5** — `.deb` packaging + docs (fix the stale `architecture.md`/`rust-core.md`
   references; update `CLAUDE.md`).
 - **M6** — GTK approval pane. **Scoped but deferred** — do NOT start it as part of
