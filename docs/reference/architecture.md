@@ -9,9 +9,11 @@ It is built as a SwiftUI app with a deliberate **core/UI split**: all I/O and lo
 a UI-free core (`ShedKit`) so they're unit-testable without a running app. The shed-server
 protocol layer (HTTP/SSE, decoding, control-token auth, TLS pinning) is extracted into a
 shared **Rust core** (`shed-core`) that backs both this macOS app and a **GTK/Linux client**
-(`shed-gtk`) without re-implementation — see [Rust core](rust-core.md). It's the macOS
-**default**; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path (a rollback escape
-hatch). A first-class design goal is that the app is
+(`shed-gtk`) without re-implementation — see [Rust core](rust-core.md). The Linux client
+ships as the `shed-desktop` binary/package (the crate keeps the name `shed-gtk`) in an nfpm
+`.deb` — with a headless `shedctl` alongside — via `charliek/apt-charliek` (`apt install
+shed-desktop`). The Rust core is the macOS **default**; `SHED_DESKTOP_RUST_CORE=0` forces the
+legacy Swift path (a rollback escape hatch). A first-class design goal is that the app is
 **drivable and observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
 
 ## Why a native app
@@ -150,8 +152,12 @@ newline-JSON socket at `~/Library/Caches/ShedDesktop/shed-desktop.sock` (mode `0
 a sibling `.lock` for single-instance). Both `shedctl` and the hermetic pytest harness speak
 this exact protocol — listing state, navigating panes, driving lifecycle/approvals, and
 capturing in-process PNG screenshots. This is the seam that lets every change be verified by
-driving the real app, not by asking a human to click. See [IPC](ipc.md) and
-[shedctl](cli.md).
+driving the real app, not by asking a human to click. The GTK/Linux client speaks the same
+protocol (mirroring the `0600` socket + flock, with a second launch handed off via an
+`app.activate` op), so **one** `tools/shedtest --target mac|gtk` harness drives both clients —
+Mac-only ops stay Mac-gated. Note the two `shedctl`s: the Swift `Sources/shedctl` bundled in
+the macOS `.app`, and the Rust `core/shedctl` shipped in the Linux `.deb` — same name,
+different platforms. See [IPC](ipc.md) and [shedctl](cli.md).
 
 ## Windows
 

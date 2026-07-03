@@ -14,12 +14,20 @@ A cargo workspace under `core/` (conventions mirror `../roost`):
   (`models.rs`), the reqwest(rustls) client (`http.rs`), the SSE parser
   (`sse.rs`), leaf-cert pinning (`tls.rs`), and the control-token FSM
   (`token.rs`), plus a `config` parser and a pull-based `create` orchestration
-  store. The `shed-gtk` GTK/Linux client links this crate directly (no UniFFI).
+  store. The Linux clients (`shed-gtk`, `shedctl`) link this crate directly (no UniFFI).
 - **`shed-core-ffi`** — a thin UniFFI wrapper (`crate-type = ["staticlib"]`)
   exposing a `ShedCore` object + records to Swift. `scripts/build-core.sh` builds
   it, runs `uniffi-bindgen`, and assembles a **static** `ShedCoreFFI.xcframework`
   linked into the app's Mach-O — no new dylib, so the release
   signing/notarization path is unaffected.
+- **`shed-gtk`** — the GTK4/libadwaita **Linux client**. Its `[[bin]]` is renamed to
+  **`shed-desktop`** — the shipped Linux binary and the `.deb` package name (the crate keeps
+  the name `shed-gtk`; the socket/env stay `SHED_GTK_*`). A second launch hands off to the
+  running instance via an `app.activate` IPC op guarded by a single-instance flock. Excluded
+  from `default-members`, so the Mac build never touches GTK.
+- **`shedctl`** — a headless UDS/IPC client (no GTK dep) shipped in the `.deb` alongside
+  `shed-desktop`, mirroring the macOS Swift `shedctl`. It *is* in `default-members`, so `make
+  core-test`/`core-lint` cover it on the Mac.
 
 `make core` builds it; `make build` / `make bundle` / CI build it before any
 SwiftPM step (the `.binaryTarget` path must exist first). The generated artifacts
@@ -72,5 +80,12 @@ and the control-token FSM. Phase 2 (done) made it the macOS default (with a
 golden-JSON cross-backend byte-diff + a size/cold-launch budget), got `shed-core`
 building/testing on **Linux**, hoisted the create orchestration + a `config` parser
 into it, and stood up the **`shed-gtk`** GTK/Linux client on the same crate (see
-`plans/phase-2-rust-clients.md`). Deferred: the GTK approval pane (M6) and
-absorbing/rewriting the credential broker in Rust (the final consolidation).
+`plans/phase-2-rust-clients.md`). Phase 3 (done) shipped the `shed-desktop` `.deb` via
+`charliek/apt-charliek` (`apt install shed-desktop`) with a bundled `shedctl`, unified the
+macOS + Linux functional suites into one `tools/shedtest --target mac|gtk` harness (the
+earlier separate GTK harness retired), and hardened GTK (single-instance handoff, parallel
+multi-host fetches); the release pipeline is `create-release → mac + linux → apt-charliek
+dispatch` (see `RELEASING.md` and `plans/phase-3-enhancements.md`). Deferred to
+`plans/phase-4-rust-core-only.md`: retiring the Swift `URLSession` path + unifying config via
+the FFI. Still deferred: the GTK approval pane (M6) and absorbing/rewriting the credential
+broker in Rust (the final consolidation).

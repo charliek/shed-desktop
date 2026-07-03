@@ -1,6 +1,8 @@
 # Phase 3 — Close out the enhancements backlog (before the Flutter spike)
 
-Status: **panel-reviewed 2026-07-02 (Codex + Kimi K2.6 + CodeRabbit) — findings folded.**
+Status: **P3.0–P3.8 complete (2026-07-03); CI-green on draft PR #26. P3.9 (merge to `main`)
+pending the maintainer.** Panel-reviewed 2026-07-02 (Codex + Kimi K2.6 + CodeRabbit) —
+findings folded.
 Branch: **`feat/rust-core`** (single branch, as with Phase 1/2). Ends with the branch
 **CI-green on a PR and ready to merge to `main`**.
 
@@ -68,7 +70,7 @@ red is a defect), each through the per-commit flow (`/simplify` → `/codex:resc
 `/cursor:rescue`] → tests+lint → commit). This is one branch/PR (single-branch convention);
 each milestone is independently green and *could* be its own PR if we ever split.
 
-### P3.0 — Get the branch onto real CI (a PR)
+### P3.0 — Get the branch onto real CI (a PR) — ✅ DONE (2026-07-03)
 
 - `git push -u origin feat/rust-core`; open a **draft PR** → `main` (CI runs `on:
   pull_request`; a plain branch push does **not** trigger it).
@@ -77,7 +79,7 @@ each milestone is independently green and *could* be its own PR if we ever split
   commits.
 - **Accept:** the PR exists, CI runs, failures understood (fixed or ticketed). Draft until P3.9.
 
-### P3.1 — Rename the produced binary/package to `shed-desktop` (CI stays green)
+### P3.1 — Rename the produced binary/package to `shed-desktop` (CI stays green) — ✅ DONE
 
 The crate + lib `shed_gtk`, all `SHED_GTK_*` env vars, and the `shed-gtk` runtime-dir/socket
 path **stay** (locked low-churn decision — documented as intentional; `-p shed-gtk` and
@@ -107,7 +109,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
   crate/env/socket references remain. User-facing docs are deferred to P3.8; dev
   code-comments updated now.
 
-### P3.2 — CI hardening: `changes` path-filter + `x86_64` leg (+ the ci-success fix)
+### P3.2 — CI hardening: `changes` path-filter + `x86_64` leg (+ the ci-success fix) — ✅ DONE
 
 - `changes` job (`dorny/paths-filter`, mirroring roost) gating `core-linux`/`gtk-build`/
   `e2e-gtk`/`deb`; `swift` stays always-on.
@@ -121,7 +123,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
 - **Accept:** a docs-only push skips the Linux jobs **and** `ci-success` still reports success;
   both `core-linux` arches green.
 
-### P3.3 — GTK robustness: single-instance (explicit IPC activate) + parallel `list_sheds`
+### P3.3 — GTK robustness: single-instance (explicit IPC activate) + parallel `list_sheds` — ✅ DONE
 
 - **Single-instance** (`core/shed-gtk/src/single_instance.rs`, roost's *actual* path):
   `fs2::try_lock_exclusive` on a pidfile in the **`shed-gtk` runtime dir**
@@ -142,7 +144,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
   **P3.6**, where the unified harness expresses "second launch" cleanly.
 - **Accept:** lib/unit tests green on Mac-native + the Linux jobs.
 
-### P3.4 — Linux `shedctl` CLI in the `.deb`
+### P3.4 — Linux `shedctl` CLI in the `.deb` — ✅ DONE
 
 - New **`core/shedctl`** crate (headless UDS client, **no GTK dep**), a `[[bin]] shedctl`: a
   generic driver (`shedctl <op> [--param k=v …]` → `{id,op,params}` → prints `result`) +
@@ -160,7 +162,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
 - **Accept:** `cargo test -p shedctl`; the `.deb` ships `shedctl`; the e2e passes; the Mac
   bundle size is unchanged.
 
-### P3.5a — Unified version bump (`update-version.sh` + `Cargo.lock`)
+### P3.5a — Unified version bump (`update-version.sh` + `Cargo.lock`) — ✅ DONE
 
 - Extend `scripts/release/update-version.sh`: after writing `VERSION`, `cd core` and bump
   `core/Cargo.toml` with an **anchored** `sed 's/^version = "…"/…/'` (the only line-anchored
@@ -173,7 +175,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
   `core/Cargo.lock`; `(cd core && cargo build --locked)` succeeds; `git checkout -- .` reverts
   clean.
 
-### P3.5b — `.deb` release wiring (release.yml restructure + apt dispatch)
+### P3.5b — `.deb` release wiring (release.yml restructure + apt dispatch) — ✅ DONE
 
 - **Restructure `release.yml` (Codex/CodeRabbit C2 — the crux):** today the mac `build` job
   creates the Release inline (`release.yml:118`); a parallel `linux` upload would race a
@@ -205,7 +207,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
   P3.5a's dry-run still green. **No real tag cut.** `sanity-check-app` (maintainer, Actions UI)
   reaches apt-charliek.
 
-### P3.6 — Unify the functional harness (`--target mac|gtk`)
+### P3.6 — Unify the functional harness (`--target mac|gtk`) — ✅ DONE
 
 - `--target` (option → `$SHED_TEST_TARGET` → default `mac`) session fixture; `ui.py`
   `TARGETS`, `socket_path(target)`, `launch(target)` (mac `open` `.app` + `SHED_DESKTOP_*`;
@@ -235,7 +237,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
 - **Accept:** full suite green on **both** `--target mac` (macOS) and `--target gtk` (Mac-native
   + Linux Xvfb); `tools/shedgtktest` deleted; a checklist maps all 11 old fns to new homes.
 
-### P3.7 — Adversarial coverage audit + gap-fill (time-boxed)
+### P3.7 — Adversarial coverage audit + gap-fill (time-boxed) — ✅ DONE
 
 - Read-only audit fan-out (parallel `Agent`s per surface: `shed-core`, `shed-gtk`+IPC, Swift
   units/e2e, the create/SSE/token/TLS/config edges) framed *"what regression slips through
@@ -247,7 +249,7 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
   the thin `shed-gtk` lib-test count.
 - **Accept:** new tests green on both targets; the audit's must-fix list empty or ticketed.
 
-### P3.8 — Docs, backlog collector, and plan hygiene
+### P3.8 — Docs, backlog collector, and plan hygiene — ✅ DONE
 
 - **Rewrite `docs/enhancements.md` into a clean, forward-looking collector** (maintainer's ask):
   - **Remove finished items entirely** — no struck-through/`[x]` cruft. What shipped lives in
@@ -266,11 +268,12 @@ user-facing binary/package/app-id/desktop/icons become `shed-desktop`. Full swee
 - `plans/phase-3-enhancements.md`: tick milestones as they land.
 - `plans/phase-4-rust-core-only.md`: **new stub** capturing the deferred "delete-Swift" items
   (retire `URLSession`, unify config via FFI).
-- Refresh `plans/phase-2-next-session.md` into a Phase-3/next kickoff.
+- Refresh the next-session kickoff: `plans/phase-3-next-session.md` (new), superseding
+  `plans/phase-2-next-session.md`.
 - **Accept:** docs match reality; no stale "Phase 2 builds the .deb but shipping is a
   follow-up" claims remain.
 
-### P3.9 — Merge readiness
+### P3.9 — Merge readiness — ⏳ pending the maintainer
 
 - CI green on the PR; mark **ready for review**.
 - The **merge to `main` is the maintainer's call** — confirm before merging. Cutting the first

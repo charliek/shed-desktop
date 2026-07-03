@@ -18,13 +18,20 @@ so the same logic backs every client instead of being re-implemented per languag
   thin `shed-core-ffi` UniFFI wrapper consumed by the Swift app behind
   `SHED_DESKTOP_RUST_CORE` (off by default), with dual-backend e2e parity. See
   `plans/phase-1-rust-core.md` and [Rust core](reference/rust-core.md).
-- **Phase 2 — prove it across platforms (in progress).** Make the Rust core the **default**
-  on macOS, get `shed-core` building/testing on **Linux**, and stand up a **GTK/Linux app**
+- **Phase 2 — prove it across platforms (shipped).** Made the Rust core the **default**
+  on macOS, got `shed-core` building/testing on **Linux**, and stood up a **GTK/Linux app**
   on the same crate — mirroring `../roost`'s rust+gtk toolchain (gtk4-rs + libadwaita, a
   pytest-over-IPC drivability harness under headless Xvfb, an nfpm `.deb`). The GTK app
   links `shed-core` directly (no UniFFI — that's Swift-only). `shed-host-agent` stays a
   **separate** process on both platforms; it already runs on Linux, so nothing is bundled or
   supervised. See `plans/phase-2-rust-clients.md`.
+- **Phase 3 — close the backlog (shipped).** Before the next direction, the enhancements
+  backlog Phase 2 accrued is closed out: the `shed-desktop` `.deb` now **ships** via
+  `charliek/apt-charliek` (end users `apt install shed-desktop`), with a headless `shedctl`
+  bundled alongside; the macOS and Linux functional suites are unified into one
+  `tools/shedtest --target mac|gtk` harness; GTK gained single-instance handoff (an
+  `app.activate` IPC op) and parallel multi-host fetches; and an adversarial coverage pass
+  hardened all three surfaces. See `plans/phase-3-enhancements.md`.
 - **Next — a third client.** A Flutter mobile spike on the same core, to exercise the API
   boundary from a very different runtime before it's frozen.
 - **Then — consolidation.** Once the clients prove the foundation: move `shed-core` into the
@@ -69,9 +76,10 @@ independently useful:
 ## Distribution
 
 - **DMG (macOS) + `.deb` (Linux).** The macOS app ships a Developer-ID-signed, notarized DMG
-  with an EdDSA-signed Sparkle appcast. The GTK/Linux client will ship an nfpm `.deb`
-  (mirroring `../roost`'s release), so each platform is a thin native shell over the one
-  Rust core.
+  with an EdDSA-signed Sparkle appcast. The GTK/Linux client **ships** as the `shed-desktop`
+  nfpm `.deb` (built per-arch — amd64 + arm64 — on tag, with a headless `shedctl` bundled)
+  via `charliek/apt-charliek`, so end users `apt install shed-desktop`. One `git tag vX.Y.Z`
+  cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`.
 
 ## Larger bets
 

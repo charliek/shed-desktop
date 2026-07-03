@@ -28,8 +28,10 @@ Core/UI split (see `docs/reference/architecture.md`):
 - `core/` — the shared **Rust core** (a cargo workspace): `shed-core` (pure: HTTP/SSE,
   defensive decoders, control-token FSM, TLS pinning, the `config` parser, the `create`
   store), `shed-core-ffi` (the UniFFI staticlib the Swift app links — the macOS **default**
-  backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), and `shed-gtk` (the
-  GTK4/libadwaita **Linux client** on `shed-core`; also runs on macOS via Homebrew GTK).
+  backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), `shed-gtk` (the
+  GTK4/libadwaita **Linux client** on `shed-core`; its `[[bin]]` is the shipped **`shed-desktop`**
+  binary/package — the crate name stays `shed-gtk`; also runs on macOS via Homebrew GTK), and
+  `shedctl` (a headless UDS/IPC client on `shed-core`, no GTK dep — shipped in the `.deb`).
 - `tools/shedtest/` — ONE pytest functional harness + in-process mock shed-server, driving
   BOTH UIs via `--target mac|gtk` (default `mac`): the mac-only suites gate on the target,
   the shared suite (`test_shared.py`) + the gtk suite (`test_gtk.py`) run per target.
@@ -95,8 +97,12 @@ launch-at-login; and Sparkle auto-update (DMG + EdDSA appcast — see `RELEASING
 
 The shed-server protocol layer is a shared **Rust core** (`shed-core`) — the macOS **default**
 backend (Phase 2) and the base for **`shed-gtk`**, a GTK4/libadwaita Linux client with the same
-lifecycle + create + IPC drivability (`dashboard.dump`/`screenshot`), packaged as a `.deb`. See
-`plans/phase-2-rust-clients.md` (the GTK approval pane, M6, is deferred).
+lifecycle + create + IPC drivability (`dashboard.dump`/`screenshot`, single-instance handoff via
+`app.activate`), shipped as the **`shed-desktop`** `.deb` (with a headless `shedctl`) via
+`charliek/apt-charliek` — `apt install shed-desktop` (Phase 3; release pipeline
+`create-release → mac + linux → apt-charliek dispatch`, see `RELEASING.md`). See
+`plans/phase-2-rust-clients.md` + `plans/phase-3-enhancements.md` (the GTK approval pane, M6, is
+deferred; the "delete-the-Swift-path" cleanups live in `plans/phase-4-rust-core-only.md`).
 
 Deferred directions (AWS/Docker gating, sessions/snapshots/images panes, notarization) live
 in `docs/roadmap.md`.
