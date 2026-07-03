@@ -14,7 +14,9 @@ import { cn } from "@/lib/utils";
 import {
   useUiBridge, shedAction, fetchSystemDf, openTerminal,
   fetchTerminalPresets, getPrefs, setTerminalPref,
+  createStart, createStatus, createCancel, fetchHosts,
   type Pane, type Shed, type HostDiskUsage, type TerminalPresetInfo,
+  type Modal, type CreateProgress,
 } from "@/lib/bridge";
 
 /* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
@@ -150,11 +152,11 @@ function formatBytes(n: number): string {
 }
 
 /* ---- panes ---------------------------------------------------------------- */
-function ShedsPane({ sheds, refresh }: { sheds: Shed[]; refresh: () => void }) {
+function ShedsPane({ sheds, refresh, onNew }: { sheds: Shed[]; refresh: () => void; onNew: () => void }) {
   const act = (action: string, s: Shed) => void shedAction(action, s.name, s.host).then(refresh);
   return (
     <div>
-      <PageHead title="Sheds" right={<HeadAction icon={Plus} label="New shed" />} />
+      <PageHead title="Sheds" right={<HeadAction icon={Plus} label="New shed" onClick={onNew} />} />
       {sheds.length === 0 ? (
         <div className={cn(card, "px-5 py-8 text-center text-[14px] text-shed-text-muted")}>
           No sheds on the configured hosts.
@@ -452,6 +454,208 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/* ---- new shed (create dialog with live SSE progress) ---------------------- */
+const inputCls =
+  "rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none";
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-[12px] font-semibold text-shed-text-secondary">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function NewShedDialog({ refresh, onClose }: { refresh: () => void; onClose: () => void }) {
+  const [hosts, setHosts] = useState<string[]>([]);
+  const [name, setName] = useState("");
+  const [host, setHost] = useState("");
+  const [image, setImage] = useState("");
+  const [vmBackend, setVmBackend] = useState("");
+  const [cpus, setCpus] = useState("");
+  const [memGb, setMemGb] = useState("");
+  const [repo, setRepo] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [createId, setCreateId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<CreateProgress | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const creating = createId !== null;
+  const state = progress?.state;
+
+  // The configured hosts a create can target (even ones with no sheds yet).
+  useEffect(() => {
+    void fetchHosts().then((hs) => {
+      setHosts(hs);
+      setHost(hs[0] ?? "");
+    });
+  }, []);
+
+  // Poll progress while a create is in flight (pull-based, like the harness).
+  useEffect(() => {
+    if (!createId) return;
+    let live = true;
+    let timer: number | undefined;
+    const tick = async () => {
+      const p = await createStatus(createId);
+      if (!live) return;
+      if (p) setProgress(p);
+      if (p?.state === "complete") {
+        refresh();
+        return;
+      }
+      if (p?.state === "error") {
+        setError(p.error ?? "create failed");
+        return;
+      }
+      timer = window.setTimeout(tick, 600);
+    };
+    void tick();
+    return () => {
+      live = false;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [createId, refresh]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !creating) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [creating, onClose]);
+
+  const submit = async () => {
+    if (!name.trim() || submitting) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const id = await createStart({
+        name: name.trim(),
+        host: host || undefined,
+        image: image.trim() || undefined,
+        vm_backend: vmBackend || undefined,
+        cpus: cpus ? Math.round(Number(cpus)) : undefined,
+        memory_mb: memGb ? Math.round(Number(memGb) * 1024) : undefined,
+        repo: repo.trim() || undefined,
+      });
+      setCreateId(id);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cancel = () => {
+    if (createId && state !== "complete") void createCancel(createId);
+    onClose();
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-6"
+      style={{ background: "color-mix(in oklch, var(--shed-text) 32%, transparent)" }}
+      onClick={() => {
+        if (!creating) onClose();
+      }}
+      data-create
+    >
+      <div className={cn(card, "w-full max-w-[540px] p-6")} onClick={(e) => e.stopPropagation()} style={{ animation: "shed-in .18s ease" }}>
+        <div className="mb-5 flex items-center gap-3">
+          <Plus size={20} className="text-shed-text-muted" />
+          <h2 className="flex-1 text-[19px] font-bold text-shed-text">New shed</h2>
+          <button onClick={cancel} title="Close" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
+            <X size={17} />
+          </button>
+        </div>
+
+        {!creating ? (
+          <div className="flex flex-col gap-3.5">
+            <Field label="Name">
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="my-shed" className={cn(inputCls, "font-mono")} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3.5">
+              <Field label="Host">
+                <select value={host} onChange={(e) => setHost(e.target.value)} className={inputCls}>
+                  {hosts.length === 0 && <option value="">(default)</option>}
+                  {hosts.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Backend">
+                <select value={vmBackend} onChange={(e) => setVmBackend(e.target.value)} className={inputCls}>
+                  <option value="">Default</option>
+                  <option value="vz">vz</option>
+                  <option value="firecracker">firecracker</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="Image">
+              <input value={image} onChange={(e) => setImage(e.target.value)} placeholder="e.g. base" className={cn(inputCls, "font-mono")} />
+            </Field>
+            <div className="grid grid-cols-2 gap-3.5">
+              <Field label="CPUs">
+                <input type="number" min="1" step="1" value={cpus} onChange={(e) => setCpus(e.target.value)} placeholder="2" className={inputCls} />
+              </Field>
+              <Field label="Memory (GB)">
+                <input type="number" min="1" step="1" value={memGb} onChange={(e) => setMemGb(e.target.value)} placeholder="4" className={inputCls} />
+              </Field>
+            </div>
+            <Field label="Repo (optional)">
+              <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/repo" className={cn(inputCls, "font-mono")} />
+            </Field>
+            {error && (
+              <div className="rounded-md px-3 py-2 font-mono text-[12px]" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>{error}</div>
+            )}
+            <div className="mt-1 flex justify-end gap-2.5">
+              <button onClick={onClose} className="hbtn rounded-[10px] px-4 py-2.5 text-[14px] font-semibold text-shed-text-secondary" style={{ background: "var(--shed-inset)" }}>Cancel</button>
+              <button
+                onClick={() => void submit()}
+                disabled={!name.trim() || submitting}
+                className="hbtn inline-flex items-center gap-2 rounded-[10px] px-4 py-2.5 text-[14px] font-semibold text-shed-accent-fg"
+                style={{ background: "var(--shed-accent)", opacity: name.trim() && !submitting ? 1 : 0.5 }}
+              >
+                <Plus size={16} /> Create
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="mb-3 flex items-center gap-2.5 text-[14px] font-semibold">
+              {state === "complete" ? (
+                <span style={{ color: "var(--shed-ok)" }}>✓ {name} created</span>
+              ) : state === "error" ? (
+                <span style={{ color: "var(--shed-danger)" }}>Create failed</span>
+              ) : (
+                <span className="inline-flex items-center gap-2 text-shed-text-secondary">
+                  <RefreshCw size={15} className="animate-spin" /> Creating {name}…
+                </span>
+              )}
+            </div>
+            <div className="max-h-[280px] overflow-auto rounded-[10px] border border-shed-border bg-shed-inset p-3 font-mono text-[12px] leading-relaxed text-shed-text-secondary">
+              {(progress?.messages ?? []).map((m, i) => (
+                <div key={i}>{m}</div>
+              ))}
+              {error && <div style={{ color: "var(--shed-danger)" }}>{error}</div>}
+              {(progress?.messages ?? []).length === 0 && !error && <div className="text-shed-text-muted">Starting…</div>}
+            </div>
+            <div className="mt-4 flex justify-end gap-2.5">
+              {state === "complete" ? (
+                <button onClick={onClose} className="hbtn rounded-[10px] px-4 py-2.5 text-[14px] font-semibold text-shed-accent-fg" style={{ background: "var(--shed-accent)" }}>Done</button>
+              ) : (
+                <button onClick={cancel} className="hbtn rounded-[10px] px-4 py-2.5 text-[14px] font-semibold" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>Cancel</button>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
   approvals: ApprovalsPane,
   agents: AgentsPane,
@@ -463,27 +667,27 @@ const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
 export default function App() {
   const [pane, setPane] = useState<Pane>("sheds");
   const [mode, setMode] = useState<"light" | "dark">("light");
-  const [prefsOpen, setPrefsOpen] = useState(false);
-  const { sheds, refresh } = useUiBridge(pane, setPane, prefsOpen);
+  const [modal, setModal] = useState<Modal>(null);
+  const { sheds, refresh } = useUiBridge(pane, setPane, modal);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
   }, [mode]);
 
-  // Open Preferences both from the gear button and from the ui.show_preferences
-  // IPC op (a `show-preferences` event), so the harness can drive + screenshot it.
+  // Open the modals both from the buttons and from the ui.show_preferences /
+  // ui.show_create IPC ops (events), so the harness can drive + screenshot them.
   useEffect(() => {
     if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
-    let un: (() => void) | undefined;
+    const uns: Array<() => void> = [];
     let cancelled = false;
     void import("@tauri-apps/api/event").then(async ({ listen }) => {
-      const u = await listen("show-preferences", () => setPrefsOpen(true));
-      if (cancelled) u();
-      else un = u;
+      uns.push(await listen("show-preferences", () => setModal("prefs")));
+      uns.push(await listen("show-create", () => setModal("create")));
+      if (cancelled) uns.forEach((u) => u());
     });
     return () => {
       cancelled = true;
-      un?.();
+      uns.forEach((u) => u());
     };
   }, []);
 
@@ -548,7 +752,7 @@ export default function App() {
           <span className="inline-flex items-center gap-2 text-[13px] font-medium text-shed-text-secondary">
             <Dot className="h-2 w-2" style={{ background: "var(--shed-ok)" }} /> host agent · connected
           </span>
-          <button onClick={() => setPrefsOpen(true)} title="Preferences" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
+          <button onClick={() => setModal("prefs")} title="Preferences" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             <Settings size={15} />
           </button>
           <button onClick={() => setMode(mode === "light" ? "dark" : "light")} title="Toggle appearance" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
@@ -558,12 +762,13 @@ export default function App() {
         <main className="flex-1 overflow-auto bg-shed-bg px-[38px] py-7">
           <div className="mx-auto max-w-[880px]" data-pane={pane}>
             {pane === "sheds"
-              ? <ShedsPane sheds={sheds} refresh={refresh} />
+              ? <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />
               : createElement(STATIC_PANES[pane])}
           </div>
         </main>
       </div>
-      {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
+      {modal === "prefs" && <PreferencesModal onClose={() => setModal(null)} />}
+      {modal === "create" && <NewShedDialog refresh={refresh} onClose={() => setModal(null)} />}
     </div>
   );
 }

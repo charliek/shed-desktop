@@ -183,13 +183,28 @@ def test_terminal_pref_persists_and_drives_preview(tauri):
 
 def test_preferences_modal_opens(tauri):
     # A1c-2c(2): ui.show_preferences → the frontend opens the in-app Preferences modal
-    # and reports prefs_open, so the harness verifies it ACTUALLY rendered (round-trip:
+    # and reports modal=="prefs", so the harness verifies it ACTUALLY rendered (round-trip:
     # op → event → React → modal → report), not just that the op acked. The pref LOGIC
     # is covered by test_terminal_pref_persists above.
     tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
     tauri.show_preferences()
-    tauri.wait_until(tauri.prefs_open, timeout=15, what="preferences modal open")
+    tauri.wait_until(lambda: tauri.modal() == "prefs", timeout=15, what="preferences modal open")
     # ...and on the real WebView it paints (the screenshot is TCC-gated on macOS).
+    if platform.system() == "Darwin":
+        return
+    tauri.show_window()
+    png, w, h = tauri.screenshot(scale=1)
+    assert png[:8] == PNG_MAGIC and w > 0 and h > 0
+
+
+def test_new_shed_dialog_opens(tauri):
+    # The New-Shed dialog opens (ui.show_create → the frontend reports modal=="create")
+    # and paints on the real WebView. The create LOGIC is covered by
+    # test_shared.py::test_create_streams_to_complete — the same shed-core create path
+    # the dialog's create_start command drives.
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    tauri.show_create()
+    tauri.wait_until(lambda: tauri.modal() == "create", timeout=15, what="new-shed dialog open")
     if platform.system() == "Darwin":
         return
     tauri.show_window()

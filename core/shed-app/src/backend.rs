@@ -133,6 +133,13 @@ impl Backend {
             .collect()
     }
 
+    /// The configured server names with a working client — i.e. the hosts a
+    /// create/lifecycle op can target (the New-Shed dialog's host picker), even
+    /// ones that have no sheds yet.
+    pub fn host_names(&self) -> Vec<String> {
+        self.clients.iter().map(|(name, _)| name.clone()).collect()
+    }
+
     // -- lifecycle --------------------------------------------------------
 
     pub async fn start(&self, host: Option<&str>, name: &str) -> Result<(), ShedError> {

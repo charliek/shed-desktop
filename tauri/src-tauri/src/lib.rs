@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex};
 use env::Env;
 use ipc::{Handler, IpcServer};
 use shed_app::Backend;
+use shed_core::models::CreateShedRequest;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
 use tauri::Manager;
@@ -43,6 +44,65 @@ fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
 #[tauri::command]
 async fn list_sheds(backend: tauri::State<'_, Arc<Backend>>) -> Result<serde_json::Value, String> {
     Ok(serde_json::json!(backend.list_sheds().await))
+}
+
+/// The configured hosts a create can target (the New-Shed dialog's picker) — even
+/// hosts with no sheds yet, unlike the sidebar's sheds-derived list.
+#[tauri::command]
+fn list_hosts(backend: tauri::State<'_, Arc<Backend>>) -> Vec<String> {
+    backend.host_names()
+}
+
+// -- create (the New-Shed dialog; the harness drives the parallel create.* ops) --
+
+/// The New-Shed dialog's form (`vm_backend` avoids clashing with the shed backend).
+#[derive(serde::Deserialize)]
+struct CreateForm {
+    name: String,
+    host: Option<String>,
+    image: Option<String>,
+    vm_backend: Option<String>,
+    cpus: Option<i64>,
+    memory_mb: Option<i64>,
+    repo: Option<String>,
+}
+
+/// Kick off a create; returns the id the dialog polls via `create_status`. The
+/// SSE stream runs on Tauri's tokio runtime.
+#[tauri::command]
+async fn create_start(
+    backend: tauri::State<'_, Arc<Backend>>,
+    form: CreateForm,
+) -> Result<String, String> {
+    let req = CreateShedRequest {
+        name: form.name,
+        repo: form.repo,
+        local_dir: None,
+        image: form.image,
+        backend: form.vm_backend,
+        cpus: form.cpus,
+        memory_mb: form.memory_mb,
+        no_provision: None,
+    };
+    backend
+        .create_start(&tokio::runtime::Handle::current(), form.host.as_deref(), req)
+        .map_err(|e| e.to_string())
+}
+
+/// The in-flight create's progress snapshot (`{id,state,messages,shed,error}`), or
+/// `{state:"unknown"}` once it's cancelled/gone.
+#[tauri::command]
+fn create_status(backend: tauri::State<'_, Arc<Backend>>, create_id: String) -> serde_json::Value {
+    backend
+        .create_status(&create_id)
+        .map(|p| serde_json::json!(p))
+        .unwrap_or_else(|| serde_json::json!({ "state": "unknown" }))
+}
+
+/// Abort a create's stream + drop its state (idempotent).
+#[tauri::command]
+fn create_cancel(backend: tauri::State<'_, Arc<Backend>>, create_id: String) {
+    backend.create_cancel(&create_id);
 }
 
 /// A lifecycle action from a shed card's buttons (`start`/`stop`/`reset`/`delete`).
@@ -164,8 +224,12 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ui_report,
             list_sheds,
+            list_hosts,
             shed_action,
             system_df,
+            create_start,
+            create_status,
+            create_cancel,
             terminal_presets,
             get_prefs,
             set_terminal_pref,

@@ -127,7 +127,8 @@ impl Handler {
             "ui.navigate" => self.navigate(params),
             "ui.current_pane" => Ok(json!({ "pane": self.ui_get("pane") })),
             "ui.computed_style" => Ok(json!({ "style": self.ui_get("style") })),
-            "ui.prefs_open" => Ok(json!({ "open": self.ui_get("prefs_open") })),
+            // Which modal (if any) the frontend has open: "prefs" | "create" | null.
+            "ui.modal" => Ok(json!({ "modal": self.ui_get("modal") })),
             "ui.show_window" | "app.activate" => {
                 present_main_window(&self.app);
                 Ok(json!({}))
@@ -135,6 +136,11 @@ impl Handler {
             "ui.show_preferences" => {
                 present_main_window(&self.app);
                 let _ = self.app.emit("show-preferences", json!({}));
+                Ok(json!({}))
+            }
+            "ui.show_create" => {
+                present_main_window(&self.app);
+                let _ = self.app.emit("show-create", json!({}));
                 Ok(json!({}))
             }
             "app.screenshot" => self.screenshot().await,

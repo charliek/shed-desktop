@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Pane = "sheds" | "approvals" | "agents" | "activity" | "system";
 
+/** Which modal (if any) is open — reported so the harness can drive + assert it. */
+export type Modal = null | "prefs" | "create";
+
 const PANES: readonly Pane[] = ["sheds", "approvals", "agents", "activity", "system"];
 
 /** Narrow an untrusted value (an IPC payload) to a known pane. */
@@ -47,9 +50,9 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 /** Report the rendered snapshot Rust relays to the harness (`ui.current_pane` /
  *  `ui.computed_style` / `dashboard.dump`). One blob, so a new reader is one more
  *  key. The refresh token is echoed so `sheds.refresh` can block on it. */
-function report(pane: Pane, sheds: Shed[], refreshToken: number, prefsOpen: boolean) {
+function report(pane: Pane, sheds: Shed[], refreshToken: number, modal: Modal) {
   void invoke("ui_report", {
-    snapshot: { pane, style: sampleStyle(), sheds, refresh_token: refreshToken, prefs_open: prefsOpen },
+    snapshot: { pane, style: sampleStyle(), sheds, refresh_token: refreshToken, modal },
   });
 }
 
@@ -67,7 +70,7 @@ function report(pane: Pane, sheds: Shed[], refreshToken: number, prefsOpen: bool
 export function useUiBridge(
   pane: Pane,
   setPane: (p: Pane) => void,
-  prefsOpen: boolean,
+  modal: Modal,
 ): { sheds: Shed[]; refresh: () => void } {
   const [sheds, setSheds] = useState<Shed[]>([]);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -115,8 +118,8 @@ export function useUiBridge(
       await fetchSheds(0);
       // Fresh sheds arrive via the report effect on the next render; this initial
       // report just publishes the pane, so `current_pane != null` = "listeners live".
-      // The modal is always closed at mount.
-      report(paneRef.current, [], 0, false);
+      // No modal is open at mount.
+      report(paneRef.current, [], 0, null);
     })();
     return () => {
       cancelled = true;
@@ -130,8 +133,8 @@ export function useUiBridge(
   // and `current_pane` stays a true "listeners live" signal under StrictMode replay.
   useEffect(() => {
     if (!inTauri() || !ready.current) return;
-    report(pane, sheds, refreshToken, prefsOpen);
-  }, [pane, sheds, refreshToken, prefsOpen]);
+    report(pane, sheds, refreshToken, modal);
+  }, [pane, sheds, refreshToken, modal]);
 
   const refresh = useCallback(() => void fetchSheds(0), [fetchSheds]);
   return { sheds, refresh };
@@ -188,4 +191,45 @@ export async function setTerminalPref(preset: string, template?: string): Promis
 export async function openTerminal(shed: string, host: string): Promise<void> {
   if (!inTauri()) return;
   await invoke("open_terminal", { shed, host });
+}
+
+/* ---- create (the New-Shed dialog) ----------------------------------------- */
+export type CreateFields = {
+  name: string;
+  host?: string;
+  image?: string;
+  vm_backend?: string;
+  cpus?: number;
+  memory_mb?: number;
+  repo?: string;
+};
+export type CreateProgress = {
+  id: string;
+  state: string; // "progress" | "complete" | "error" | "unknown"
+  messages: string[];
+  shed?: Shed | null;
+  error?: string | null;
+};
+
+/** The configured hosts a create can target (populates the dialog's host picker),
+ *  including hosts with no sheds yet. */
+export async function fetchHosts(): Promise<string[]> {
+  return (await invoke<string[]>("list_hosts")) ?? [];
+}
+
+/** Start a create; returns the id to poll. Throws on error (the dialog surfaces
+ *  it), unlike the error-swallowing `invoke` helper. */
+export async function createStart(fields: CreateFields): Promise<string> {
+  const core = await import("@tauri-apps/api/core");
+  return core.invoke<string>("create_start", { form: fields });
+}
+
+// NB: Tauri v2 #[tauri::command] looks up invoke args in camelCase (the Rust
+// `create_id` param → the key `createId`), so multi-word args MUST be sent camelCase.
+export async function createStatus(createId: string): Promise<CreateProgress | undefined> {
+  return invoke<CreateProgress>("create_status", { createId });
+}
+
+export async function createCancel(createId: string): Promise<void> {
+  await invoke("create_cancel", { createId });
 }

@@ -348,6 +348,10 @@ class TauriClient(_RustCoreClient):
         """Open the in-app Preferences modal (raises the window + emits the event)."""
         self.call("ui.show_preferences")
 
+    def show_create(self) -> None:
+        """Open the New-Shed dialog (raises the window + emits the event)."""
+        self.call("ui.show_create")
+
     def activate(self) -> None:
         self.call("app.activate")
 
@@ -355,9 +359,9 @@ class TauriClient(_RustCoreClient):
         """The pane the React shell currently renders (reported via ui_report)."""
         return self.call("ui.current_pane").get("pane")
 
-    def prefs_open(self) -> bool:
-        """Whether the Preferences modal is currently rendered (reported)."""
-        return bool(self.call("ui.prefs_open").get("open"))
+    def modal(self) -> str | None:
+        """Which modal (if any) the frontend has open: 'prefs' | 'create' | None."""
+        return self.call("ui.modal").get("modal")
 
     def computed_style(self) -> dict | None:
         """A computed-style sample the frontend reported (body bg/color + accent),
