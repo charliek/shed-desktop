@@ -47,9 +47,9 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 /** Report the rendered snapshot Rust relays to the harness (`ui.current_pane` /
  *  `ui.computed_style` / `dashboard.dump`). One blob, so a new reader is one more
  *  key. The refresh token is echoed so `sheds.refresh` can block on it. */
-function report(pane: Pane, sheds: Shed[], refreshToken: number) {
+function report(pane: Pane, sheds: Shed[], refreshToken: number, prefsOpen: boolean) {
   void invoke("ui_report", {
-    snapshot: { pane, style: sampleStyle(), sheds, refresh_token: refreshToken },
+    snapshot: { pane, style: sampleStyle(), sheds, refresh_token: refreshToken, prefs_open: prefsOpen },
   });
 }
 
@@ -67,6 +67,7 @@ function report(pane: Pane, sheds: Shed[], refreshToken: number) {
 export function useUiBridge(
   pane: Pane,
   setPane: (p: Pane) => void,
+  prefsOpen: boolean,
 ): { sheds: Shed[]; refresh: () => void } {
   const [sheds, setSheds] = useState<Shed[]>([]);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -114,7 +115,8 @@ export function useUiBridge(
       await fetchSheds(0);
       // Fresh sheds arrive via the report effect on the next render; this initial
       // report just publishes the pane, so `current_pane != null` = "listeners live".
-      report(paneRef.current, [], 0);
+      // The modal is always closed at mount.
+      report(paneRef.current, [], 0, false);
     })();
     return () => {
       cancelled = true;
@@ -128,8 +130,8 @@ export function useUiBridge(
   // and `current_pane` stays a true "listeners live" signal under StrictMode replay.
   useEffect(() => {
     if (!inTauri() || !ready.current) return;
-    report(pane, sheds, refreshToken);
-  }, [pane, sheds, refreshToken]);
+    report(pane, sheds, refreshToken, prefsOpen);
+  }, [pane, sheds, refreshToken, prefsOpen]);
 
   const refresh = useCallback(() => void fetchSheds(0), [fetchSheds]);
   return { sheds, refresh };
@@ -161,4 +163,29 @@ export type HostDiskUsage = {
  *  serves the harness). An unreachable host comes back as an error row. */
 export async function fetchSystemDf(): Promise<HostDiskUsage[]> {
   return (await invoke<HostDiskUsage[]>("system_df")) ?? [];
+}
+
+/* ---- terminal + prefs (the Preferences view + the shed-card button) ------- */
+export type TerminalPresetInfo = { id: string; label: string; detail: string; available: boolean };
+export type TerminalPrefs = { terminal_preset: string; terminal_template: string };
+
+export async function fetchTerminalPresets(): Promise<TerminalPresetInfo[]> {
+  return (await invoke<{ presets: TerminalPresetInfo[] }>("terminal_presets"))?.presets ?? [];
+}
+
+export async function getPrefs(): Promise<TerminalPrefs> {
+  return (
+    (await invoke<TerminalPrefs>("get_prefs")) ?? { terminal_preset: "custom", terminal_template: "" }
+  );
+}
+
+export async function setTerminalPref(preset: string, template?: string): Promise<void> {
+  await invoke("set_terminal_pref", { preset, template });
+}
+
+/** Open a shed in the user's chosen terminal (best-effort; a no-op in a browser
+ *  and disabled server-side under test mode). */
+export async function openTerminal(shed: string, host: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("open_terminal", { shed, host });
 }

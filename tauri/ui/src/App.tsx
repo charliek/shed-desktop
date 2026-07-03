@@ -8,12 +8,13 @@ import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes, Shield, Sparkles, ScrollText, HardDrive, Box, Plus,
   Terminal, RotateCw, Square, Play, Trash2, RefreshCw, ExternalLink, Key,
-  Fingerprint, Moon, Sun,
+  Fingerprint, Moon, Sun, Settings, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  useUiBridge, shedAction, fetchSystemDf,
-  type Pane, type Shed, type HostDiskUsage,
+  useUiBridge, shedAction, fetchSystemDf, openTerminal,
+  fetchTerminalPresets, getPrefs, setTerminalPref,
+  type Pane, type Shed, type HostDiskUsage, type TerminalPresetInfo,
 } from "@/lib/bridge";
 
 /* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
@@ -179,7 +180,7 @@ function ShedsPane({ sheds, refresh }: { sheds: Shed[]; refresh: () => void }) {
                     <div className="flex gap-2.5">
                       {running ? (
                         <>
-                          <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" />
+                          <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" onClick={() => void openTerminal(s.name, s.host)} />
                           <IconBtn icon={RotateCw} tone="attention" title="Restart" onClick={() => act("reset", s)} />
                           <IconBtn icon={Square} tone="danger" title="Stop" onClick={() => act("stop", s)} />
                         </>
@@ -352,6 +353,105 @@ function SystemPane() {
   );
 }
 
+/* ---- preferences (in-app modal; the tray is Phase C) ---------------------- */
+function PreferencesModal({ onClose }: { onClose: () => void }) {
+  const [presets, setPresets] = useState<TerminalPresetInfo[]>([]);
+  const [preset, setPreset] = useState("custom");
+  const [template, setTemplate] = useState("");
+
+  useEffect(() => {
+    void fetchTerminalPresets().then(setPresets);
+    void getPrefs().then((p) => {
+      setPreset(p.terminal_preset);
+      setTemplate(p.terminal_template);
+    });
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const choosePreset = (id: string) => {
+    setPreset(id);
+    void setTerminalPref(id, id === "custom" ? template : undefined);
+  };
+  const editTemplate = (t: string) => {
+    setTemplate(t);
+    if (preset === "custom") void setTerminalPref("custom", t);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center px-6"
+      style={{ background: "color-mix(in oklch, var(--shed-text) 32%, transparent)" }}
+      onClick={onClose}
+      data-prefs
+    >
+      <div
+        className={cn(card, "w-full max-w-[520px] p-6")}
+        onClick={(e) => e.stopPropagation()}
+        style={{ animation: "shed-in .18s ease" }}
+      >
+        <div className="mb-5 flex items-center gap-3">
+          <Settings size={20} className="text-shed-text-muted" />
+          <h2 className="flex-1 text-[19px] font-bold text-shed-text">Preferences</h2>
+          <button onClick={onClose} title="Close" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
+            <X size={17} />
+          </button>
+        </div>
+
+        <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Terminal</div>
+        <p className="mb-3 text-[13px] text-shed-text-muted">Which terminal opens when you click “Open in Terminal” on a shed.</p>
+        <div className="flex flex-col gap-2">
+          {presets.map((p) => {
+            const active = preset === p.id;
+            return (
+              <label
+                key={p.id}
+                className={cn("flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5", !p.available && "opacity-50")}
+                style={{
+                  borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
+                  background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="terminal-preset"
+                  checked={active}
+                  disabled={!p.available}
+                  onChange={() => choosePreset(p.id)}
+                  style={{ accentColor: "var(--shed-accent)" }}
+                />
+                <span className="text-[15px] font-semibold text-shed-text">{p.label}</span>
+                {!p.available && <span className="text-[12px] text-shed-text-muted">not installed</span>}
+                <span className="flex-1" />
+                {p.detail && <span className="truncate text-[12px] text-shed-text-muted">{p.detail}</span>}
+              </label>
+            );
+          })}
+        </div>
+        {preset === "custom" && (
+          <div className="mt-3">
+            <input
+              value={template}
+              onChange={(e) => editTemplate(e.target.value)}
+              placeholder="e.g. kitty -e {cmd}"
+              className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
+            />
+            <p className="mt-1.5 text-[12px] text-shed-text-muted">
+              <code className="font-mono">{"{cmd}"}</code> is the ssh command, <code className="font-mono">{"{shed}"}</code> the shed name.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
   approvals: ApprovalsPane,
   agents: AgentsPane,
@@ -363,11 +463,29 @@ const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
 export default function App() {
   const [pane, setPane] = useState<Pane>("sheds");
   const [mode, setMode] = useState<"light" | "dark">("light");
-  const { sheds, refresh } = useUiBridge(pane, setPane);
+  const [prefsOpen, setPrefsOpen] = useState(false);
+  const { sheds, refresh } = useUiBridge(pane, setPane, prefsOpen);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
   }, [mode]);
+
+  // Open Preferences both from the gear button and from the ui.show_preferences
+  // IPC op (a `show-preferences` event), so the harness can drive + screenshot it.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("__TAURI_INTERNALS__" in window)) return;
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      const u = await listen("show-preferences", () => setPrefsOpen(true));
+      if (cancelled) u();
+      else un = u;
+    });
+    return () => {
+      cancelled = true;
+      un?.();
+    };
+  }, []);
 
   const pending = SEED_APPROVALS.length;
   // Sidebar hosts are the distinct hosts of the live sheds (all reachable — the
@@ -430,7 +548,10 @@ export default function App() {
           <span className="inline-flex items-center gap-2 text-[13px] font-medium text-shed-text-secondary">
             <Dot className="h-2 w-2" style={{ background: "var(--shed-ok)" }} /> host agent · connected
           </span>
-          <button onClick={() => setMode(mode === "light" ? "dark" : "light")} title="Toggle appearance" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
+          <button onClick={() => setPrefsOpen(true)} title="Preferences" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
+            <Settings size={15} />
+          </button>
+          <button onClick={() => setMode(mode === "light" ? "dark" : "light")} title="Toggle appearance" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             {mode === "light" ? <Moon size={15} /> : <Sun size={15} />}
           </button>
         </header>
@@ -442,6 +563,7 @@ export default function App() {
           </div>
         </main>
       </div>
+      {prefsOpen && <PreferencesModal onClose={() => setPrefsOpen(false)} />}
     </div>
   );
 }

@@ -344,12 +344,20 @@ class TauriClient(_RustCoreClient):
     def show_window(self) -> None:
         self.call("ui.show_window")
 
+    def show_preferences(self) -> None:
+        """Open the in-app Preferences modal (raises the window + emits the event)."""
+        self.call("ui.show_preferences")
+
     def activate(self) -> None:
         self.call("app.activate")
 
     def current_pane(self) -> str | None:
         """The pane the React shell currently renders (reported via ui_report)."""
         return self.call("ui.current_pane").get("pane")
+
+    def prefs_open(self) -> bool:
+        """Whether the Preferences modal is currently rendered (reported)."""
+        return bool(self.call("ui.prefs_open").get("open"))
 
     def computed_style(self) -> dict | None:
         """A computed-style sample the frontend reported (body bg/color + accent),

@@ -13,6 +13,7 @@ mod prefs;
 mod screenshot;
 mod single_instance;
 mod state;
+mod termctl;
 
 use std::sync::{Arc, Mutex};
 
@@ -69,6 +70,53 @@ async fn system_df(backend: tauri::State<'_, Arc<Backend>>) -> Result<serde_json
     Ok(serde_json::json!(backend.system_df().await))
 }
 
+// -- terminal + prefs commands (the frontend Preferences view + the shed-card
+//    "Open in Terminal" button; the same TerminalCtl the IPC ops use) -----------
+
+/// The offerable terminal presets + install detection (the picker's source).
+#[tauri::command]
+fn terminal_presets(terminal: tauri::State<'_, termctl::SharedTerminal>) -> serde_json::Value {
+    terminal.presets()
+}
+
+/// The persisted prefs (seeds the Preferences view).
+#[tauri::command]
+fn get_prefs(terminal: tauri::State<'_, termctl::SharedTerminal>) -> serde_json::Value {
+    terminal.prefs_get()
+}
+
+/// Persist the chosen terminal preset (+ optional custom template).
+#[tauri::command]
+fn set_terminal_pref(
+    terminal: tauri::State<'_, termctl::SharedTerminal>,
+    preset: String,
+    template: Option<String>,
+) -> Result<(), String> {
+    terminal
+        .prefs_set_terminal(&preset, template)
+        .map(|_| ())
+        .map_err(|(_code, msg)| msg)
+}
+
+/// Open a shed in the user's chosen terminal (the persisted pref). Gated off in
+/// test mode — the button never spawns under the harness.
+#[tauri::command]
+fn open_terminal(
+    terminal: tauri::State<'_, termctl::SharedTerminal>,
+    env: tauri::State<'_, Env>,
+    shed: String,
+    host: Option<String>,
+    session: Option<String>,
+) -> Result<(), String> {
+    if env.test_mode {
+        return Err("terminal.open is disabled in test mode (use terminal.preview)".to_string());
+    }
+    terminal
+        .open(host.as_deref(), &shed, session.as_deref(), None, None)
+        .map(|_| ())
+        .map_err(|(_code, msg)| msg)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -112,7 +160,17 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ui.clone())
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![ui_report, list_sheds, shed_action, system_df])
+        .manage(env.clone())
+        .invoke_handler(tauri::generate_handler![
+            ui_report,
+            list_sheds,
+            shed_action,
+            system_df,
+            terminal_presets,
+            get_prefs,
+            set_terminal_pref,
+            open_terminal
+        ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
             // unbundled dev/test run — resolve_launch then falls back to a default
@@ -133,13 +191,17 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join("prefs.json");
             let prefs: prefs::SharedPrefs = Arc::new(prefs::PrefsStore::load(prefs_path));
+            // The terminal ops (preset resolution, launch, detection, the pref),
+            // shared by the IPC handler + the frontend invoke commands.
+            let terminal: termctl::SharedTerminal =
+                Arc::new(termctl::TerminalCtl::new(backend.clone(), prefs, scripts_dir));
+            app.manage(terminal.clone());
             let handler = Handler::new(
                 env.clone(),
                 app.handle().clone(),
                 ui.clone(),
                 backend.clone(),
-                scripts_dir,
-                prefs,
+                terminal,
             );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.

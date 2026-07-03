@@ -179,3 +179,19 @@ def test_terminal_pref_persists_and_drives_preview(tauri):
     # switching the preset persists (across the store's write-through)
     tauri.prefs_set_terminal("ghostty")
     assert tauri.prefs_get()["terminal_preset"] == "ghostty"
+
+
+def test_preferences_modal_opens(tauri):
+    # A1c-2c(2): ui.show_preferences → the frontend opens the in-app Preferences modal
+    # and reports prefs_open, so the harness verifies it ACTUALLY rendered (round-trip:
+    # op → event → React → modal → report), not just that the op acked. The pref LOGIC
+    # is covered by test_terminal_pref_persists above.
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    tauri.show_preferences()
+    tauri.wait_until(tauri.prefs_open, timeout=15, what="preferences modal open")
+    # ...and on the real WebView it paints (the screenshot is TCC-gated on macOS).
+    if platform.system() == "Darwin":
+        return
+    tauri.show_window()
+    png, w, h = tauri.screenshot(scale=1)
+    assert png[:8] == PNG_MAGIC and w > 0 and h > 0
