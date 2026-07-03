@@ -205,6 +205,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn host_less_op_falls_back_to_first_when_default_missing() {
+        // A `default_server` naming a server that isn't configured resolves a
+        // host-less lifecycle op to the FIRST client (Vec order) — not an error,
+        // and not the (alphabetically-first) second. The second client points at an
+        // unused address, so a wrong fallback surfaces as a transport failure rather
+        // than a false pass.
+        let first = MockServer::start_async().await;
+        let hit = first
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds/thing/start");
+                t.status(200);
+            })
+            .await;
+        let backend = Backend {
+            clients: vec![
+                client_at("z-first", first.base_url()),
+                client_at("a-second", "http://127.0.0.1:1".to_string()),
+            ],
+            default_server: Some("nonexistent".to_string()),
+            creates: CreateStore::new(),
+        };
+        backend
+            .start(None, "thing")
+            .await
+            .expect("host-less op falls back to the first configured client");
+        hit.assert_async().await;
+    }
+
+    #[tokio::test]
     async fn list_sheds_decodes_null_sheds_as_empty() {
         // Defensive decode: `{"sheds": null}` → [] (never an error), per shed-core.
         let server = MockServer::start_async().await;

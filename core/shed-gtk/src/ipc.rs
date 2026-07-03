@@ -472,6 +472,35 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_op_is_unknown_op() {
+        // An empty op string falls through to the catch-all → unknown_op (not a
+        // panic or a silent success).
+        let backend = Arc::new(Backend::from_config(
+            &ShedConfig::default(),
+            Some("http://mock"),
+        ));
+        let h = handler(env("http://mock"), backend);
+        let e = h.dispatch("", &json!({})).await.unwrap_err();
+        assert_eq!(e.0, "unknown_op");
+    }
+
+    #[tokio::test]
+    async fn create_cancel_unknown_id_is_ok_idempotent() {
+        // Cancelling a create_id that was never started is a no-op success (the
+        // store's cancel is idempotent), returning `{}` — never a bad_request/error.
+        let backend = Arc::new(Backend::from_config(
+            &ShedConfig::default(),
+            Some("http://mock"),
+        ));
+        let h = handler(env("http://mock"), backend);
+        let r = h
+            .dispatch("create.cancel", &json!({ "create_id": "never-started" }))
+            .await
+            .unwrap();
+        assert_eq!(r, json!({}));
+    }
+
+    #[tokio::test]
     async fn test_mode_without_mock_builds_no_clients() {
         // Hermeticity: a partial test env must not dial the developer's real hosts.
         let e = Env {

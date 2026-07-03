@@ -288,6 +288,34 @@ sheds: {}
     }
 
     #[test]
+    fn empty_or_absent_servers_parse_to_zero_servers() {
+        // A present-but-empty `servers`, an entirely-absent one, and an empty
+        // document all yield an empty server list — a degraded-but-valid config
+        // (the dashboard surfaces it), never a parse failure.
+        assert!(ShedConfig::parse("servers: []\n").servers.is_empty());
+        assert!(ShedConfig::parse("default_server: mini2\nsheds: {}\n")
+            .servers
+            .is_empty());
+        assert!(ShedConfig::parse("").servers.is_empty());
+    }
+
+    #[test]
+    fn default_server_absent_from_servers_still_parses() {
+        // Validation ("does the default exist?") is deferred to the client, not the
+        // parser: an unknown default_server parses fine and is surfaced verbatim.
+        let yaml = "\
+servers:
+    mini2:
+        host: mini2
+        http_port: 8080
+default_server: ghost
+";
+        let config = ShedConfig::parse(yaml);
+        assert_eq!(config.servers.len(), 1);
+        assert_eq!(config.default_server.as_deref(), Some("ghost"));
+    }
+
+    #[test]
     fn https_api_url_keeps_pin() {
         let e = ShedServerEntry {
             name: "localmac".into(),

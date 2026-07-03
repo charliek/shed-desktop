@@ -361,4 +361,31 @@ mod tests {
         assert!(parse_command(&svec(&["bogus"])).is_err());
         assert!(parse_command(&svec(&["shed", "frobnicate", "x"])).is_err());
     }
+
+    #[test]
+    fn parse_param_without_equals_is_error() {
+        // No '=' → a usage error, not a silent empty-key/whole-string pair.
+        assert!(parse_param("noequals").is_err());
+    }
+
+    #[test]
+    fn write_png_without_png_field_is_error() {
+        // A screenshot reply missing `png` is reported, and nothing is written.
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("out.png");
+        assert!(write_png(&json!({ "width": 1, "height": 1 }), &out).is_err());
+        assert!(!out.exists()); // the error is raised before any file write
+    }
+
+    #[test]
+    fn take_opt_flag_without_value_is_error() {
+        // `--out` present but trailing (no following VALUE) → error, not a silent None.
+        assert!(take_opt(&mut vec!["--out".into()], "--out").is_err());
+    }
+
+    #[test]
+    fn take_params_param_without_pair_is_error() {
+        // `--param` with no k=v following it → error.
+        assert!(take_params(&mut vec!["--param".into()]).is_err());
+    }
 }

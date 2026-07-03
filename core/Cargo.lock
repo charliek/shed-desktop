@@ -2395,6 +2395,7 @@ dependencies = [
  "base64 0.22.1",
  "libc",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

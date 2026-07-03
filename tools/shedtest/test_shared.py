@@ -106,6 +106,23 @@ def test_create_cancel_drops_it(client):
         assert e.code == "not-found"
 
 
+def test_create_error_surfaced(client, mock):
+    # A server-side create failure surfaces as an `error` state carrying the
+    # message — the cross-target parity of the mac-only
+    # test_lifecycle::test_create_error_surfaced. shed-gtk's CreateStore folds the
+    # SSE error event into state=error the same way the mac backend does.
+    mock.create_should_fail = True
+    cid = client.create_start("doomed")
+    client.wait_until(
+        lambda: client.create_status(cid).get("state") == "error",
+        timeout=15,
+        what="create error",
+    )
+    st = client.create_status(cid)
+    assert st["state"] == "error"
+    assert "doomed" in (st.get("error") or "")
+
+
 def test_screenshot_returns_non_empty_png(client, target):
     # Deliberately lenient — "a non-empty PNG of expected dimensions" — so the
     # gate isn't coupled to a container's GL stack (dashboard_rows is the truth
