@@ -114,6 +114,10 @@ impl App {
                             refresh_dashboard(&rt, &backend, &state_for_drain, &list_weak).await;
                             let _ = reply.send(());
                         }
+                        UiRequest::Present { reply } => {
+                            window_for_drain.present();
+                            let _ = reply.send(());
+                        }
                         UiRequest::CreateStarted { id, name } => {
                             *banner_gen_for_drain.borrow_mut() += 1;
                             let gen = *banner_gen_for_drain.borrow();

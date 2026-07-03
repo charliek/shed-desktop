@@ -57,6 +57,9 @@ pub enum UiRequest {
     /// A create just started; the UI shows a live-progress banner (polling
     /// `create_status` on a glib timeout) until it completes/errors.
     CreateStarted { id: String, name: String },
+    /// Raise/focus the window (`app.activate`) — the single-instance guard sends
+    /// this when a second launch hands off to the already-running instance.
+    Present { reply: oneshot::Sender<()> },
 }
 
 /// Services one op at a time; owned by the server and shared across connections.
@@ -94,6 +97,7 @@ impl Handler {
             "create.status" => self.create_status(params),
             "create.cancel" => self.create_cancel(params),
             "app.screenshot" => self.screenshot(params).await,
+            "app.activate" => self.app_activate().await,
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
@@ -139,17 +143,35 @@ impl Handler {
             .map_err(|e| err("action_failed", e.to_string()))
     }
 
+    /// Ask the glib thread to do a widget-touching thing whose only signal is
+    /// completion, mapping the unit ack to an empty `{}` result. The shared shape
+    /// behind `sheds.refresh` and `app.activate`.
+    async fn ui_unit_request(
+        &self,
+        make: impl FnOnce(oneshot::Sender<()>) -> UiRequest,
+        what: &str,
+    ) -> Result<Value, (String, String)> {
+        let (reply, rx) = oneshot::channel();
+        self.ui_tx
+            .send(make(reply))
+            .map_err(|_| err("ui_unavailable", "GTK UI not running"))?;
+        rx.await
+            .map(|()| json!({}))
+            .map_err(|_| err("ui_unavailable", format!("UI dropped the {what} request")))
+    }
+
     /// `sheds.refresh` → re-fetch + re-render the dashboard (so `dashboard.dump`
     /// reflects a lifecycle/create change), on the glib thread.
     async fn sheds_refresh(&self) -> Result<Value, (String, String)> {
-        let (reply, rx) = oneshot::channel();
-        self.ui_tx
-            .send(UiRequest::Refresh { reply })
-            .map_err(|_| err("ui_unavailable", "GTK UI not running"))?;
-        match rx.await {
-            Ok(()) => Ok(json!({})),
-            Err(_) => Err(err("ui_unavailable", "UI dropped the refresh request")),
-        }
+        self.ui_unit_request(|reply| UiRequest::Refresh { reply }, "refresh")
+            .await
+    }
+
+    /// `app.activate` → raise/focus the window on the GTK thread (the single-
+    /// instance hand-off op).
+    async fn app_activate(&self) -> Result<Value, (String, String)> {
+        self.ui_unit_request(|reply| UiRequest::Present { reply }, "activate")
+            .await
     }
 
     /// `create.start` → kick off a create on the pure shed-core CreateStore (its

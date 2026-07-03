@@ -40,6 +40,12 @@ glib = "0.21"
 # wire shape as shed-desktop's app.screenshot → `{png, width, height}`).
 base64 = "0.22"
 
+# Single-instance flock on a pidfile (roost's pattern; std file-locking needs
+# Rust 1.89 > our 1.85 MSRV, so use fs2). Concurrent per-host list_sheds via
+# futures::future::join_all.
+fs2 = "0.4"
+futures = "0.3"
+
 [dev-dependencies]
 tempfile = "3"
 httpmock = { workspace = true }

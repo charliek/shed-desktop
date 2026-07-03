@@ -99,17 +99,19 @@ impl Backend {
         })
     }
 
-    /// Fetch sheds from every configured host (host-stamped by shed-core). A
-    /// per-host failure is dropped rather than blanking the whole dashboard;
-    /// surfacing per-host errors is a later milestone.
+    /// Fetch sheds from every configured host concurrently (host-stamped by
+    /// shed-core). `join_all` so a slow/down host doesn't serialize the others —
+    /// each is bounded by shed-core's per-request timeout. A per-host failure is
+    /// dropped rather than blanking the whole dashboard; surfacing per-host errors
+    /// is a later milestone.
     pub async fn list_sheds(&self) -> Vec<Shed> {
-        let mut out = Vec::new();
-        for (_, client) in &self.clients {
-            if let Ok(sheds) = client.list_sheds().await {
-                out.extend(sheds);
-            }
-        }
-        out
+        let fetches = self.clients.iter().map(|(_, client)| client.list_sheds());
+        futures::future::join_all(fetches)
+            .await
+            .into_iter()
+            .filter_map(Result::ok)
+            .flatten()
+            .collect()
     }
 
     // -- lifecycle --------------------------------------------------------
@@ -147,5 +149,72 @@ impl Backend {
 
     pub fn create_cancel(&self, id: &str) {
         self.creates.cancel(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httpmock::prelude::*;
+
+    /// A backend with clients pointed at explicit URLs (bypasses config + the
+    /// mock-redirect) so the multi-host concurrent path is exercised directly.
+    fn backend_with(clients: Vec<(String, Client)>) -> Backend {
+        Backend {
+            clients,
+            default_server: None,
+            creates: CreateStore::new(),
+        }
+    }
+
+    fn client_at(name: &str, base_url: String) -> (String, Client) {
+        let client = Client::new(base_url, name.to_string(), String::new(), None, None).unwrap();
+        (name.to_string(), client)
+    }
+
+    #[tokio::test]
+    async fn list_sheds_zero_hosts_is_empty() {
+        assert!(backend_with(Vec::new()).list_sheds().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_sheds_keeps_healthy_host_when_another_fails() {
+        // One host 500s, the other returns a shed → only the healthy one's sheds;
+        // the failing host doesn't blank the dashboard (concurrent join_all).
+        let bad = MockServer::start_async().await;
+        bad.mock_async(|w, t| {
+            w.method(GET).path("/api/sheds");
+            t.status(500);
+        })
+        .await;
+        let good = MockServer::start_async().await;
+        good.mock_async(|w, t| {
+            w.method(GET).path("/api/sheds");
+            t.status(200)
+                .body(r#"{"sheds":[{"name":"g","status":"running"}]}"#);
+        })
+        .await;
+        let backend = backend_with(vec![
+            client_at("bad", bad.base_url()),
+            client_at("good", good.base_url()),
+        ]);
+        let sheds = backend.list_sheds().await;
+        assert_eq!(sheds.len(), 1);
+        assert_eq!(sheds[0].name, "g");
+        assert_eq!(sheds[0].host, "good");
+    }
+
+    #[tokio::test]
+    async fn list_sheds_decodes_null_sheds_as_empty() {
+        // Defensive decode: `{"sheds": null}` → [] (never an error), per shed-core.
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|w, t| {
+                w.method(GET).path("/api/sheds");
+                t.status(200).body(r#"{"sheds": null}"#);
+            })
+            .await;
+        let backend = backend_with(vec![client_at("s", server.base_url())]);
+        assert!(backend.list_sheds().await.is_empty());
     }
 }
