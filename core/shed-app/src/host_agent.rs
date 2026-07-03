@@ -228,6 +228,19 @@ impl HostAgentClient {
     }
 }
 
+impl crate::traits::Responder for HostAgentClient {
+    fn respond(
+        &self,
+        request_id: &str,
+        decision: ApprovalDecision,
+        decided_by: DecidedBy,
+        scope: Option<&str>,
+        ttl: Option<&str>,
+    ) {
+        HostAgentClient::respond(self, request_id, decision, decided_by, scope, ttl);
+    }
+}
+
 fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

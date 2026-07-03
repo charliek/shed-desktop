@@ -6,13 +6,22 @@
 //! `shed-core` protocol crate — this is where the per-client app logic that was
 //! Swift-only (poller, df/images, the reachability rollup) will also land (A1a-add).
 
+pub mod audit_store;
 pub mod backend;
+pub mod coordinator;
+pub mod fakes;
 pub mod host_agent;
 pub mod timefmt;
 pub mod token_minter;
 pub mod traits;
 
+pub use audit_store::AuditStore;
 pub use backend::{Backend, HostDiskUsage, Reachability};
+pub use coordinator::{Coordinator, CoordinatorDeps, SshPrefs};
+pub use fakes::{AlwaysApprovedGate, FakeNotifier};
 pub use host_agent::{HelloClientInfo, HostAgentClient, HostAgentClientError, HostAgentEvent};
 pub use token_minter::HostAgentTokenMinter;
-pub use traits::{Clock, ClockRef, SystemClock};
+pub use traits::{
+    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, Clock, ClockRef, Notifier, NotifierRef,
+    PostedNotification, Responder, ResponderRef, SystemClock,
+};

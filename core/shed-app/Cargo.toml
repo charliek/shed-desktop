@@ -19,6 +19,7 @@ shed-core = { path = "../shed-core" }
 # client, on top of the workspace's rt/macros/sync/time.
 tokio = { workspace = true, features = ["net", "io-util"] }
 serde = { workspace = true }
+serde_json = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 # Concurrent per-host list_sheds via futures::future::join_all.
@@ -30,4 +31,3 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 httpmock = { workspace = true }
-serde_json = { workspace = true }

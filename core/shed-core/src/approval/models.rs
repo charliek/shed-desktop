@@ -217,6 +217,17 @@ pub enum ApprovalScope {
     PerShed,
 }
 
+impl ApprovalScope {
+    /// The wire scope string reported to the host agent for its audit.
+    pub fn wire(self) -> &'static str {
+        match self {
+            ApprovalScope::PerRequest => "per-request",
+            ApprovalScope::PerSession => "per-session",
+            ApprovalScope::PerShed => "per-shed",
+        }
+    }
+}
+
 /// The SSH approval policy, ordered most -> least permissive. `alwaysAllow`/
 /// `alwaysDeny` decide every sign outright (no prompt); `perShedAllow` prompts
 /// once per shed then grants until restart; `timeBasedAllow` prompts then grants
@@ -285,6 +296,18 @@ pub enum PolicyScope {
     Namespace,
     Shed,
     Session,
+}
+
+impl PolicyScope {
+    /// The wire scope label recorded in the audit trail (the `policy` field).
+    pub fn wire(self) -> &'static str {
+        match self {
+            PolicyScope::Default => "default",
+            PolicyScope::Namespace => "namespace",
+            PolicyScope::Shed => "shed",
+            PolicyScope::Session => "session",
+        }
+    }
 }
 
 /// A single policy rule. The engine resolves the most specific match. `server`
