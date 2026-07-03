@@ -1,18 +1,12 @@
 """Launch / quit a hermetic shed-desktop UI for tests, and resolve its socket.
 
-Both UIs speak the same IPC, so the test driver is one client parameterized by
-`--target`; only launch/quit/socket differ per UI (the Swift `ShedDesktop.app`
-vs the `shed-gtk` `shed-desktop` binary). The harness ALWAYS owns the app it
-drives: it launches a fresh instance in test mode, pointed at the in-process
-mock server (so no real shed-server is touched) with a throwaway state dir.
-
-  - mac: `open --env` injects SHED_DESKTOP_* into the bundled app (LaunchServices
-    otherwise drops the caller's env); quit force-quits + clears the throwaway
-    UserDefaults suite and socket/lock.
-  - gtk: a subprocess with SHED_GTK_* env + a temp HOME/XDG_RUNTIME_DIR (so it
-    never reads the dev's ~/.shed or binds a real socket); quit terminates the
-    child and removes the temp dir. A display is required to realize the window —
-    the native session on a dev Mac, Xvfb on CI.
+All three UIs speak the same IPC, so the test driver is one client parameterized
+by `--target`; only launch/quit/socket differ per UI. mac launches the Swift
+`ShedDesktop.app` via `open --env`. gtk and Tauri are both *subprocess* UIs with
+the same shape — a binary run in test mode, pointed at the in-process mock, with
+a throwaway HOME/XDG_RUNTIME_DIR — so they share one config-driven path
+(`_SUBPROC`), differing only in binary, env-var prefix, socket name, and the
+`identify.platform` stamp. The harness ALWAYS owns the app it drives.
 """
 
 from __future__ import annotations
@@ -23,63 +17,120 @@ import shutil
 import subprocess
 import tempfile
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 
-from client import GtkClient, IPCClient, ShedDesktop, ShedError, scaled_timeout
+from client import GtkClient, IPCClient, ShedDesktop, ShedError, TauriClient, scaled_timeout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGETS = ("mac", "gtk")
+TARGETS = ("mac", "gtk", "tauri")
 
 # mac: the ad-hoc-signed bundle the harness drives.
 APP = REPO_ROOT / "build" / "ShedDesktop.app"
 DEFAULTS_SUITE = "ai.stridelabs.ShedDesktop.e2e"
 
-# gtk: the shed-gtk binary (its `[[bin]]` name is `shed-desktop`).
-BIN = REPO_ROOT / "core" / "target" / "debug" / "shed-desktop"
 
-# A harness-launched shed-gtk's process + captured log + the temp dir serving as
-# its HOME/XDG_RUNTIME_DIR + its launch env. Retained so `wait_alive` can tell a
-# crashed-on-boot UI from a slow one, `quit` can terminate + clean up, and the
-# second-instance test can spawn a sibling with the same env. `None` until a gtk
-# launch; the mac path launches via `open` (no captured child) and leaves unset.
-_GTK_PROC: "subprocess.Popen[bytes] | None" = None
-_GTK_LOG: Path | None = None
-_GTK_LOG_FH = None
-_GTK_RUNTIME_DIR: Path | None = None
-_GTK_ENV: dict[str, str] | None = None
+@dataclass(frozen=True)
+class _Subproc:
+    """Per-target config for the subprocess-launched UIs (gtk, tauri)."""
+    binary: Path
+    env_prefix: str      # "SHED_GTK" / "SHED_TAURI"
+    fallback_stem: str   # /tmp/<stem>-<uid> when XDG_RUNTIME_DIR is unset; also the log-file stem
+    sock_rel: str        # socket path relative to the runtime dir (matches the app's env resolver)
+    platform_id: str     # the identify.platform stamp: "gtk" / "tauri"
+    client_cls: type     # the IPC client class for this target
+
+
+_SUBPROC: dict[str, _Subproc] = {
+    # gtk's `[[bin]]` name is `shed-desktop`, built into core/'s target dir; it
+    # nests the socket in a shed-gtk/ subdir. tauri keeps the socket flat (shorter,
+    # so a throwaway XDG_RUNTIME_DIR under macOS's long TMPDIR stays under SUN_LEN).
+    "gtk": _Subproc(
+        binary=REPO_ROOT / "core" / "target" / "debug" / "shed-desktop",
+        env_prefix="SHED_GTK", fallback_stem="shed-gtk",
+        sock_rel="shed-gtk/shed-gtk.sock", platform_id="gtk", client_cls=GtkClient),
+    # the Tauri crate builds `shed-desktop-tauri` in its standalone workspace.
+    "tauri": _Subproc(
+        binary=REPO_ROOT / "tauri" / "src-tauri" / "target" / "debug" / "shed-desktop-tauri",
+        env_prefix="SHED_TAURI", fallback_stem="shed-tauri",
+        sock_rel="shed-tauri.sock", platform_id="tauri", client_cls=TauriClient),
+}
+
+# The Linux render gate builds the Tauri app with a relocated CARGO_TARGET_DIR (so
+# a container build can't clobber the mac target dir); let it point the harness at
+# that binary via SHED_TAURI_BIN.
+if os.environ.get("SHED_TAURI_BIN"):
+    _SUBPROC["tauri"] = replace(_SUBPROC["tauri"], binary=Path(os.environ["SHED_TAURI_BIN"]))
+
+# gtk's binary path as a module attr — test_gtk.py references `ui.BIN`.
+BIN = _SUBPROC["gtk"].binary
+# the Tauri binary, for symmetry (test_tauri.py references `ui.TAURI_BIN`).
+TAURI_BIN = _SUBPROC["tauri"].binary
+
+
+@dataclass
+class _ProcState:
+    """A harness-launched subprocess UI's process + captured log + throwaway
+    HOME/XDG_RUNTIME_DIR + launch env. Retained so `wait_alive` can tell a
+    crashed-on-boot UI from a slow one, `quit` can terminate + clean up, and the
+    second-instance test can spawn a sibling with the same env."""
+    proc: "subprocess.Popen[bytes] | None" = None
+    log: Path | None = None
+    log_fh: object = None
+    runtime_dir: Path | None = None
+    env: dict[str, str] | None = None
+
+
+_state: dict[str, _ProcState] = {t: _ProcState() for t in _SUBPROC}
 
 
 def socket_path(target: str = "mac") -> Path:
     if target == "mac":
         return Path.home() / "Library/Caches/ShedDesktop/shed-desktop.sock"
-    if target == "gtk":
-        runtime = _GTK_RUNTIME_DIR or Path(
-            os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/shed-gtk-{os.getuid()}"
-        )
-        return runtime / "shed-gtk" / "shed-gtk.sock"
-    raise ValueError(f"unknown target {target!r} (want mac|gtk)")
+    cfg = _SUBPROC.get(target)
+    if cfg is None:
+        raise ValueError(f"unknown target {target!r} (want {'|'.join(TARGETS)})")
+    runtime = _state[target].runtime_dir or Path(
+        os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/{cfg.fallback_stem}-{os.getuid()}"
+    )
+    return runtime / cfg.sock_rel
 
 
-def _client(target: str) -> IPCClient:
-    return ShedDesktop(socket_path(target)) if target == "mac" else GtkClient(socket_path(target))
+def make_client(target: str) -> IPCClient:
+    """The IPC client for a target — the single source of the target→class map
+    (subprocess targets carry their `client_cls` in `_SUBPROC`)."""
+    sock = socket_path(target)
+    if target == "mac":
+        return ShedDesktop(sock)
+    cfg = _SUBPROC.get(target)
+    if cfg is None:
+        raise ValueError(f"unknown target {target!r} (want {'|'.join(TARGETS)})")
+    return cfg.client_cls(sock)
+
+
+def launch_env(target: str) -> dict[str, str]:
+    """The env the session's subprocess UI was launched with — so the
+    second-instance (single-instance) test can spawn a sibling against the same
+    runtime."""
+    st = _state.get(target)
+    env = st.env if st else None
+    if env is None:
+        raise RuntimeError(f"no {target} UI launched this session")
+    return dict(env)
 
 
 def gtk_launch_env() -> dict[str, str]:
-    """The env the session's shed-gtk was launched with — so the second-instance
-    (single-instance flock) test can spawn a sibling against the same runtime."""
-    if _GTK_ENV is None:
-        raise RuntimeError("no shed-gtk launched this session")
-    return dict(_GTK_ENV)
+    """Back-compat alias for test_gtk.py."""
+    return launch_env("gtk")
 
 
-def _gtk_log_path() -> Path:
-    """Where a harness-launched shed-gtk's stdout+stderr are captured. Kept
-    OUTSIDE the throwaway runtime dir (which `quit` removes) so a boot-failure
-    log survives for CI to collect on failure. Honors `SHED_GTK_E2E_LOG_DIR`;
-    falls back to the system temp dir."""
-    base = Path(os.environ.get("SHED_GTK_E2E_LOG_DIR") or tempfile.gettempdir())
+def _log_path(cfg: _Subproc) -> Path:
+    """Where a harness-launched subprocess UI's stdout+stderr are captured. Kept
+    OUTSIDE the throwaway runtime dir (which `quit` removes) so a boot-failure log
+    survives for CI. Honors `<PREFIX>_E2E_LOG_DIR`; else the system temp dir."""
+    base = Path(os.environ.get(f"{cfg.env_prefix}_E2E_LOG_DIR") or tempfile.gettempdir())
     base.mkdir(parents=True, exist_ok=True)
-    return base / "shed-gtk-ui.log"
+    return base / f"{cfg.fallback_stem}-ui.log"
 
 
 # -- mac process helpers (unchanged behavior) ----------------------------------
@@ -92,7 +143,7 @@ def _running() -> bool:
 
 def is_alive(target: str = "mac") -> bool:
     try:
-        c = _client(target)
+        c = make_client(target)
         try:
             c.identify()
             return True
@@ -113,14 +164,14 @@ def _wait_gone(timeout: float) -> bool:
 
 def quit(target: str = "mac") -> None:
     """Quit the harness-owned UI. A switch, never flattened: the mac path
-    (osascript → pkill → `defaults delete` → unlink sock/lock) and the gtk path
-    (terminate/kill the child → remove its temp dir) share nothing."""
+    (osascript → pkill → `defaults delete` → unlink sock/lock) and the subprocess
+    path (terminate/kill the child → remove its temp dir) share nothing."""
     if target == "mac":
         _quit_mac()
-    elif target == "gtk":
-        _quit_gtk()
+    elif target in _SUBPROC:
+        _quit_subproc(target)
     else:
-        raise ValueError(f"unknown target {target!r} (want mac|gtk)")
+        raise ValueError(f"unknown target {target!r} (want {'|'.join(TARGETS)})")
 
 
 def _quit_mac() -> None:
@@ -153,23 +204,19 @@ def _quit_mac() -> None:
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
-def _quit_gtk() -> None:
-    global _GTK_PROC, _GTK_LOG, _GTK_LOG_FH, _GTK_RUNTIME_DIR, _GTK_ENV
-    if _GTK_PROC is not None and _GTK_PROC.poll() is None:
-        _GTK_PROC.terminate()
+def _quit_subproc(target: str) -> None:
+    st = _state[target]
+    if st.proc is not None and st.proc.poll() is None:
+        st.proc.terminate()
         try:
-            _GTK_PROC.wait(timeout=scaled_timeout(5))
+            st.proc.wait(timeout=scaled_timeout(5))
         except subprocess.TimeoutExpired:
-            _GTK_PROC.kill()
-    if _GTK_LOG_FH is not None:
-        _GTK_LOG_FH.close()
-    if _GTK_RUNTIME_DIR is not None:
-        shutil.rmtree(_GTK_RUNTIME_DIR, ignore_errors=True)
-    _GTK_PROC = None
-    _GTK_LOG = None
-    _GTK_LOG_FH = None
-    _GTK_RUNTIME_DIR = None
-    _GTK_ENV = None
+            st.proc.kill()
+    if st.log_fh is not None:
+        st.log_fh.close()
+    if st.runtime_dir is not None:
+        shutil.rmtree(st.runtime_dir, ignore_errors=True)
+    _state[target] = _ProcState()
 
 
 def launch(target: str = "mac", *, mock_base_url: str, config_path: Path, state_dir: Path,
@@ -177,16 +224,17 @@ def launch(target: str = "mac", *, mock_base_url: str, config_path: Path, state_
     """Launch the UI hermetically and block until it answers `identify`.
 
     `state_dir` is the throwaway per-session dir: on mac SHED_DESKTOP_STATE_DIR;
-    on gtk it doubles as HOME + XDG_RUNTIME_DIR (so ~/.shed and the runtime
-    socket are both isolated). `host_agent_socket` is mac-only.
+    on a subprocess target it doubles as HOME + XDG_RUNTIME_DIR (so ~/.shed and
+    the runtime socket are both isolated). `host_agent_socket` is mac-only.
     """
     if target == "mac":
         _launch_mac(mock_base_url=mock_base_url, config_path=config_path,
                     state_dir=state_dir, host_agent_socket=host_agent_socket)
-    elif target == "gtk":
-        _launch_gtk(mock_base_url=mock_base_url, config_path=config_path, runtime_dir=state_dir)
+    elif target in _SUBPROC:
+        _launch_subproc(target, mock_base_url=mock_base_url, config_path=config_path,
+                        runtime_dir=state_dir)
     else:
-        raise ValueError(f"unknown target {target!r} (want mac|gtk)")
+        raise ValueError(f"unknown target {target!r} (want {'|'.join(TARGETS)})")
 
 
 def _launch_mac(*, mock_base_url: str, config_path: Path, state_dir: Path,
@@ -217,31 +265,35 @@ def _launch_mac(*, mock_base_url: str, config_path: Path, state_dir: Path,
     wait_alive("mac", mock_base_url=mock_base_url)
 
 
-def _launch_gtk(*, mock_base_url: str, config_path: Path, runtime_dir: Path) -> None:
-    if not BIN.exists():
+def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
+                    runtime_dir: Path) -> None:
+    cfg = _SUBPROC[target]
+    if not cfg.binary.exists():
         raise RuntimeError(
-            f"shed-gtk binary not found at {BIN}; build it first "
-            "(`make gtk-build`, or `cargo build -p shed-gtk` in core/).")
-    global _GTK_PROC, _GTK_LOG, _GTK_LOG_FH, _GTK_RUNTIME_DIR, _GTK_ENV
+            f"{target} binary not found at {cfg.binary}; build it first "
+            f"(gtk: `make gtk-build`; tauri: `make tauri-build`).")
     # HOME/XDG_RUNTIME_DIR redirected to the temp dir (never the dev's ~/.shed or
     # real runtime socket), config pinned to the fixture, test mode + mock set.
-    # SHED_GTK_SOCKET is cleared so the XDG default (under runtime_dir) is used.
+    # <PREFIX>_SOCKET is cleared so the XDG default (under runtime_dir) is used.
     env = dict(os.environ)
     env["HOME"] = str(runtime_dir)
     env["XDG_RUNTIME_DIR"] = str(runtime_dir)
-    env["SHED_GTK_TEST_MODE"] = "1"
-    env["SHED_GTK_MOCK_BASE_URL"] = mock_base_url
-    env["SHED_GTK_SHED_CONFIG"] = str(config_path)
-    env.pop("SHED_GTK_SOCKET", None)
-    _GTK_ENV = env
-    _GTK_RUNTIME_DIR = runtime_dir
-    sock = socket_path("gtk")
+    # Redirect the config dir too so tauri's app_config_dir (persisted prefs) is
+    # hermetic — else a dev's real $XDG_CONFIG_HOME would be written under test.
+    env["XDG_CONFIG_HOME"] = str(runtime_dir / "config")
+    env[f"{cfg.env_prefix}_TEST_MODE"] = "1"
+    env[f"{cfg.env_prefix}_MOCK_BASE_URL"] = mock_base_url
+    env[f"{cfg.env_prefix}_SHED_CONFIG"] = str(config_path)
+    env.pop(f"{cfg.env_prefix}_SOCKET", None)
+    st = _state[target]
+    st.env = env
+    st.runtime_dir = runtime_dir
+    sock = socket_path(target)
     sock.parent.mkdir(parents=True, exist_ok=True)
-    _GTK_LOG = _gtk_log_path()
-    _GTK_LOG_FH = open(_GTK_LOG, "wb")
-    _GTK_PROC = subprocess.Popen(
-        [str(BIN)], env=env, stdout=_GTK_LOG_FH, stderr=subprocess.STDOUT)
-    wait_alive("gtk", mock_base_url=mock_base_url)
+    st.log = _log_path(cfg)
+    st.log_fh = open(st.log, "wb")
+    st.proc = subprocess.Popen([str(cfg.binary)], env=env, stdout=st.log_fh, stderr=subprocess.STDOUT)
+    wait_alive(target, mock_base_url=mock_base_url)
 
 
 def wait_alive(target: str = "mac", *, mock_base_url: str, timeout: float = 30.0) -> None:
@@ -252,7 +304,7 @@ def wait_alive(target: str = "mac", *, mock_base_url: str, timeout: float = 30.0
     deadline = time.monotonic() + timeout
     while True:
         try:
-            c = _client(target)
+            c = make_client(target)
             try:
                 info = c.identify()
                 if _hermetic(target, info, mock_base_url):
@@ -261,11 +313,12 @@ def wait_alive(target: str = "mac", *, mock_base_url: str, timeout: float = 30.0
                 c.close()
         except (OSError, ShedError):
             pass
-        # A crashed-on-boot gtk child (already exited) is a hard failure, not a
-        # slow boot — surface it (with the captured log) rather than time out.
-        if target == "gtk" and _GTK_PROC is not None and _GTK_PROC.poll() is not None:
+        # A crashed-on-boot subprocess child (already exited) is a hard failure,
+        # not a slow boot — surface it (with the captured log) rather than time out.
+        st = _state.get(target)
+        if st is not None and st.proc is not None and st.proc.poll() is not None:
             raise RuntimeError(
-                f"shed-gtk exited early (code {_GTK_PROC.returncode}); see {_GTK_LOG}")
+                f"{target} UI exited early (code {st.proc.returncode}); see {st.log}")
         if time.monotonic() >= deadline:
             raise TimeoutError(f"{target} UI not hermetically ready within {timeout}s")
         time.sleep(0.25)
@@ -274,8 +327,9 @@ def wait_alive(target: str = "mac", *, mock_base_url: str, timeout: float = 30.0
 def _hermetic(target: str, info: dict, mock_base_url: str) -> bool:
     if not (info.get("test_mode") and info.get("mock_base_url") == mock_base_url):
         return False
-    if target == "gtk":
-        return info.get("core") == "rust" and info.get("platform") == "gtk"
+    cfg = _SUBPROC.get(target)
+    if cfg is not None:
+        return info.get("core") == "rust" and info.get("platform") == cfg.platform_id
     # mac: confirm the active backend matches the flag so a silent Rust->Swift
     # downgrade can't make a run falsely green. Default-on (M0): unset ⇒ rust;
     # only an explicit `=0` selects swift.

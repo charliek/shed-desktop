@@ -22,6 +22,9 @@ workspace = true
 
 [dependencies]
 shed-core = { path = "../shed-core" }
+# The shared app-logic layer (the Backend + create store), extracted from this
+# crate's former src/backend.rs (A1a).
+shed-app = { path = "../shed-app" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -12,12 +12,21 @@
 # Cold (not running): launch Ghostty with `-e` so the command IS the initial
 # window. `activate` + `new tab` on a cold start would otherwise leave a stray
 # default `~ $` window in front.
+#
+# Linux: Ghostty's GTK apprt takes `-e <program> [args...]` as the surface's
+# initial command (a warm instance opens a new window itself); no AppleScript/
+# `open`, so short-circuit before the macOS path.
 set -euo pipefail
 
 shed="${1:-}"
 cmd="${2:-}"
 [ -n "$cmd" ] || { echo "usage: shed-open-ghostty <shed> <cmd>" >&2; exit 2; }
 
+if [ "$(uname -s)" = "Linux" ]; then
+  exec ghostty -e /bin/sh -lc "$cmd"
+fi
+
+# --- macOS ---
 app="$(/usr/bin/osascript -e 'POSIX path of (path to application id "com.mitchellh.ghostty")' 2>/dev/null || true)"
 [ -n "$app" ] || app="/Applications/Ghostty.app"
 

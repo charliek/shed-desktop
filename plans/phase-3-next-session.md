@@ -46,22 +46,33 @@ These are yours; do NOT do them autonomously:
 
 ## What's next (the roadmap direction)
 
-The next roadmap thrust is the **Flutter mobile spike** — a third client on the same
-`shed-core`, to exercise the API boundary from a very different runtime before it's frozen
-(see `docs/roadmap.md`). Deferred and NOT to be started without a fresh go-ahead:
+The active thrust is the **Tauri desktop client** — a real Linux client toward **full Mac↔Linux
+parity** on the same `shed-core` (Tauri's backend *is* Rust → `shed-core` is a direct dep; it runs on
+macOS [WKWebView, a UI-comparison loop vs the Swift app] **and** Linux [WebKitGTK, the shipped target],
+like the GTK client). It's **panel-reviewed and split into three phases** — foundation → the approval
+spine → agents/prefs/tray + release — landing in **one PR**, each phase `/planning:ask-panel`'d + refined
+with the prior phase's learnings. The `spike/tauri` scaffold proved `shed-core`-in-Tauri is clean (live
+against real hosts; the `CreateSink`→events seam bridges Swift/GTK/Tauri). **If it lands, it replaces the
+GTK client as the shipped Linux app.** See **`plans/tauri-desktop.md`**. (A Flutter mobile spike is
+superseded unless Tauri's **Android** target disappoints — mobile is a separate, later spike.)
 
-- **Phase 4 (Rust-core-only)** — retire the Swift `URLSession` path (+ the
-  `SHED_DESKTOP_RUST_CORE=0` fallback + its e2e leg) and unify config discovery via the FFI,
-  after the Rust default has shipped ≥ 2 releases. See `plans/phase-4-rust-core-only.md`.
-- **M6 GTK approval pane** — after the Flutter spike (per the roadmap).
+Deferred / not without a fresh go-ahead:
+
+- **Phase 4 (Rust-core-only)** — retire the Swift `URLSession` path (+ the `SHED_DESKTOP_RUST_CORE=0`
+  fallback + its e2e leg) and unify config discovery via the FFI, after the Rust default has shipped ≥ 2
+  releases. Relatedly, Tauri Phase A extracts a shared **`core/shed-app`** (the app-logic `Backend`) — a
+  natural home the Swift app could eventually route through too. See `plans/phase-4-rust-core-only.md`.
+- The **GTK approval pane** is subsumed by the Tauri client's **Phase B** (the approval spine ported to
+  shared Rust, with the host-agent client + control-token minting).
 
 ## The flow — follow it every time
 
 1. **New plan → panel review.** When you write a **new** plan, run
    `/planning:ask-panel <plan-path> — <focus>` (Codex + Kimi + CodeRabbit) and fold the
    findings in **before** implementing.
-2. **Per commit:** `/simplify` → `/codex:rescue` (fallback `/cursor:rescue`) → tests + lint →
-   commit. Keep every commit green.
+2. **Per commit:** `/simplify` → **`/cursor:rescue`** (currently primary — Codex is
+   rate-limited; use `/codex:rescue` again once it recovers) → tests + lint → commit. Keep
+   every commit green.
 3. **Keep it drivable + tested** (the North Star): new UI/behavior ⇒ a new IPC op + harness
    coverage. Use the **`shedtest-mac`** skill for the macOS e2e loop and **`shedtest-linux`**
    for the GTK loop in a shed.

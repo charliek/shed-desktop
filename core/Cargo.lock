@@ -2342,6 +2342,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "shed-app"
+version = "0.0.1"
+dependencies = [
+ "futures",
+ "httpmock",
+ "serde",
+ "shed-core",
+ "tokio",
+]
+
+[[package]]
 name = "shed-core"
 version = "0.0.1"
 dependencies = [
@@ -2383,6 +2394,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "shed-app",
  "shed-core",
  "tempfile",
  "tokio",

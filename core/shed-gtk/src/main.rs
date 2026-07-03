@@ -15,7 +15,7 @@ use gtk4::glib::{self, LogWriterOutput};
 use libadwaita::prelude::*;
 use libadwaita::Application;
 
-use shed_gtk::backend::Backend;
+use shed_app::Backend;
 use shed_gtk::env::Env;
 use shed_gtk::ipc::{Handler, IpcServer, UiRequest};
 use shed_gtk::single_instance::{self, AcquireError};
@@ -70,7 +70,11 @@ fn main() -> glib::ExitCode {
         }
     };
 
-    let backend = Arc::new(Backend::new(&env));
+    let backend = Arc::new(Backend::from_env_parts(
+        env.test_mode,
+        env.mock_base_url.as_deref(),
+        &env.config_path,
+    ));
 
     // A multi-threaded tokio runtime; its Handle is passed to the App so
     // shed-core (reqwest) futures are spawned here, never on the glib executor.

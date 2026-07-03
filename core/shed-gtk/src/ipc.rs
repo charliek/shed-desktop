@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use shed_core::models::{CreateShedRequest, Shed};
 
-use crate::backend::Backend;
 use crate::env::Env;
+use shed_app::Backend;
 
 /// A request line is tiny; cap it so a local client can't force unbounded
 /// buffering with a huge/unterminated frame.
@@ -132,13 +132,9 @@ impl Handler {
             .and_then(Value::as_str)
             .ok_or_else(|| err("bad_request", "missing 'name'"))?;
         let host = params.get("host").and_then(Value::as_str);
-        let result = match action {
-            "start" => self.backend.start(host, name).await,
-            "stop" => self.backend.stop(host, name).await,
-            "reset" => self.backend.reset(host, name).await,
-            _ => self.backend.delete(host, name).await,
-        };
-        result
+        self.backend
+            .shed_action(host, name, action)
+            .await
             .map(|()| json!({}))
             .map_err(|e| err("action_failed", e.to_string()))
     }
@@ -500,15 +496,4 @@ mod tests {
         assert_eq!(r, json!({}));
     }
 
-    #[tokio::test]
-    async fn test_mode_without_mock_builds_no_clients() {
-        // Hermeticity: a partial test env must not dial the developer's real hosts.
-        let e = Env {
-            test_mode: true,
-            mock_base_url: None,
-            config_path: PathBuf::from("/does/not/matter"),
-            socket_path: PathBuf::from("/tmp/x.sock"),
-        };
-        assert!(Backend::new(&e).list_sheds().await.is_empty());
-    }
 }
