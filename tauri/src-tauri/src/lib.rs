@@ -17,18 +17,45 @@ use std::sync::{Arc, Mutex};
 
 use env::Env;
 use ipc::{Handler, IpcServer};
+use shed_app::Backend;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
 
-/// The React frontend reports its rendered pane + a computed-style sample here, so
-/// the harness can read the real rendered state over IPC (`ui.current_pane` /
-/// `ui.computed_style`). Invoked from `useUiBridge` on mount + every pane change.
+/// The React frontend reports its rendered snapshot (`{pane, style, sheds,
+/// refresh_token}`) here, so the harness reads the real rendered state over IPC
+/// (`ui.current_pane` / `ui.computed_style` / `dashboard.dump`). Invoked from
+/// `useUiBridge` on mount + every render. One JSON blob, not a field per op, so a
+/// new reader is a key projection (see [`state::UiState`]).
 #[tauri::command]
-fn ui_report(ui: tauri::State<'_, SharedUi>, pane: String, style: serde_json::Value) {
+fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
     if let Ok(mut s) = ui.lock() {
-        s.current_pane = Some(pane);
-        s.computed_style = Some(style);
+        s.snapshot = Some(snapshot);
     }
+}
+
+/// The WebView's live shed list — `invoke("list_sheds")` on mount + on each
+/// `refresh` event. Returns host-stamped sheds (all configured hosts, concurrently
+/// via the shared `Backend`); the harness reads the same data via the `sheds.list`
+/// IPC op.
+#[tauri::command]
+async fn list_sheds(backend: tauri::State<'_, Arc<Backend>>) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(backend.list_sheds().await))
+}
+
+/// A lifecycle action from a shed card's buttons (`start`/`stop`/`reset`/`delete`).
+/// The frontend re-fetches (a `sheds.refresh`) after it resolves; the harness
+/// drives the same via the `shed.*` IPC ops.
+#[tauri::command]
+async fn shed_action(
+    backend: tauri::State<'_, Arc<Backend>>,
+    action: String,
+    name: String,
+    host: Option<String>,
+) -> Result<(), String> {
+    backend
+        .shed_action(host.as_deref(), &name, &action)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -58,15 +85,25 @@ pub fn run() {
         }
     };
 
-    // Shared with the IPC handler so `ui.current_pane` / `ui.computed_style` read
-    // what the frontend reported.
+    // Shared with the IPC handler so `ui.current_pane` / `ui.computed_style` /
+    // `dashboard.dump` read what the frontend reported.
     let ui: SharedUi = Arc::new(Mutex::new(UiState::default()));
+
+    // One shared shed-core-backed Backend behind both surfaces: the WebView's
+    // `invoke` commands (list_sheds/shed_action) and the harness's IPC ops
+    // (sheds.*/shed.*/create.*). Hermetic in test mode (every host → the mock).
+    let backend = Arc::new(Backend::from_env_parts(
+        env.test_mode,
+        env.mock_base_url.as_deref(),
+        &env.config_path,
+    ));
 
     tauri::Builder::default()
         .manage(ui.clone())
-        .invoke_handler(tauri::generate_handler![ui_report])
+        .manage(backend.clone())
+        .invoke_handler(tauri::generate_handler![ui_report, list_sheds, shed_action])
         .setup(move |app| {
-            let handler = Handler::new(env.clone(), app.handle().clone(), ui.clone());
+            let handler = Handler::new(env.clone(), app.handle().clone(), ui.clone(), backend.clone());
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.
             let server = tauri::async_runtime::block_on(IpcServer::bind(&env.socket_path, handler))

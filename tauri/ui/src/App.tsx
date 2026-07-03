@@ -4,21 +4,16 @@
    `ui.navigate` op (via the `navigate` Tauri event); the rendered pane + a
    computed-style sample are reported back to Rust (useUiBridge) so the harness can
    assert them over IPC. */
-import { useEffect, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import {
-  Boxes, Shield, Sparkles, ScrollText, HardDrive, Box, TriangleAlert, Plus,
+  Boxes, Shield, Sparkles, ScrollText, HardDrive, Box, Plus,
   Terminal, RotateCw, Square, Play, Trash2, RefreshCw, ExternalLink, Key,
   Fingerprint, Moon, Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useUiBridge, type Pane } from "@/lib/bridge";
+import { useUiBridge, shedAction, type Pane, type Shed } from "@/lib/bridge";
 
-/* ---- seed data (static preview; A1b makes it live) ------------------------ */
-const IMG = "shed-vz-full:v0.7.6";
-const SEED_SHEDS = [
-  { id: "s1", host: "localmac-dev", name: "sd-gtk-dev", backend: "vz", image: IMG, cpus: 2, mem: "4 GB", meta: "stopped", state: "stopped" },
-  { id: "s2", host: "localmac-dev", name: "ztest", backend: "vz", image: IMG, cpus: 2, mem: "4 GB", meta: "2 vCPU · 4 GB · up 2d", state: "running" },
-];
+/* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
 const SEED_AGENTS = [
   { id: "g1", shed: "localmac-dev/ztest", name: "claude-test", kind: "claude-rc", status: "ready", sub: "tmux rc-dqtzeu · /home/shed · made by shed" },
 ];
@@ -126,57 +121,76 @@ function IconBtn({ icon: Icon, tone = "neutral", title, onClick, spin, disabled 
 
 const card = "rounded-shed border border-shed-border bg-shed-surface shadow-shed";
 
+/* ---- live sheds (A1b) ----------------------------------------------------- */
+/** Group sheds by host, each group + its rows in first-seen order. */
+function groupByHost(sheds: Shed[]): [string, Shed[]][] {
+  const groups: [string, Shed[]][] = [];
+  for (const s of sheds) {
+    const g = groups.find(([h]) => h === s.host);
+    if (g) g[1].push(s);
+    else groups.push([s.host, [s]]);
+  }
+  return groups;
+}
+
+/** A one-line spec summary (falls back to just the status when specs are absent). */
+function metaLine(s: Shed): string {
+  const bits: string[] = [];
+  if (s.cpus) bits.push(`${s.cpus} vCPU`);
+  if (s.memory_mb) bits.push(`${Math.round(s.memory_mb / 1024)} GB`);
+  bits.push(s.status);
+  return bits.join(" · ");
+}
+
 /* ---- panes ---------------------------------------------------------------- */
-function ShedsPane() {
-  const unreachable = HOSTS.filter((h) => !h.online).length;
+function ShedsPane({ sheds, refresh }: { sheds: Shed[]; refresh: () => void }) {
+  const act = (action: string, s: Shed) => void shedAction(action, s.name, s.host).then(refresh);
   return (
     <div>
-      <PageHead
-        title="Sheds"
-        right={
-          <div className="flex items-center gap-4">
-            {unreachable > 0 && (
-              <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold" style={{ color: "var(--shed-attention)" }}>
-                <TriangleAlert size={17} /> {unreachable} hosts unreachable
-              </span>
-            )}
-            <HeadAction icon={Plus} label="New shed" />
-          </div>
-        }
-      />
-      <div className="mb-2 pl-0.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">localmac-dev</div>
-      <div className="flex flex-col gap-3">
-        {SEED_SHEDS.map((s) => {
-          const running = s.state === "running";
-          return (
-            <div key={s.id} className={cn(card, "flex items-center gap-4 px-5 py-[18px]")} style={{ animation: "shed-in .25s ease" }}>
-              <Dot style={{ background: running ? "var(--shed-ok)" : "var(--shed-text-muted)" }} className="h-[11px] w-[11px]" />
-              <div className="min-w-0 flex-1">
-                <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
-                  <span className="text-[19px] font-bold text-shed-text">{s.name}</span>
-                  <Tag kind={s.backend} />
-                  <ImageChip>{s.image}</ImageChip>
-                </div>
-                <div className="text-[14px] text-shed-text-muted">{s.meta}</div>
-              </div>
-              <div className="flex gap-2.5">
-                {running ? (
-                  <>
-                    <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" />
-                    <IconBtn icon={RotateCw} tone="attention" title="Restart" />
-                    <IconBtn icon={Square} tone="danger" title="Stop" />
-                  </>
-                ) : (
-                  <>
-                    <IconBtn icon={Play} tone="ok" title="Start" />
-                    <IconBtn icon={Trash2} tone="danger" title="Delete" />
-                  </>
-                )}
-              </div>
+      <PageHead title="Sheds" right={<HeadAction icon={Plus} label="New shed" />} />
+      {sheds.length === 0 ? (
+        <div className={cn(card, "px-5 py-8 text-center text-[14px] text-shed-text-muted")}>
+          No sheds on the configured hosts.
+        </div>
+      ) : (
+        groupByHost(sheds).map(([host, rows]) => (
+          <div key={host} className="mb-5 last:mb-0">
+            <div className="mb-2 pl-0.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">{host}</div>
+            <div className="flex flex-col gap-3">
+              {rows.map((s) => {
+                const running = s.status === "running";
+                return (
+                  <div key={`${host}/${s.name}`} className={cn(card, "flex items-center gap-4 px-5 py-[18px]")} style={{ animation: "shed-in .25s ease" }}>
+                    <Dot style={{ background: running ? "var(--shed-ok)" : "var(--shed-text-muted)" }} className="h-[11px] w-[11px]" />
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
+                        <span className="text-[19px] font-bold text-shed-text">{s.name}</span>
+                        {s.backend && <Tag kind={s.backend} />}
+                        {s.image && <ImageChip>{s.image}</ImageChip>}
+                      </div>
+                      <div className="text-[14px] text-shed-text-muted">{metaLine(s)}</div>
+                    </div>
+                    <div className="flex gap-2.5">
+                      {running ? (
+                        <>
+                          <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" />
+                          <IconBtn icon={RotateCw} tone="attention" title="Restart" onClick={() => act("reset", s)} />
+                          <IconBtn icon={Square} tone="danger" title="Stop" onClick={() => act("stop", s)} />
+                        </>
+                      ) : (
+                        <>
+                          <IconBtn icon={Play} tone="ok" title="Start" onClick={() => act("start", s)} />
+                          <IconBtn icon={Trash2} tone="danger" title="Delete" onClick={() => act("delete", s)} />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-      </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
@@ -307,8 +321,7 @@ function SystemPane() {
   );
 }
 
-const PANES: Record<Pane, () => JSX.Element> = {
-  sheds: ShedsPane,
+const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
   approvals: ApprovalsPane,
   agents: AgentsPane,
   activity: ActivityPane,
@@ -319,14 +332,16 @@ const PANES: Record<Pane, () => JSX.Element> = {
 export default function App() {
   const [pane, setPane] = useState<Pane>("sheds");
   const [mode, setMode] = useState<"light" | "dark">("light");
-  useUiBridge(pane, setPane);
+  const { sheds, refresh } = useUiBridge(pane, setPane);
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
   }, [mode]);
 
   const pending = SEED_APPROVALS.length;
-  const Body = PANES[pane];
+  // Sidebar hosts are the distinct hosts of the live sheds (all reachable — the
+  // "N unreachable" rollup rides in with the System pane at A1c).
+  const hosts = [...new Set(sheds.map((s) => s.host))];
 
   return (
     <div className="flex h-full">
@@ -334,7 +349,7 @@ export default function App() {
       <aside className="flex w-[232px] flex-none flex-col gap-1 border-r border-shed-border bg-shed-bg-sidebar px-3 py-3.5">
         {NAV.map(([id, label, Icon]) => {
           const active = pane === id;
-          const badge = id === "sheds" ? SEED_SHEDS.length : id === "approvals" && pending ? pending : null;
+          const badge = id === "sheds" ? sheds.length || null : id === "approvals" && pending ? pending : null;
           const alert = id === "approvals" && pending > 0;
           return (
             <button
@@ -361,10 +376,10 @@ export default function App() {
         })}
         <div className="mx-[11px] my-3 h-px bg-shed-border" />
         <div className="px-[11px] pb-2 pt-0.5 text-[11px] font-semibold tracking-wider text-shed-text-muted">HOSTS</div>
-        {HOSTS.map((h) => (
-          <div key={h.name} className="flex items-center gap-3 px-[11px] py-[7px] text-[14px] font-medium" style={{ color: h.online ? "var(--shed-text-secondary)" : "var(--shed-text-muted)" }}>
-            <Dot style={{ background: h.online ? "var(--shed-ok)" : "var(--shed-text-muted)" }} />
-            <span>{h.name}</span>
+        {hosts.map((h) => (
+          <div key={h} className="flex items-center gap-3 px-[11px] py-[7px] text-[14px] font-medium text-shed-text-secondary">
+            <Dot style={{ background: "var(--shed-ok)" }} />
+            <span>{h}</span>
           </div>
         ))}
         <div className="flex-1" />
@@ -390,7 +405,9 @@ export default function App() {
         </header>
         <main className="flex-1 overflow-auto bg-shed-bg px-[38px] py-7">
           <div className="mx-auto max-w-[880px]" data-pane={pane}>
-            <Body />
+            {pane === "sheds"
+              ? <ShedsPane sheds={sheds} refresh={refresh} />
+              : createElement(STATIC_PANES[pane])}
           </div>
         </main>
       </div>

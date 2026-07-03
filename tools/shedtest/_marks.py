@@ -7,9 +7,8 @@ time — sees the effective target whether it came from the CLI flag or the env.
 - `mac_only`: the Swift app's ops (approvals / rc / nav / prefs / system / images
   / the surface-based screenshot) that neither shed-gtk nor Tauri implements.
 - `needs_backend`: the shared-suite tests that drive the shed-core backend ops
-  (sheds.list/refresh, the lifecycle actions, create + cancel). The Tauri client
-  is a drivable skeleton at A0a and gains these ops in A1b, so they skip on
-  `--target tauri` until then — keeping `make e2e-tauri` green at A0a.
+  (sheds.list/refresh, the lifecycle actions, create + cancel). All three targets
+  implement them now (Tauri gained them in A1b, on the shared shed-app Backend).
 """
 
 from __future__ import annotations
@@ -25,9 +24,8 @@ mac_only = pytest.mark.skipif(
     reason="mac-only: drives the Swift app op surface (no shed-gtk/tauri analog)",
 )
 
-# Targets whose UI implements the shed-core backend ops today. The Tauri client
-# gains them in A1b; add "tauri" here then and the gated shared tests light up.
-_BACKEND_TARGETS = {"mac", "gtk"}
+# Targets whose UI implements the shed-core backend ops. All three do as of A1b.
+_BACKEND_TARGETS = {"mac", "gtk", "tauri"}
 
 needs_backend = pytest.mark.skipif(
     _TARGET not in _BACKEND_TARGETS,

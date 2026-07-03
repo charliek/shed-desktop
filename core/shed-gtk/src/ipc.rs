@@ -132,13 +132,9 @@ impl Handler {
             .and_then(Value::as_str)
             .ok_or_else(|| err("bad_request", "missing 'name'"))?;
         let host = params.get("host").and_then(Value::as_str);
-        let result = match action {
-            "start" => self.backend.start(host, name).await,
-            "stop" => self.backend.stop(host, name).await,
-            "reset" => self.backend.reset(host, name).await,
-            _ => self.backend.delete(host, name).await,
-        };
-        result
+        self.backend
+            .shed_action(host, name, action)
+            .await
             .map(|()| json!({}))
             .map_err(|e| err("action_failed", e.to_string()))
     }

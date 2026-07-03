@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type Pane = "sheds" | "approvals" | "agents" | "activity" | "system";
 
@@ -8,6 +8,17 @@ const PANES: readonly Pane[] = ["sheds", "approvals", "agents", "activity", "sys
 export function isPane(x: unknown): x is Pane {
   return typeof x === "string" && (PANES as readonly string[]).includes(x);
 }
+
+/** A shed as shed-core serializes it — the fields the dashboard reads (more exist). */
+export type Shed = {
+  name: string;
+  host: string;
+  status: string;
+  backend?: string | null;
+  image?: string | null;
+  cpus?: number | null;
+  memory_mb?: number | null;
+};
 
 /** Running inside a Tauri webview (vs a plain browser during `vite dev`)? */
 function inTauri(): boolean {
@@ -26,55 +37,107 @@ function sampleStyle() {
   };
 }
 
-function report(pane: Pane) {
-  void import("@tauri-apps/api/core").then((core) =>
-    core.invoke("ui_report", { pane, style: sampleStyle() }).catch(() => {}),
-  );
+/** Invoke a Rust command, swallowing errors to `undefined` (the shell degrades to
+ *  an empty list rather than throwing inside an effect). */
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | undefined> {
+  const core = await import("@tauri-apps/api/core");
+  return core.invoke<T>(cmd, args).catch(() => undefined);
 }
 
-/** Wire the shell to the Rust IPC drivability ops: listen for `navigate` (the
- *  `ui.navigate` op) and report the rendered pane + a computed-style sample back to
- *  Rust (`ui_report`), so `ui.current_pane` / `ui.computed_style` read the real
- *  rendered state. A no-op in a plain browser.
+/** Report the rendered snapshot Rust relays to the harness (`ui.current_pane` /
+ *  `ui.computed_style` / `dashboard.dump`). One blob, so a new reader is one more
+ *  key. The refresh token is echoed so `sheds.refresh` can block on it. */
+function report(pane: Pane, sheds: Shed[], refreshToken: number) {
+  void invoke("ui_report", {
+    snapshot: { pane, style: sampleStyle(), sheds, refresh_token: refreshToken },
+  });
+}
+
+/** Wire the shell to Rust: drive the pane from the `navigate` event, keep a live
+ *  shed list (fetched on mount + on each `refresh` event — the `sheds.refresh`
+ *  op), and report the rendered snapshot back so the harness can assert it.
+ *  Returns the live sheds + a `refresh` callback (a lifecycle button chains it to
+ *  re-fetch after its action). A no-op in a plain browser.
  *
- *  The initial report is emitted only AFTER the navigate listener is registered
- *  (its registration is async), so `current_pane != null` tells the harness the
- *  listener is live and a `ui.navigate` won't be lost to an attach race — which is
- *  also why `ui.navigate` fails `frontend_not_ready` until then. */
-export function useUiBridge(pane: Pane, setPane: (p: Pane) => void) {
+ *  Readiness: the initial report is emitted only AFTER both the navigate + refresh
+ *  listeners register, so `current_pane != null` tells the harness the listeners
+ *  are live and a `ui.navigate`/`refresh` won't be lost to an attach race (which
+ *  is also why `ui.navigate` fails `frontend_not_ready`, and `sheds.refresh` only
+ *  blocks on the echo, until then). */
+export function useUiBridge(
+  pane: Pane,
+  setPane: (p: Pane) => void,
+): { sheds: Shed[]; refresh: () => void } {
+  const [sheds, setSheds] = useState<Shed[]>([]);
+  const [refreshToken, setRefreshToken] = useState(0);
+  // paneRef lets the mount effect read the latest pane for its initial report
+  // without taking `pane` as a dep (which would re-subscribe the listeners).
   const paneRef = useRef(pane);
   paneRef.current = pane;
   const ready = useRef(false);
+  const fetchGen = useRef(0);
+
+  // Fetch the live shed list and store it; on a refresh, also advance the echoed
+  // token so Rust's synchronous `sheds.refresh` observes completion. A generation
+  // guard drops a superseded (slower, older) fetch so it can't overwrite a newer
+  // one's rows OR re-report stale rows under an already-advanced token.
+  const fetchSheds = useCallback(async (token: number) => {
+    const gen = ++fetchGen.current;
+    const rows = (await invoke<Shed[]>("list_sheds")) ?? [];
+    if (gen !== fetchGen.current) return; // a newer fetch started — drop this one
+    setSheds(rows);
+    if (token > 0) setRefreshToken(token);
+  }, []);
 
   useEffect(() => {
     if (!inTauri()) return;
-    let unlisten: (() => void) | undefined;
     let cancelled = false;
+    const unlisten: Array<() => void> = [];
     void (async () => {
       const { listen } = await import("@tauri-apps/api/event");
-      const un = await listen<{ pane?: unknown }>("navigate", (e) => {
-        if (isPane(e.payload?.pane)) setPane(e.payload.pane);
-      });
+      unlisten.push(
+        await listen<{ pane?: unknown }>("navigate", (e) => {
+          if (isPane(e.payload?.pane)) setPane(e.payload.pane);
+        }),
+      );
+      unlisten.push(
+        await listen<{ token?: unknown }>("refresh", (e) => {
+          const t = e.payload?.token;
+          void fetchSheds(typeof t === "number" ? t : 0);
+        }),
+      );
       if (cancelled) {
-        un();
+        unlisten.forEach((u) => u());
         return;
       }
-      unlisten = un;
-      ready.current = true; // listener live → readiness signal + initial style
-      report(paneRef.current);
+      ready.current = true; // both listeners live → readiness signal + initial report
+      await fetchSheds(0);
+      // Fresh sheds arrive via the report effect on the next render; this initial
+      // report just publishes the pane, so `current_pane != null` = "listeners live".
+      report(paneRef.current, [], 0);
     })();
     return () => {
       cancelled = true;
       ready.current = false;
-      unlisten?.();
+      unlisten.forEach((u) => u());
     };
-  }, [setPane]);
+  }, [setPane, fetchSheds]);
 
-  // Report subsequent pane changes. Gated on `ready` (not a first-run flag) so it
-  // stays reliable under React StrictMode's effect replay: the listener effect owns
-  // the initial report, so `current_pane` remains a true "listener is live" signal.
+  // Re-report on any rendered change (pane, sheds, or the echoed token). Gated on
+  // `ready` (not a first-run flag) so the listener effect owns the initial report
+  // and `current_pane` stays a true "listeners live" signal under StrictMode replay.
   useEffect(() => {
     if (!inTauri() || !ready.current) return;
-    report(pane);
-  }, [pane]);
+    report(pane, sheds, refreshToken);
+  }, [pane, sheds, refreshToken]);
+
+  const refresh = useCallback(() => void fetchSheds(0), [fetchSheds]);
+  return { sheds, refresh };
+}
+
+/** Fire a lifecycle action (a shed card button). The caller re-fetches via the
+ *  hook's `refresh` so the card reflects the new state. Best-effort in a browser. */
+export async function shedAction(action: string, name: string, host: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("shed_action", { action, name, host });
 }

@@ -138,6 +138,25 @@ impl Backend {
         self.client_for(host)?.delete(name).await
     }
 
+    /// Dispatch a lifecycle action by name — the single `start`/`stop`/`reset`/
+    /// `delete` string map shared by the clients' `shed.*` IPC ops (and the Tauri
+    /// `invoke` command), which each used to hand-roll it. An unrecognized action
+    /// is a config error, never a silent fallthrough.
+    pub async fn shed_action(
+        &self,
+        host: Option<&str>,
+        name: &str,
+        action: &str,
+    ) -> Result<(), ShedError> {
+        match action {
+            "start" => self.start(host, name).await,
+            "stop" => self.stop(host, name).await,
+            "reset" => self.reset(host, name).await,
+            "delete" => self.delete(host, name).await,
+            other => Err(ShedError::Config(format!("unknown action: {other}"))),
+        }
+    }
+
     // -- create (on the pure shed-core CreateStore) -----------------------
 
     /// Start a create on `host`; the SSE stream runs on `rt` in the background.
@@ -285,6 +304,26 @@ mod tests {
             .await
             .expect("host-less op falls back to the first configured client");
         hit.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn shed_action_dispatches_by_name_and_rejects_unknown() {
+        let server = MockServer::start_async().await;
+        let started = server
+            .mock_async(|w, t| {
+                w.method(POST).path("/api/sheds/x/start");
+                t.status(200);
+            })
+            .await;
+        let backend = backend_with(vec![client_at("s", server.base_url())]);
+        backend
+            .shed_action(Some("s"), "x", "start")
+            .await
+            .expect("start dispatched");
+        started.assert_async().await;
+        // an unknown action is a config error, not a silent delete fallthrough
+        let e = backend.shed_action(Some("s"), "x", "bogus").await.unwrap_err();
+        assert!(matches!(e, ShedError::Config(_)));
     }
 
     #[tokio::test]

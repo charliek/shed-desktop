@@ -93,6 +93,16 @@ def _app_session(mock, target, request):
     else:
         # gtk + tauri are both subprocess targets with the same launch shape.
         ui.launch(target, mock_base_url=mock.base_url, config_path=CONFIG, state_dir=state_dir)
+        if target == "tauri":
+            # The WebView mounts AFTER `identify`; wait for its first snapshot so no
+            # test drives a backend op before the frontend can echo a refresh — the
+            # cold-start window sheds.refresh's fast path only best-effort covers.
+            c = TauriClient(ui.socket_path("tauri"))
+            try:
+                c.wait_until(lambda: c.current_pane() is not None, timeout=30,
+                             what="tauri frontend ready")
+            finally:
+                c.close()
     yield
     ui.quit(target)
 
@@ -114,13 +124,13 @@ def _reset_policy(_app_session, target):
 
 @pytest.fixture(autouse=True)
 def _reset_mock(mock, target, _app_session):
-    """Each test starts from the default served payload. The gtk app is
-    session-scoped and dashboard.dump reads last-rendered state, so a gtk run
-    must ALSO re-sync the dashboard to the reset mock (a prior test's create/
+    """Each test starts from the default served payload. The gtk + tauri apps are
+    session-scoped and their dashboard.dump reads last-rendered state, so those
+    runs must ALSO re-sync the dashboard to the reset mock (a prior test's create/
     lifecycle mutation would otherwise leak into dashboard.dump); mac reads live."""
     mock.reset()
-    if target == "gtk":
-        c = GtkClient(ui.socket_path("gtk"))
+    if target in ("gtk", "tauri"):
+        c = ui.make_client(target)
         try:
             c.sheds_refresh()
         finally:

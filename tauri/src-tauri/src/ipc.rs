@@ -4,21 +4,29 @@
 //! `shed-gtk/src/ipc.rs`. Making the app drivable + observable by an agent over
 //! IPC is the North Star.
 //!
-//! A0a ops (no shed-core backend yet): `identify` / `ui.navigate` /
-//! `ui.show_window` / `app.activate` / `app.screenshot`. Window ops go straight
-//! through the Tauri `AppHandle` (its methods are thread-safe) and
-//! `app.screenshot` shells out ([`crate::screenshot`]), so — unlike GTK — no
-//! main-thread marshalling channel is needed. The sheds/create ops arrive in A1b
-//! once `shed-app` exists.
+//! Window/UI ops (`identify` / `ui.navigate` / `ui.show_window` / `app.activate` /
+//! `app.screenshot` / the `ui.*` truth reads) go straight through the Tauri
+//! `AppHandle` (its methods are thread-safe) or the shared [`SharedUi`], so —
+//! unlike GTK — no main-thread marshalling channel is needed. The backend ops
+//! (`sheds.*` / `shed.*` / `create.*`, A1b) run on the shared [`Backend`], and
+//! `dashboard.dump` reads the sheds the frontend reported (UI truth, not a
+//! backend re-query), which is why `sheds.refresh` round-trips through the
+//! frontend before returning.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::runtime::Handle;
+
+use shed_app::Backend;
+use shed_core::models::CreateShedRequest;
 
 use crate::env::Env;
 use crate::state::SharedUi;
@@ -26,10 +34,25 @@ use crate::state::SharedUi;
 /// A request line is tiny; cap it so a local client can't force unbounded
 /// buffering with a huge/unterminated frame.
 const MAX_FRAME_BYTES: usize = 1 << 20; // 1 MiB
+/// Upper bound on how long `sheds.refresh` waits for the frontend to re-fetch +
+/// re-report before returning anyway (best-effort — a missing/slow WebView must
+/// not hang the op). The frontend round-trip is a mock HTTP fetch + a render.
+const REFRESH_WAIT: Duration = Duration::from_secs(10);
+/// Poll cadence while waiting for that frontend echo.
+const REFRESH_POLL: Duration = Duration::from_millis(15);
 
 /// Build an `(code, message)` error pair for the IPC error envelope.
 fn err(code: &str, message: impl Into<String>) -> (String, String) {
     (code.to_string(), message.into())
+}
+
+/// A required string param, or a `bad_request` error naming the missing key — the
+/// shared shape behind the shed_action/create ops' param extraction.
+fn req_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, (String, String)> {
+    params
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or_else(|| err("bad_request", format!("missing '{key}'")))
 }
 
 /// Raise + focus the main window — the shared body of `ui.show_window`,
@@ -60,17 +83,29 @@ pub struct Handler {
     env: Env,
     app: AppHandle,
     ui: SharedUi,
+    backend: Arc<Backend>,
+    /// Monotonic token stamped onto each `sheds.refresh` so it can wait for the
+    /// frontend to echo it back (a synchronous refresh — see [`Self::sheds_refresh`]).
+    refresh_seq: AtomicU64,
     pid: u32,
 }
 
 impl Handler {
-    pub fn new(env: Env, app: AppHandle, ui: SharedUi) -> Self {
+    pub fn new(env: Env, app: AppHandle, ui: SharedUi, backend: Arc<Backend>) -> Self {
         Self {
             env,
             app,
             ui,
+            backend,
+            refresh_seq: AtomicU64::new(0),
             pid: std::process::id(),
         }
+    }
+
+    /// Read + clone a key from the frontend's reported snapshot (`pane`, `style`,
+    /// `sheds`, ...), or `None` if it hasn't reported / the key is absent.
+    fn ui_get(&self, key: &str) -> Option<Value> {
+        self.ui.lock().ok().and_then(|s| s.get(key))
     }
 
     /// Dispatch one op. `Ok(result)` → an `ok` envelope; `Err((code, message))` →
@@ -79,19 +114,23 @@ impl Handler {
         match op {
             "identify" => Ok(identify_payload(&self.env, self.pid)),
             "ui.navigate" => self.navigate(params),
-            "ui.current_pane" => {
-                let pane = self.ui.lock().ok().and_then(|s| s.current_pane.clone());
-                Ok(json!({ "pane": pane }))
-            }
-            "ui.computed_style" => {
-                let style = self.ui.lock().ok().and_then(|s| s.computed_style.clone());
-                Ok(json!({ "style": style }))
-            }
+            "ui.current_pane" => Ok(json!({ "pane": self.ui_get("pane") })),
+            "ui.computed_style" => Ok(json!({ "style": self.ui_get("style") })),
             "ui.show_window" | "app.activate" => {
                 present_main_window(&self.app);
                 Ok(json!({}))
             }
             "app.screenshot" => self.screenshot().await,
+            "sheds.list" => Ok(json!({ "sheds": self.backend.list_sheds().await })),
+            "sheds.refresh" => self.sheds_refresh().await,
+            "dashboard.dump" => Ok(json!({ "rows": self.ui_get("sheds").unwrap_or_else(|| json!([])) })),
+            "shed.start" => self.shed_action(params, "start").await,
+            "shed.stop" => self.shed_action(params, "stop").await,
+            "shed.reset" => self.shed_action(params, "reset").await,
+            "shed.delete" => self.shed_action(params, "delete").await,
+            "create.start" => self.create_start(params).await,
+            "create.status" => self.create_status(params),
+            "create.cancel" => self.create_cancel(params),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
@@ -104,13 +143,95 @@ impl Handler {
         if !matches!(pane, "sheds" | "approvals" | "agents" | "activity" | "system") {
             return Err(err("bad_request", format!("unknown pane: {pane:?}")));
         }
-        // The frontend's `navigate` listener attaches asynchronously; `current_pane`
-        // is set only once it's live, so a navigate before then would be lost. Fail
-        // fast so a caller retries (the harness waits for readiness first).
-        if self.ui.lock().ok().and_then(|s| s.current_pane.clone()).is_none() {
+        // The frontend's `navigate` listener attaches asynchronously; the snapshot
+        // (hence `pane`) is reported only once it's live, so a navigate before then
+        // would be lost. Fail fast so a caller retries (the harness waits first).
+        if self.ui_get("pane").is_none() {
             return Err(err("frontend_not_ready", "frontend has not reported yet; retry"));
         }
         let _ = self.app.emit("navigate", json!({ "pane": pane }));
+        Ok(json!({}))
+    }
+
+    /// `sheds.refresh` → tell the frontend to re-fetch + re-render, then WAIT for
+    /// it to echo the refresh token back before returning — so an immediately-
+    /// following `dashboard.dump` reflects the new state (mac/gtk's refresh is
+    /// synchronous and the harness relies on that). Best-effort at the edges: if
+    /// the frontend hasn't mounted yet (cold start) just emit and return — its
+    /// mount-fetch populates the dashboard — and never hang if it's slow/gone.
+    async fn sheds_refresh(&self) -> Result<Value, (String, String)> {
+        let token = self.refresh_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        // snapshot present ⟹ the frontend attached BOTH listeners then reported
+        // (same readiness invariant as navigate), so the `refresh` emit is heard.
+        let has_frontend = self
+            .ui
+            .lock()
+            .ok()
+            .is_some_and(|s| s.snapshot.is_some());
+        let _ = self.app.emit("refresh", json!({ "token": token }));
+        if !has_frontend {
+            return Ok(json!({}));
+        }
+        let deadline = Instant::now() + REFRESH_WAIT;
+        loop {
+            let echoed = self.ui.lock().ok().map_or(0, |s| s.refresh_token());
+            if echoed >= token || Instant::now() >= deadline {
+                return Ok(json!({}));
+            }
+            tokio::time::sleep(REFRESH_POLL).await;
+        }
+    }
+
+    /// `shed.{start,stop,reset,delete}` → the lifecycle action on `{host?, name}`,
+    /// dispatched by the shared [`Backend::shed_action`].
+    async fn shed_action(&self, params: &Value, action: &str) -> Result<Value, (String, String)> {
+        let name = req_str(params, "name")?;
+        let host = params.get("host").and_then(Value::as_str);
+        self.backend
+            .shed_action(host, name, action)
+            .await
+            .map(|()| json!({}))
+            .map_err(|e| err("action_failed", e.to_string()))
+    }
+
+    /// `create.start` → kick off a create on the pure shed-core CreateStore (its
+    /// SSE stream runs on Tauri's tokio runtime); returns `{create_id}` to poll
+    /// via `create.status`.
+    async fn create_start(&self, params: &Value) -> Result<Value, (String, String)> {
+        let name = req_str(params, "name")?;
+        let host = params.get("host").and_then(Value::as_str);
+        let s = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+        let req = CreateShedRequest {
+            name: name.to_string(),
+            repo: s("repo"),
+            local_dir: s("local_dir"),
+            image: s("image"),
+            backend: s("backend"),
+            cpus: params.get("cpus").and_then(Value::as_i64),
+            memory_mb: params.get("memory_mb").and_then(Value::as_i64),
+            no_provision: params.get("no_provision").and_then(Value::as_bool),
+        };
+        let id = self
+            .backend
+            .create_start(&Handle::current(), host, req)
+            .map_err(|e| err("action_failed", e.to_string()))?;
+        Ok(json!({ "create_id": id }))
+    }
+
+    /// `create.status` → the in-flight create's progress snapshot, or
+    /// `{state: "unknown"}` once it's cancelled/gone.
+    fn create_status(&self, params: &Value) -> Result<Value, (String, String)> {
+        let id = req_str(params, "create_id")?;
+        match self.backend.create_status(id) {
+            Some(progress) => Ok(json!(progress)),
+            None => Ok(json!({ "state": "unknown" })),
+        }
+    }
+
+    /// `create.cancel` → abort a create's stream + drop its state (idempotent).
+    fn create_cancel(&self, params: &Value) -> Result<Value, (String, String)> {
+        let id = req_str(params, "create_id")?;
+        self.backend.create_cancel(id);
         Ok(json!({}))
     }
 
