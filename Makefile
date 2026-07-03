@@ -122,8 +122,8 @@ m0-gates:  ## M0 ship-gates (release bundle): arm64/size/cold-launch + golden cr
 	./scripts/bundle.sh release
 	SHED_DESKTOP_SIZE_BUDGET_MB=20 uv run --group test python tools/shedtest/m0_ship_gates.py
 
-e2e-gtk: gtk-build  ## GTK e2e: hermetic pytest vs a harness-owned shed-gtk (needs a display; Xvfb on Linux)
-	uv run --group test pytest tools/shedgtktest -q
+e2e-gtk: gtk-build  ## GTK e2e: the shared suite at --target gtk (needs a display; Xvfb on Linux)
+	uv run --group test pytest tools/shedtest --target gtk -q
 
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh

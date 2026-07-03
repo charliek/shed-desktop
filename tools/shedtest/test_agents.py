@@ -7,6 +7,10 @@ import pytest
 
 from client import ShedError
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_classify_agent_ready(shed):
     pane = "·✔︎· Connected\nContinue at https://claude.ai/code?environment=env_01ABC"

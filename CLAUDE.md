@@ -30,8 +30,9 @@ Core/UI split (see `docs/reference/architecture.md`):
   store), `shed-core-ffi` (the UniFFI staticlib the Swift app links — the macOS **default**
   backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), and `shed-gtk` (the
   GTK4/libadwaita **Linux client** on `shed-core`; also runs on macOS via Homebrew GTK).
-- `tools/shedtest/` — pytest functional harness + in-process mock shed-server (macOS app).
-- `tools/shedgtktest/` — pytest harness for `shed-gtk` (reuses the same mock; Xvfb on CI).
+- `tools/shedtest/` — ONE pytest functional harness + in-process mock shed-server, driving
+  BOTH UIs via `--target mac|gtk` (default `mac`): the mac-only suites gate on the target,
+  the shared suite (`test_shared.py`) + the gtk suite (`test_gtk.py`) run per target.
 
 The dashboard + menu are AppKit windows hosting SwiftUI (`NSHostingController`/`NSPopover`)
 so the screenshot op has a stable `NSWindow` and show/hide is deterministic.
@@ -60,7 +61,7 @@ build GTK. Building it is opt-in (`brew install gtk4 libadwaita` on macOS):
 
 ```bash
 make gtk-run             # build + launch shed-gtk natively (Mac via Homebrew GTK / Linux)
-make e2e-gtk             # hermetic GTK pytest (tools/shedgtktest; needs a display)
+make e2e-gtk             # hermetic GTK pytest (tools/shedtest --target gtk; needs a display)
 make core-linux          # shed-core cargo test/clippy on Linux (Docker)
 make gtk-build-linux     # shed-gtk build + clippy + lib tests on Linux (Docker)
 make deb-validate        # build the .deb + install-validate in a clean ubuntu:24.04 container

@@ -6,6 +6,10 @@ from __future__ import annotations
 import pytest
 from client import ShedError
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_lists_fixture_sheds(shed):
     shed.refresh()

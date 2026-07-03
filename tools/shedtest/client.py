@@ -1,10 +1,12 @@
-"""Thin JSON-IPC client for a running ShedDesktop app.
+"""Thin JSON-IPC clients for a running shed-desktop UI (mac app or shed-gtk).
 
-Speaks the newline-delimited JSON protocol directly over the Unix socket —
-the same contract `shedctl` uses. Tests drive the app through this and read
-back via `ui.state` / `sheds.list`, exercising exactly the op set users
-drive. No subprocess on the hot path; request ids are string-wrapped int64
-on the wire and surfaced as ints here.
+Both UIs speak the same newline-delimited JSON protocol over a Unix socket —
+the same contract `shedctl` uses. The wire (connect / `_readline` / `call` /
+`identify` / `wait_until`) and the ops both clients share (sheds.list /
+sheds.refresh / lifecycle / create) live on the `IPCClient` base, so one test
+driver can drive either target. The mac-only op surface (approvals / rc / nav /
+prefs / notifications) stays on `ShedDesktop`; `GtkClient` adds the GTK truth op
+`dashboard.dump`. Request ids are string-wrapped int64 on the wire, ints here.
 """
 
 from __future__ import annotations
@@ -15,9 +17,13 @@ import os
 import socket
 import time
 
-# Scale every wait from one knob so a slower CI runner can buy headroom
-# without editing each call site. Default 1.0; CI sets the scale higher.
-_TIMEOUT_SCALE = float(os.environ.get("SHED_DESKTOP_TEST_TIMEOUT_SCALE", "1.0"))
+# Scale every wait from one knob so a slower CI runner buys headroom without
+# editing each call site. Honor BOTH targets' scale knobs (mac + gtk) and take
+# the larger, so a run under either CI leg gets its intended headroom.
+_TIMEOUT_SCALE = max(
+    float(os.environ.get("SHED_DESKTOP_TEST_TIMEOUT_SCALE", "1.0")),
+    float(os.environ.get("SHED_GTK_TEST_TIMEOUT_SCALE", "1.0")),
+)
 
 
 def scaled_timeout(timeout: float) -> float:
@@ -38,7 +44,9 @@ class Timeout(ShedError):
         super().__init__("timeout", message)
 
 
-class ShedDesktop:
+class IPCClient:
+    """The shared newline-JSON wire + the ops both targets implement."""
+
     def __init__(self, socket_path: str):
         self.path = str(socket_path)
         self._next_id = 0
@@ -56,7 +64,7 @@ class ShedDesktop:
         except OSError:
             pass
 
-    def __enter__(self) -> "ShedDesktop":
+    def __enter__(self) -> "IPCClient":
         return self
 
     def __exit__(self, *_exc) -> None:
@@ -85,9 +93,75 @@ class ShedDesktop:
         line, self._buf = self._buf.split(b"\n", 1)
         return line.decode()
 
-    # -- ops --------------------------------------------------------------
+    # -- ops shared by both targets --------------------------------------
     def identify(self) -> dict:
         return self.call("identify")
+
+    def sheds_list(self, host: str | None = None) -> list[dict]:
+        params = {"host": host} if host else {}
+        return self.call("sheds.list", params)["sheds"]
+
+    def sheds_refresh(self) -> None:
+        """Re-fetch + re-render the dashboard so the UI-truth op reflects it."""
+        self.call("sheds.refresh")
+
+    def dashboard_rows(self, target: str) -> list[dict]:
+        """The sheds the UI currently shows (its rendered state), normalized to
+        `[{name, status, host}]`. The truth op differs per target: the mac app
+        exposes it as `ui.state.sheds`; shed-gtk as `dashboard.dump.rows`."""
+        if target == "mac":
+            rows = self.call("ui.state")["sheds"]
+        else:
+            rows = self.call("dashboard.dump")["rows"]
+        return [{"name": r["name"], "status": r["status"], "host": r["host"]} for r in rows]
+
+    def shed_action(self, action: str, name: str, host: str | None = None) -> None:
+        params = {"name": name}
+        if host:
+            params["host"] = host
+        self.call(f"shed.{action}", params)
+
+    def shed_status(self, name: str) -> str | None:
+        for s in self.sheds_list():
+            if s["name"] == name:
+                return s["status"]
+        return None
+
+    def create_start(self, name: str, host: str | None = None, **fields) -> str:
+        params = {"name": name, **fields}
+        if host:
+            params["host"] = host
+        return self.call("create.start", params)["create_id"]
+
+    def create_status(self, create_id: str) -> dict:
+        return self.call("create.status", {"create_id": create_id})
+
+    def create_cancel(self, create_id: str) -> None:
+        self.call("create.cancel", {"create_id": create_id})
+
+    # -- waits (poll the op set; no sleeps in tests) ----------------------
+    def wait_until(self, pred, timeout: float = 5.0, what: str = "condition") -> None:
+        eff = scaled_timeout(timeout)
+        deadline = time.monotonic() + eff
+        while True:
+            try:
+                if pred():
+                    return
+            except ShedError:
+                pass
+            if time.monotonic() >= deadline:
+                raise Timeout(f"timed out after {eff}s waiting for {what}")
+            time.sleep(0.1)
+
+
+class ShedDesktop(IPCClient):
+    """The macOS app's full op surface (drives the SwiftUI dashboard, the
+    approval gate, remote-control agents, prefs, and notifications)."""
+
+    # `sheds.refresh` reads more naturally as `refresh()` at the mac call sites
+    # that predate the shared base; keep the alias so those stay untouched.
+    def refresh(self) -> None:
+        self.sheds_refresh()
 
     def ui_state(self) -> dict:
         return self.call("ui.state")
@@ -132,13 +206,6 @@ class ShedDesktop:
     def host_list(self) -> list[dict]:
         return self.call("host.list")["hosts"]
 
-    def sheds_list(self, host: str | None = None) -> list[dict]:
-        params = {"host": host} if host else {}
-        return self.call("sheds.list", params)["sheds"]
-
-    def refresh(self) -> None:
-        self.call("sheds.refresh")
-
     def system_df(self) -> list[dict]:
         return self.call("system.df")["usage"]
 
@@ -147,21 +214,6 @@ class ShedDesktop:
         return self.call("images.list")["images"]
 
     # -- M1: lifecycle, create, terminal ---------------------------------
-    def shed_action(self, action: str, name: str, host: str | None = None) -> None:
-        params = {"name": name}
-        if host:
-            params["host"] = host
-        self.call(f"shed.{action}", params)
-
-    def create_start(self, name: str, host: str | None = None, **fields) -> str:
-        params = {"name": name, **fields}
-        if host:
-            params["host"] = host
-        return self.call("create.start", params)["create_id"]
-
-    def create_status(self, create_id: str) -> dict:
-        return self.call("create.status", {"create_id": create_id})
-
     def terminal_preview(self, shed: str, host: str | None = None, session: str | None = None) -> dict:
         params: dict = {"shed": shed}
         if host:
@@ -263,22 +315,15 @@ class ShedDesktop:
         r = self.call("app.screenshot", {"surface": surface, "scale": scale})
         return base64.b64decode(r["png"]), r["width"], r["height"]
 
-    # -- waits (poll the op set; no sleeps in tests) ----------------------
-    def wait_until(self, pred, timeout: float = 5.0, what: str = "condition") -> None:
-        eff = scaled_timeout(timeout)
-        deadline = time.monotonic() + eff
-        while True:
-            try:
-                if pred():
-                    return
-            except ShedError:
-                pass
-            if time.monotonic() >= deadline:
-                raise Timeout(f"timed out after {eff}s waiting for {what}")
-            time.sleep(0.1)
 
-    def shed_status(self, name: str) -> str | None:
-        for s in self.sheds_list():
-            if s["name"] == name:
-                return s["status"]
-        return None
+class GtkClient(IPCClient):
+    """shed-gtk's op surface: the shared base + its UI-truth `dashboard.dump`
+    and a surface-less `app.screenshot`."""
+
+    def dashboard_dump(self) -> list[dict]:
+        """The sheds the UI currently shows (its rendered state) — the truth op."""
+        return self.call("dashboard.dump")["rows"]
+
+    def screenshot(self, scale: int = 1) -> tuple[bytes, int, int]:
+        r = self.call("app.screenshot", {"scale": scale})
+        return base64.b64decode(r["png"]), r["width"], r["height"]

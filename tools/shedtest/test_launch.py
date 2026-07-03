@@ -15,6 +15,10 @@ scripts/smoke-launch-window.sh.
 
 from __future__ import annotations
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_window_state_shape(shed):
     st = shed.window_state()

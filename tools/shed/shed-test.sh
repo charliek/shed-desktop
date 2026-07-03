@@ -68,7 +68,7 @@ run_e2e() {
     SHED_GTK_BIN=$RT/debug/shed-desktop \
     SHED_GTK_TEST_MODE=1 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/tmp/sdt-xdg \
     xvfb-run -a --server-args='-screen 0 2560x1440x24' \
-    python3 -m pytest tools/shedgtktest -q"
+    python3 -m pytest tools/shedtest --target gtk -q"
 }
 
 case "${1:-}" in

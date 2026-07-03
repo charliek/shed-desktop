@@ -97,6 +97,10 @@ public protocol UiBridge: AnyObject {
     /// `createStatus`.
     func startCreate(host: String?, request: CreateShedRequest) throws -> String
     func createStatus(id: String) -> CreateProgress?
+    /// Cancel an in-flight create: stop the driving task (propagating the cancel
+    /// through the backend) and drop the store entry, so a later `createStatus`
+    /// no longer finds it. Idempotent — a no-op for an unknown/completed id.
+    func cancelCreate(id: String)
 
     /// Build the ssh command to reach a shed (pure; spawns nothing).
     func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand

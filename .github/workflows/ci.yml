@@ -189,10 +189,10 @@ jobs:
           SHED_GTK_TEST_TIMEOUT_SCALE: "3"
         run: >
           xvfb-run -a --server-args="-screen 0 1600x1200x24"
-          uv run --group test pytest tools/shedgtktest -q
+          uv run --group test pytest tools/shedtest --target gtk -q
       - name: GTK E2E diagnostics (on failure)
         if: failure()
-        run: find "${TMPDIR:-/tmp}" -name shed-gtk.log -path '*shed-gtk-e2e-*' -exec sh -c 'echo "== $1 =="; cat "$1"' _ {} \; || true
+        run: find "${TMPDIR:-/tmp}" -name shed-gtk-ui.log -exec sh -c 'echo "== $1 =="; cat "$1"' _ {} \; || true
 
   deb:
     name: deb

@@ -99,6 +99,10 @@ actor IPCHandlerImpl: IPCHandler {
         case "create.status":
             let p = try decodeParams(params, as: CreateStatusParams.self, expected: ["create_id"])
             return try await encodeResult(createStatusOp(id: p.createID))
+        case "create.cancel":
+            let p = try decodeParams(params, as: CreateStatusParams.self, expected: ["create_id"])
+            try await createCancelOp(id: p.createID)
+            return emptyResult
         case "terminal.preview":
             let p = try decodeParams(params, as: TerminalParams.self, expected: ["host", "shed", "session"])
             return try await encodeResult(terminalPreviewOp(p))
@@ -226,6 +230,10 @@ actor IPCHandlerImpl: IPCHandler {
             throw IPCHandlerError.notFound("no create with id \(id)")
         }
         return status
+    }
+
+    @MainActor private func createCancelOp(id: String) throws {
+        try uiBridge().cancelCreate(id: id)
     }
 
     @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalPreviewResult {

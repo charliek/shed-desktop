@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 

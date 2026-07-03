@@ -26,8 +26,8 @@ build+test in the VM.
   shed-local at `~/sdt` — the Mac `core/target/` untouched. (`shed-core` itself:
   51 tests pass + clippy clean on aarch64 Linux, via Docker and the shed.) Re-run
   that smoke anytime with the same command.
-- **`shed-gtk` + `tools/shedgtktest`: built in Phase 2 (M2–M3).** The wrapper below
-  targets them; until they land, use the `SHED_BUILD_PKG=shed-core` smoke. **Keep
+- **`shed-gtk` + the GTK e2e (`tools/shedtest --target gtk`): built in Phase 2 (M2–M3).**
+  The wrapper below targets them; until they land, use the `SHED_BUILD_PKG=shed-core` smoke. **Keep
   this file updated as the GTK loop lands and you hit real gotchas** (the roost
   `linux-test` skill exists because each trap saved the next session an hour).
 

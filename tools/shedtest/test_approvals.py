@@ -8,6 +8,10 @@ don't leak across tests.
 
 from __future__ import annotations
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def _pending_ids(shed) -> set[str]:
     return {a["id"] for a in shed.approvals_list()}
