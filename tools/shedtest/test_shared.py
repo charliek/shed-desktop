@@ -1,16 +1,22 @@
-"""Cross-target E2E: the IPC ops both the macOS app and shed-gtk implement,
-driven through the `client` (target-appropriate) + `target` fixtures so one
-suite is the behavioral-parity gate. identify / sheds.list / lifecycle / create
-(+ cancel) / the dashboard-truth op / a screenshot all run on `--target mac` AND
-`--target gtk`; a regression on either side fails the matching CI leg.
+"""Cross-target E2E: the IPC ops the clients implement, driven through the
+`client` (target-appropriate) + `target` fixtures so one suite is the
+behavioral-parity gate. `identify` + a `screenshot` run on every target; the
+backend-dependent tests (sheds / lifecycle / create) carry `@needs_backend`, so
+they run on `--target mac` + `--target gtk` and skip on `--target tauri` until
+the Tauri backend lands (A1b) — a regression on any active leg fails its CI leg.
 
-The dashboard-truth op differs per UI (mac `ui.state.sheds`, gtk
+The dashboard-truth op differs per UI (mac `ui.state.sheds`, gtk/tauri
 `dashboard.dump.rows`) but is normalized by `client.dashboard_rows(target)` to
 `[{name, status, host}]`, so the assertions here are identical across targets.
 """
 
 from __future__ import annotations
 
+import platform
+
+import pytest
+
+from _marks import needs_backend
 from client import ShedError
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -20,10 +26,12 @@ def test_identify_is_hermetic(client, target, mock):
     info = client.identify()
     assert info["test_mode"] is True
     assert info["mock_base_url"] == mock.base_url
-    if target == "gtk":
+    if target in ("gtk", "tauri"):
+        # The Rust-core clients stamp their platform + socket name; the socket is
+        # shed-<target>.sock in both cases.
         assert info["core"] == "rust"
-        assert info["platform"] == "gtk"
-        assert info["socket_path"].endswith("shed-gtk.sock")
+        assert info["platform"] == target
+        assert info["socket_path"].endswith(f"shed-{target}.sock")
     else:
         # The mac app also runs a Swift-fallback leg (SHED_DESKTOP_RUST_CORE=0),
         # so don't pin the backend here; the M0 ship-gates own the rust==swift
@@ -32,6 +40,7 @@ def test_identify_is_hermetic(client, target, mock):
         assert info["app_id"] == "ai.stridelabs.ShedDesktop"
 
 
+@needs_backend
 def test_sheds_list_matches_fixture(client):
     client.sheds_refresh()  # re-sync to the reset mock (mac reads rendered state)
     client.wait_until(lambda: len(client.sheds_list()) >= 2, timeout=10, what="sheds populated")
@@ -39,6 +48,7 @@ def test_sheds_list_matches_fixture(client):
     assert names == ["callbell", "hello-world"]
 
 
+@needs_backend
 def test_dashboard_rows_match_fixture(client, target):
     client.sheds_refresh()
     client.wait_until(
@@ -51,6 +61,7 @@ def test_dashboard_rows_match_fixture(client, target):
     assert all(r["host"] == "mock" for r in rows.values())
 
 
+@needs_backend
 def test_lifecycle_stop_start_delete(client, target):
     client.sheds_refresh()
     client.wait_until(lambda: len(client.sheds_list()) >= 2, timeout=10, what="sheds populated")
@@ -77,6 +88,7 @@ def test_lifecycle_stop_start_delete(client, target):
     )
 
 
+@needs_backend
 def test_create_streams_to_complete(client, target):
     cid = client.create_start("shared-created", image="base")
     client.wait_until(
@@ -94,6 +106,7 @@ def test_create_streams_to_complete(client, target):
     assert "shared-created" in {r["name"] for r in client.dashboard_rows(target)}
 
 
+@needs_backend
 def test_create_cancel_drops_it(client):
     cid = client.create_start("cancelme")
     client.create_cancel(cid)
@@ -106,6 +119,7 @@ def test_create_cancel_drops_it(client):
         assert e.code == "not-found"
 
 
+@needs_backend
 def test_create_error_surfaced(client, mock):
     # A server-side create failure surfaces as an `error` state carrying the
     # message — the cross-target parity of the mac-only
@@ -126,8 +140,14 @@ def test_create_error_surfaced(client, mock):
 def test_screenshot_returns_non_empty_png(client, target):
     # Deliberately lenient — "a non-empty PNG of expected dimensions" — so the
     # gate isn't coupled to a container's GL stack (dashboard_rows is the truth
-    # op). On mac, front the dashboard first so the .window surface is capturable.
-    if target == "mac":
+    # op). Tauri shells out to a screenshot tool; on macOS that's screencapture,
+    # which is Screen-Recording-TCC-gated for a harness-launched binary, so the
+    # Linux/Xvfb capture is the real gate and mac-tauri is skipped.
+    if target == "tauri" and platform.system() == "Darwin":
+        pytest.skip("tauri screenshot on macOS is Screen-Recording-TCC-gated; Linux/Xvfb is the gate")
+    # Front the window so the capture has the app on screen (gtk instead retries
+    # until its surface is realized).
+    if target in ("mac", "tauri"):
         client.show_window()
 
     captured: dict = {}

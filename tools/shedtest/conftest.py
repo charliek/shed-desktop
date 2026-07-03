@@ -1,15 +1,16 @@
-"""pytest fixtures for the shed-desktop E2E suite (macOS app + shed-gtk).
+"""pytest fixtures for the shed-desktop E2E suite (macOS app, shed-gtk, Tauri).
 
-Parameterized by `--target mac|gtk` (default `$SHED_TEST_TARGET`, else `mac`).
-A session fixture starts the shared in-process mock shed-server, then launches a
-hermetic UI for the chosen target and drives it over its IPC socket. The mac
-target adds a fake host-agent (backing the approval gate) + a per-test policy
-reset; the gtk target runs the shed-desktop subprocess with a throwaway HOME/
-XDG_RUNTIME_DIR and re-syncs its (session-scoped) dashboard per test — the mac
-fake-host-agent + policy machinery has no gtk analog and is not started there.
+Parameterized by `--target mac|gtk|tauri` (default `$SHED_TEST_TARGET`, else
+`mac`). A session fixture starts the shared in-process mock shed-server, then
+launches a hermetic UI for the chosen target and drives it over its IPC socket.
+The mac target adds a fake host-agent (backing the approval gate) + a per-test
+policy reset; the subprocess targets (gtk, tauri) run their binary with a
+throwaway HOME/XDG_RUNTIME_DIR — the mac fake-host-agent + policy machinery has
+no gtk/tauri analog and is not started there.
 
-Shared tests take the `client` (target-appropriate) + `target` fixtures and run
-on both; the mac-only suites gate on `SHED_TEST_TARGET` and are skipped on gtk.
+Shared tests take the `client` (target-appropriate) + `target` fixtures; the
+mac-only suites gate on `SHED_TEST_TARGET`, and the backend-dependent shared
+tests carry `@needs_backend` (skipped on tauri until A1b — see `_marks.py`).
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from pathlib import Path
 import pytest
 
 import ui
-from client import GtkClient, ShedDesktop
+from client import GtkClient, ShedDesktop, TauriClient
 from mockserver import MockShedServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fake-host-agent"))
@@ -35,7 +36,7 @@ CONFIG = FIXTURES / "config.yaml"
 def pytest_addoption(parser):
     parser.addoption(
         "--target", action="store", default=None, choices=list(ui.TARGETS),
-        help="which UI to drive (mac|gtk); default $SHED_TEST_TARGET or mac",
+        help="which UI to drive (mac|gtk|tauri); default $SHED_TEST_TARGET or mac",
     )
 
 
@@ -77,7 +78,9 @@ def fake():
 @pytest.fixture(scope="session", autouse=True)
 def _app_session(mock, target, request):
     ui.quit(target)  # force-quit any running instance; we own a hermetic one
-    state_dir = Path(tempfile.mkdtemp(prefix=f"shed-desktop-e2e-{target}-"))
+    # Short prefix: on macOS the socket lives under this dir (which is itself under
+    # a long /var/folders TMPDIR), and a Unix socket path must stay under SUN_LEN.
+    state_dir = Path(tempfile.mkdtemp(prefix=f"shed-e2e-{target}-"))
     if target == "mac":
         fake = request.getfixturevalue("fake")  # only the mac session needs it
         ui.launch(
@@ -88,7 +91,8 @@ def _app_session(mock, target, request):
             host_agent_socket=fake.socket_path,
         )
     else:
-        ui.launch("gtk", mock_base_url=mock.base_url, config_path=CONFIG, state_dir=state_dir)
+        # gtk + tauri are both subprocess targets with the same launch shape.
+        ui.launch(target, mock_base_url=mock.base_url, config_path=CONFIG, state_dir=state_dir)
     yield
     ui.quit(target)
 
@@ -145,9 +149,19 @@ def gtk(_app_session):
 
 
 @pytest.fixture
+def tauri(_app_session):
+    """The Tauri client. Used by the tauri-only suite (skipped otherwise)."""
+    client = TauriClient(ui.socket_path("tauri"))
+    try:
+        yield client
+    finally:
+        client.close()
+
+
+@pytest.fixture
 def client(_app_session, target):
-    """The target-appropriate IPC client for the shared (both-target) tests."""
-    c = ShedDesktop(ui.socket_path("mac")) if target == "mac" else GtkClient(ui.socket_path("gtk"))
+    """The target-appropriate IPC client for the shared (cross-target) tests."""
+    c = ui.make_client(target)
     try:
         yield c
     finally:

@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shed Desktop</title>
+    <style>
+      /* A0a placeholder shell — deliberately minimal; A0b replaces this whole
+         directory with the React + Vite + Tailwind + shadcn frontend. It exists
+         so the window renders non-empty content (the `app.screenshot` gate) and
+         the WebView boots. Linen-adjacent palette as a rough parity marker. */
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font: 14px/1.5 -apple-system, "SF Pro Text", system-ui, sans-serif;
+        color: #2b2a26;
+        background: #f2efe6;
+      }
+      .card {
+        text-align: center;
+        padding: 32px 40px;
+      }
+      .dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #5b8c5a; display: inline-block; margin-right: 8px;
+        vertical-align: middle;
+      }
+      h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
+      p { margin-top: 8px; color: #8a877d; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1><span class="dot"></span>Shed Desktop</h1>
+      <p>Phase A · foundation shell</p>
+    </div>
+  </body>
+</html>

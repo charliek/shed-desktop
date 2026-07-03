@@ -1,12 +1,13 @@
-"""Thin JSON-IPC clients for a running shed-desktop UI (mac app or shed-gtk).
+"""Thin JSON-IPC clients for a running shed-desktop UI (mac app, shed-gtk, or Tauri).
 
-Both UIs speak the same newline-delimited JSON protocol over a Unix socket —
+All three UIs speak the same newline-delimited JSON protocol over a Unix socket —
 the same contract `shedctl` uses. The wire (connect / `_readline` / `call` /
-`identify` / `wait_until`) and the ops both clients share (sheds.list /
+`identify` / `wait_until`) and the ops the clients share (sheds.list /
 sheds.refresh / lifecycle / create) live on the `IPCClient` base, so one test
-driver can drive either target. The mac-only op surface (approvals / rc / nav /
-prefs / notifications) stays on `ShedDesktop`; `GtkClient` adds the GTK truth op
-`dashboard.dump`. Request ids are string-wrapped int64 on the wire, ints here.
+driver can drive any target. The mac-only op surface (approvals / rc / nav /
+prefs / notifications) stays on `ShedDesktop`; `GtkClient` and `TauriClient` add
+the UI-truth op `dashboard.dump`. Request ids are string-wrapped int64 on the
+wire, ints here.
 """
 
 from __future__ import annotations
@@ -18,11 +19,12 @@ import socket
 import time
 
 # Scale every wait from one knob so a slower CI runner buys headroom without
-# editing each call site. Honor BOTH targets' scale knobs (mac + gtk) and take
-# the larger, so a run under either CI leg gets its intended headroom.
+# editing each call site. Honor all targets' scale knobs (mac + gtk + tauri) and
+# take the largest, so a run under any CI leg gets its intended headroom.
 _TIMEOUT_SCALE = max(
     float(os.environ.get("SHED_DESKTOP_TEST_TIMEOUT_SCALE", "1.0")),
     float(os.environ.get("SHED_GTK_TEST_TIMEOUT_SCALE", "1.0")),
+    float(os.environ.get("SHED_TAURI_TEST_TIMEOUT_SCALE", "1.0")),
 )
 
 
@@ -316,14 +318,31 @@ class ShedDesktop(IPCClient):
         return base64.b64decode(r["png"]), r["width"], r["height"]
 
 
-class GtkClient(IPCClient):
-    """shed-gtk's op surface: the shared base + its UI-truth `dashboard.dump`
-    and a surface-less `app.screenshot`."""
-
-    def dashboard_dump(self) -> list[dict]:
-        """The sheds the UI currently shows (its rendered state) — the truth op."""
-        return self.call("dashboard.dump")["rows"]
+class _RustCoreClient(IPCClient):
+    """Shared op surface of the two Rust-core subprocess clients (gtk + tauri): a
+    surface-less `app.screenshot` (the mac app's takes a `surface` arg instead).
+    The sheds/lifecycle/create ops live on `IPCClient`, and the UI-truth
+    `dashboard.dump` is issued by `dashboard_rows(target)` there."""
 
     def screenshot(self, scale: int = 1) -> tuple[bytes, int, int]:
         r = self.call("app.screenshot", {"scale": scale})
         return base64.b64decode(r["png"]), r["width"], r["height"]
+
+
+class GtkClient(_RustCoreClient):
+    """shed-gtk's op surface — the shared Rust-core base, no additions."""
+
+
+class TauriClient(_RustCoreClient):
+    """The Tauri client's op surface: the shared Rust-core base + pane `navigate`
+    and `show_window`/`activate` (A0a). A1b adds the sheds/create ops (already on
+    the `IPCClient` base) once the shed-app backend is wired in."""
+
+    def navigate(self, pane: str) -> None:
+        self.call("ui.navigate", {"pane": pane})
+
+    def show_window(self) -> None:
+        self.call("ui.show_window")
+
+    def activate(self) -> None:
+        self.call("app.activate")

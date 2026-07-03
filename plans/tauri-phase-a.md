@@ -131,9 +131,11 @@ It holds orchestration that is **Swift-only today** (`AppModel.swift`) and absen
     `_reset_mock`'s post-reset re-sync (118–120 is gtk-only — a Tauri client with a live poller still needs a
     deterministic `sheds.refresh` re-sync). Reuse the existing `MockShedServer` unchanged.
   - `dashboard_rows("tauri")` → `dashboard.dump.rows`.
-- **Single-instance** via the Tauri `single-instance` plugin (mirrors `shed-gtk`'s flock + `app.activate`);
-  verify it honors the throwaway `XDG_RUNTIME_DIR` under the harness. (The handoff test is Tauri-only — not
-  in the shared suite — see `test_tauri.py`.)
+- **Single-instance** via a **socket-scoped flock** (ported from `shed-gtk/src/single_instance.rs`, *not*
+  the identifier-scoped `tauri-plugin-single-instance`: the plugin's global-per-identifier singleton would
+  break hermeticity across parallel / dev instances). A second launch flocks the pidfile beside the socket,
+  sends one `app.activate` frame to the running instance, and exits. (The handoff test is Tauri-only — see
+  `test_tauri.py`.)
 
 ## IPC ops for Phase A (the `--target tauri` contract)
 
@@ -289,3 +291,7 @@ Mirror the GTK op set (`shed-gtk/src/ipc.rs`) plus the two the new panes need:
 - **Config watcher** deferred to C (zero hermetic coverage under the harness); the reload *path* + a
   `config.reload` op land in A1a-add and are hermetically testable.
 - **`app.screenshot` on macOS** is TCC-blocked → mac screenshot test best-effort; Linux/Xvfb is the gate.
+- **Duplicated IPC wire** — A0a's `tauri/src-tauri/src/{env,ipc,single_instance}.rs` port `shed-gtk`'s
+  socket wire (frame codec, `identify`, bind, flock) near-verbatim; the byte-identical pieces are a
+  candidate for a shared crate (`shed-app`, or a tiny `shed-ipc`) in a follow-up. A0a keeps it duplicated
+  to respect the standalone-workspace isolation — the `read_capped_line` generic is the version to hoist.

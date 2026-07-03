@@ -1,0 +1,41 @@
+# The Tauri desktop client (Phase A) — a real Linux client toward Mac parity, on
+# the shared shed-core. Deliberately its OWN cargo workspace (note the empty
+# `[workspace]` table) so WebKitGTK + Tauri deps are NEVER absorbed into ../../core's
+# workspace: `make build` / `core-lint --workspace --exclude shed-gtk` stay
+# WebKit-free, exactly the isolation shed-gtk gets by being a non-default member.
+# shed-core / shed-app are pulled in as plain path deps (that does not make this a
+# member of core's workspace). See plans/tauri-phase-a.md.
+[package]
+name = "shed-desktop-tauri"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+# Standalone workspace root: stops cargo walking up to adopt (or be adopted by)
+# core's workspace. Its Cargo.lock is committed for reproducible CI.
+[workspace]
+
+[lib]
+name = "shed_desktop_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "net", "io-util", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+libc = "0.2"
+# Advisory file lock for the single-instance guard (flock, keyed to the socket
+# dir — hermetic, unlike an identifier-scoped plugin). Mirrors shed-gtk.
+fs2 = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+
+# A debug build is what the harness drives; keep it reasonably snappy.
+[profile.dev]
+opt-level = 1

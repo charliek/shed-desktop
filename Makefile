@@ -92,6 +92,18 @@ deb:  ## Build the shed-desktop .deb in Docker (ubuntu:24.04 + GTK + nfpm) → o
 deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 container
 	./linux/scripts/validate-deb.sh $$(ls -t out/shed-desktop_*.deb | head -1)
 
+# ---- tauri (Phase A: a real Linux client toward Mac parity) -----------
+
+.PHONY: tauri-build tauri-run tauri-lint
+tauri-build:  ## Build the Tauri client (standalone workspace; WKWebView on macOS / WebKitGTK on Linux)
+	cd tauri/src-tauri && cargo build
+
+tauri-run: tauri-build  ## Build + launch the Tauri client
+	cd tauri/src-tauri && cargo run
+
+tauri-lint:  ## clippy the Tauri client (its own standalone workspace; kept out of core-lint)
+	cd tauri/src-tauri && cargo clippy --all-targets -- -D warnings
+
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux
 	docker run --rm \
@@ -105,7 +117,7 @@ core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring need
 
 # ---- test -------------------------------------------------------------
 
-.PHONY: test e2e e2e-ci e2e-swift e2e-gtk m0-gates smoke smoke-real-launch smoke-launch-window
+.PHONY: test e2e e2e-ci e2e-swift e2e-gtk e2e-tauri m0-gates smoke smoke-real-launch smoke-launch-window
 test: core  ## swift test (ShedKit unit tests + Rust FFI canary)
 	swift test
 
@@ -124,6 +136,9 @@ m0-gates:  ## M0 ship-gates (release bundle): arm64/size/cold-launch + golden cr
 
 e2e-gtk: gtk-build  ## GTK e2e: the shared suite at --target gtk (needs a display; Xvfb on Linux)
 	uv run --group test pytest tools/shedtest --target gtk -q
+
+e2e-tauri: tauri-build  ## Tauri e2e: shared suite + test_tauri at --target tauri (needs a display; Xvfb on Linux)
+	uv run --group test pytest tools/shedtest --target tauri -q
 
 smoke:  ## Drive the app and capture labeled screenshots
 	tools/screenshot/smoke.sh
