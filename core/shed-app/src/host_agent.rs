@@ -34,6 +34,9 @@ const INITIAL_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(5);
 /// Default per-request timeout for `token.get` (mirrors the Swift 10s).
 pub const DEFAULT_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
+/// Max bytes per newline-framed message (mirrors the mac `ipcMaxFrameBytes`); a
+/// larger frame is a protocol violation → disconnect, never unbounded growth.
+const MAX_FRAME_BYTES: usize = 1 << 20; // 1 MiB
 
 /// The client's registration payload (`hello`).
 #[derive(Debug, Clone)]
@@ -120,6 +123,16 @@ impl HostAgentClient {
     /// Start connecting and return a stream of connection + frame events. The
     /// background loop runs until `stop()` (or the process exits).
     pub fn start(&self, info: HelloClientInfo) -> mpsc::UnboundedReceiver<HostAgentEvent> {
+        // Restart-safe: abort any prior loop + reset connection state so a second
+        // start() cleanly replaces the first rather than orphaning it.
+        if let Some(h) = self.inner.loop_handle.lock().unwrap().take() {
+            h.abort();
+        }
+        {
+            let mut st = self.inner.state.lock().unwrap();
+            st.writer = None;
+            st.pending.clear();
+        }
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         self.inner.running.store(true, Ordering::SeqCst);
         let inner = self.inner.clone();
@@ -232,18 +245,23 @@ async fn run_loop(
 ) {
     let mut backoff = INITIAL_BACKOFF;
     while inner.running.load(Ordering::SeqCst) {
-        let stream = match UnixStream::connect(&inner.socket_path).await {
-            Ok(s) => s,
-            Err(_) => {
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(MAX_BACKOFF);
-                continue;
-            }
+        // F11: reject a symlink/non-socket at the path before connecting, then
+        // connect. Either failing → back off + retry (a legit agent eventually
+        // places a real socket).
+        let connected = if socket_is_trustworthy(&inner.socket_path) {
+            UnixStream::connect(&inner.socket_path).await.ok()
+        } else {
+            None
+        };
+        let Some(stream) = connected else {
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+            continue;
         };
         backoff = INITIAL_BACKOFF;
         let (read_half, write_half) = stream.into_split();
         let (writer_tx, writer_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let writer_task = tokio::spawn(writer_loop(write_half, writer_rx));
+        let mut writer_task = tokio::spawn(writer_loop(write_half, writer_rx));
         inner.state.lock().unwrap().writer = Some(writer_tx.clone());
 
         // Register with a hello.
@@ -258,7 +276,14 @@ async fn run_loop(
         );
         let _ = writer_tx.send(with_newline(hello));
 
-        read_frames(&inner, read_half, &writer_tx, &event_tx).await;
+        // Either the reader ending (EOF/error/over-cap) OR the writer task dying
+        // (a write error while the read side stays silent) is a disconnect — so
+        // an in-flight token.get fails fast (F10) rather than waiting for its
+        // per-request timeout.
+        tokio::select! {
+            _ = read_frames(&inner, read_half, &writer_tx, &event_tx) => {}
+            _ = &mut writer_task => {}
+        }
 
         // Disconnected: clear the writer + fail any in-flight token requests so
         // awaiting callers don't hang until their individual timeout fires.
@@ -294,9 +319,11 @@ async fn read_frames(
     let mut line = Vec::new();
     loop {
         line.clear();
-        match reader.read_until(b'\n', &mut line).await {
-            Ok(0) | Err(_) => return, // EOF or read error -> disconnected
-            Ok(_) => {}
+        match read_frame_capped(&mut reader, &mut line, MAX_FRAME_BYTES).await {
+            Ok(true) => {}
+            // EOF, a partial frame at EOF (dropped — never processed), or an
+            // over-cap frame all mean disconnect.
+            Ok(false) | Err(_) => return,
         }
         let trimmed = strip_trailing_newline(&line);
         if trimmed.is_empty() {
@@ -342,6 +369,57 @@ fn strip_trailing_newline(line: &[u8]) -> &[u8] {
         end -= 1;
     }
     &line[..end]
+}
+
+/// F11: reject a symlink or non-socket at the well-known path before connecting
+/// (defends against socket-squatting in a shared runtime dir). `symlink_metadata`
+/// does NOT follow the link, so a squatter's symlink reports as a symlink, not a
+/// socket. Peer-UID validation (`SO_PEERCRED`/`getpeereid`) is a deferred follow-up.
+fn socket_is_trustworthy(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    std::fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_socket())
+        .unwrap_or(false)
+}
+
+/// Read one newline-terminated frame into `buf` (including the trailing `\n`),
+/// capped at `max` bytes. `Ok(true)` = a complete frame; `Ok(false)` = EOF — any
+/// partial bytes are dropped (a frame missing its terminator at EOF is never
+/// processed, matching the Swift `LineFrameReader`); `Err` on an I/O error or a
+/// frame exceeding `max` (a protocol violation → disconnect, no unbounded growth).
+async fn read_frame_capped(
+    reader: &mut BufReader<OwnedReadHalf>,
+    buf: &mut Vec<u8>,
+    max: usize,
+) -> std::io::Result<bool> {
+    loop {
+        let (found, take) = {
+            let available = reader.fill_buf().await?;
+            if available.is_empty() {
+                return Ok(false); // EOF -> drop any partial, signal disconnect
+            }
+            match available.iter().position(|&b| b == b'\n') {
+                Some(pos) => {
+                    buf.extend_from_slice(&available[..=pos]);
+                    (true, pos + 1)
+                }
+                None => {
+                    buf.extend_from_slice(available);
+                    (false, available.len())
+                }
+            }
+        };
+        reader.consume(take);
+        if found {
+            return Ok(true);
+        }
+        if buf.len() > max {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "host agent frame exceeded the size cap",
+            ));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -426,6 +504,13 @@ mod tests {
                 let mut bytes = serde_json::to_vec(&obj).unwrap();
                 bytes.push(b'\n');
                 let _ = wh.write_all(&bytes).await;
+            }
+        }
+
+        /// Write raw bytes with NO trailing newline (for the partial-frame test).
+        async fn write_raw(&self, bytes: &[u8]) {
+            if let Some(wh) = self.write_half.lock().await.as_mut() {
+                let _ = wh.write_all(bytes).await;
             }
         }
 
@@ -826,6 +911,36 @@ mod tests {
         assert_eq!(r["decided_by"], "user");
         assert_eq!(r["scope"], "per-session");
         assert_eq!(r["ttl"], "1h");
+        client.stop();
+    }
+
+    #[tokio::test]
+    async fn partial_frame_at_eof_is_dropped_not_processed() {
+        // A token.response WITHOUT its trailing newline, followed by a close, must
+        // be dropped (treated as disconnect) — never decoded into a usable token.
+        let agent = TestAgent::start();
+        agent.set_token_mode(TokenMode::Silent);
+        let client = agent.client(clock());
+        let mut events = client.start(info());
+        let _ = tokio::time::timeout(Duration::from_secs(5), events.recv()).await;
+        assert!(agent.wait_hello(1).await);
+        let c2 = client.clone();
+        let req =
+            tokio::spawn(async move { c2.request_token("mini2", Duration::from_secs(30)).await });
+        assert!(agent.wait_token_gets(1).await);
+        let id = agent.token_gets()[0]["id"].as_str().unwrap().to_string();
+        let partial = serde_json::to_vec(
+            &json!({"type":"token.response","in_reply_to":id,"server":"mini2","token":"leaked"}),
+        )
+        .unwrap();
+        agent.write_raw(&partial).await; // no trailing newline
+        agent.drop_conn().await;
+        let e = tokio::time::timeout(Duration::from_secs(5), req)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(e, HostAgentClientError::Disconnected); // NOT Ok("leaked")
         client.stop();
     }
 }
