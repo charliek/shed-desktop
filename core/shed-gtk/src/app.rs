@@ -23,7 +23,7 @@ use tokio::sync::mpsc;
 
 use shed_core::create::CreateState;
 use shed_core::models::{Shed, ShedStatus};
-use shed_gtk::backend::Backend;
+use shed_app::Backend;
 use shed_gtk::ipc::UiRequest;
 
 pub struct App;

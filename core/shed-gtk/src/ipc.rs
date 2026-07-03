@@ -22,8 +22,8 @@ use tokio::sync::{mpsc, oneshot};
 
 use shed_core::models::{CreateShedRequest, Shed};
 
-use crate::backend::Backend;
 use crate::env::Env;
+use shed_app::Backend;
 
 /// A request line is tiny; cap it so a local client can't force unbounded
 /// buffering with a huge/unterminated frame.
@@ -500,15 +500,4 @@ mod tests {
         assert_eq!(r, json!({}));
     }
 
-    #[tokio::test]
-    async fn test_mode_without_mock_builds_no_clients() {
-        // Hermeticity: a partial test env must not dial the developer's real hosts.
-        let e = Env {
-            test_mode: true,
-            mock_base_url: None,
-            config_path: PathBuf::from("/does/not/matter"),
-            socket_path: PathBuf::from("/tmp/x.sock"),
-        };
-        assert!(Backend::new(&e).list_sheds().await.is_empty());
-    }
 }

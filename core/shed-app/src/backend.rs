@@ -1,7 +1,13 @@
-//! The shed-core-backed data layer, shared by the IPC handler and the GTK UI: it
-//! owns one HTTP client per configured server (+ a create store) and performs the
-//! reads, lifecycle actions, and creates. In test mode every client is pointed at
-//! the single mock base URL (hermetic), mirroring the Swift ShedBackend/AppModel.
+//! The shed-core-backed data layer shared by every client: it owns one HTTP
+//! client per configured server (+ a create store) and performs the reads,
+//! lifecycle actions, and creates. In test mode every client is pointed at the
+//! single mock base URL (hermetic), mirroring the Swift ShedBackend/AppModel.
+//!
+//! Env-agnostic: [`from_env_parts`](Backend::from_env_parts) takes the resolved
+//! `(test_mode, mock_base_url, config_path)` rather than a client's `SHED_*_` env
+//! struct, so the GTK + Tauri clients share one implementation.
+
+use std::path::Path;
 
 use tokio::runtime::Handle;
 
@@ -9,8 +15,6 @@ use shed_core::config::ShedConfig;
 use shed_core::create::{CreateProgress, CreateStore};
 use shed_core::http::{Client, ShedError};
 use shed_core::models::{CreateShedRequest, Shed};
-
-use crate::env::Env;
 
 pub struct Backend {
     /// (server_name, client) — shed-core stamps each shed's `host` with the name.
@@ -23,21 +27,26 @@ pub struct Backend {
 }
 
 impl Backend {
-    /// Build from the process `Env`: load the config file, then construct the
-    /// per-server clients.
-    pub fn new(env: &Env) -> Self {
-        // Hermeticity: test mode must have a mock to redirect every client to; a
-        // partial test env (TEST_MODE without MOCK_BASE_URL) builds NO clients
-        // rather than dialing the developer's real hosts.
-        if env.test_mode && env.mock_base_url.is_none() {
+    /// Build from a client's resolved env parts: load the config file, then
+    /// construct the per-server clients.
+    ///
+    /// Hermeticity: test mode must have a mock to redirect every client to; a
+    /// partial test env (`test_mode` without `mock_base_url`) builds NO clients
+    /// rather than dialing the developer's real hosts.
+    pub fn from_env_parts(
+        test_mode: bool,
+        mock_base_url: Option<&str>,
+        config_path: &Path,
+    ) -> Self {
+        if test_mode && mock_base_url.is_none() {
             return Self {
                 clients: Vec::new(),
                 default_server: None,
                 creates: CreateStore::new(),
             };
         }
-        let config = ShedConfig::load(&env.config_path.to_string_lossy());
-        Self::from_config(&config, env.mock_base_url.as_deref())
+        let config = ShedConfig::load(&config_path.to_string_lossy());
+        Self::from_config(&config, mock_base_url)
     }
 
     /// Build clients from an already-parsed config. When `mock_base_url` is set
@@ -57,7 +66,7 @@ impl Backend {
                 };
                 // A pin on a non-https URL fails closed in Client::new → that
                 // server is skipped rather than sent plaintext. Host-agent token
-                // minting is deferred for GTK (M6).
+                // minting is deferred (Phase B / the approval spine).
                 let client = Client::new(
                     base_url,
                     s.name.clone(),
@@ -103,7 +112,7 @@ impl Backend {
     /// shed-core). `join_all` so a slow/down host doesn't serialize the others —
     /// each is bounded by shed-core's per-request timeout. A per-host failure is
     /// dropped rather than blanking the whole dashboard; surfacing per-host errors
-    /// is a later milestone.
+    /// is A1a-add (the reachability rollup).
     pub async fn list_sheds(&self) -> Vec<Shed> {
         let fetches = self.clients.iter().map(|(_, client)| client.list_sheds());
         futures::future::join_all(fetches)
@@ -156,6 +165,7 @@ impl Backend {
 mod tests {
     use super::*;
     use httpmock::prelude::*;
+    use std::path::PathBuf;
 
     /// A backend with clients pointed at explicit URLs (bypasses config + the
     /// mock-redirect) so the multi-host concurrent path is exercised directly.
@@ -170,6 +180,14 @@ mod tests {
     fn client_at(name: &str, base_url: String) -> (String, Client) {
         let client = Client::new(base_url, name.to_string(), String::new(), None, None).unwrap();
         (name.to_string(), client)
+    }
+
+    #[tokio::test]
+    async fn from_env_parts_test_mode_without_mock_builds_no_clients() {
+        // Hermeticity: a partial test env must not dial the developer's real hosts.
+        let backend =
+            Backend::from_env_parts(true, None, &PathBuf::from("/does/not/matter"));
+        assert!(backend.list_sheds().await.is_empty());
     }
 
     #[tokio::test]
