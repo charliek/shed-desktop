@@ -68,11 +68,14 @@ fn shell_quote(s: &str) -> String {
 /// Which terminal to open a shed in. Narrowed to the two terminals used on both
 /// platforms + a custom escape hatch (the Swift app also offers Terminal.app /
 /// iTerm2 / Warp, which are macOS-only).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalPreset {
     Ghostty,
     Roost,
+    /// The always-available default (a `{cmd}`/`{shed}` template, empty → the
+    /// platform default terminal).
+    #[default]
     Custom,
 }
 

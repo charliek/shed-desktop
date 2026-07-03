@@ -162,3 +162,20 @@ def test_terminal_preview_resolves_custom_invocation(tauri):
     assert inv["arguments"][0] == "-c"
     assert r["command"] in inv["arguments"][1]  # {cmd} substituted
     assert "# hello-world" in inv["arguments"][1]  # {shed} substituted
+
+
+def test_terminal_pref_persists_and_drives_preview(tauri):
+    # A1c-2c: prefs.set_terminal persists the preset (+ template) and prefs.get
+    # reflects it; terminal.preview WITHOUT an explicit preset falls back to the
+    # persisted pref (so the shed-card button opens the user's chosen terminal).
+    tauri.prefs_set_terminal("custom", template="myterm -e {cmd}")
+    got = tauri.prefs_get()
+    assert got["terminal_preset"] == "custom"
+    assert got["terminal_template"] == "myterm -e {cmd}"
+    # preview with no preset uses the persisted pref → the custom invocation
+    r = tauri.terminal_preview("hello-world")
+    assert r["preset"] == "custom"
+    assert r["command"] in r["invocation"]["arguments"][1]
+    # switching the preset persists (across the store's write-through)
+    tauri.prefs_set_terminal("ghostty")
+    assert tauri.prefs_get()["terminal_preset"] == "ghostty"

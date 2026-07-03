@@ -278,6 +278,9 @@ def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
     env = dict(os.environ)
     env["HOME"] = str(runtime_dir)
     env["XDG_RUNTIME_DIR"] = str(runtime_dir)
+    # Redirect the config dir too so tauri's app_config_dir (persisted prefs) is
+    # hermetic — else a dev's real $XDG_CONFIG_HOME would be written under test.
+    env["XDG_CONFIG_HOME"] = str(runtime_dir / "config")
     env[f"{cfg.env_prefix}_TEST_MODE"] = "1"
     env[f"{cfg.env_prefix}_MOCK_BASE_URL"] = mock_base_url
     env[f"{cfg.env_prefix}_SHED_CONFIG"] = str(config_path)

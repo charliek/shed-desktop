@@ -9,6 +9,7 @@
 
 mod env;
 mod ipc;
+mod prefs;
 mod screenshot;
 mod single_instance;
 mod state;
@@ -123,12 +124,22 @@ pub fn run() {
                 .map(|d| d.join("bin"))
                 .filter(|d| d.exists())
                 .map(|d| d.to_string_lossy().into_owned());
+            // Persisted prefs (terminal preset + template) in the app config dir
+            // ($XDG_CONFIG_HOME/<id> on Linux; the harness redirects it, so the
+            // file is hermetic in test mode).
+            let prefs_path = app
+                .path()
+                .app_config_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join("prefs.json");
+            let prefs: prefs::SharedPrefs = Arc::new(prefs::PrefsStore::load(prefs_path));
             let handler = Handler::new(
                 env.clone(),
                 app.handle().clone(),
                 ui.clone(),
                 backend.clone(),
                 scripts_dir,
+                prefs,
             );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.

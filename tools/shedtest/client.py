@@ -382,3 +382,14 @@ class TauriClient(_RustCoreClient):
             if v is not None:
                 params[k] = v
         return params
+
+    def prefs_get(self) -> dict:
+        """The persisted prefs (`terminal_preset` + `terminal_template`)."""
+        return self.call("prefs.get")
+
+    def prefs_set_terminal(self, preset: str, template: str | None = None) -> None:
+        """Persist the terminal preset (+ optional custom template)."""
+        params: dict = {"preset": preset}
+        if template is not None:
+            params["template"] = template
+        self.call("prefs.set_terminal", params)

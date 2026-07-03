@@ -30,6 +30,7 @@ use shed_core::models::CreateShedRequest;
 use shed_core::terminal::{self, TerminalPreset};
 
 use crate::env::Env;
+use crate::prefs::SharedPrefs;
 use crate::state::SharedUi;
 
 /// A request line is tiny; cap it so a local client can't force unbounded
@@ -56,20 +57,10 @@ fn req_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, (String, String)
         .ok_or_else(|| err("bad_request", format!("missing '{key}'")))
 }
 
-/// The optional `preset` (absent → the always-available Custom) + `template`
-/// params for the terminal ops. An explicit but unrecognized preset is a
-/// `bad_request` rather than a silent coercion to Custom.
-fn parse_preset(params: &Value) -> Result<(TerminalPreset, Option<String>), (String, String)> {
-    let preset = match params.get("preset").and_then(Value::as_str) {
-        None => TerminalPreset::Custom,
-        Some(s) => serde_json::from_value(Value::String(s.to_string()))
-            .map_err(|_| err("bad_request", format!("unknown preset: {s}")))?,
-    };
-    let template = params
-        .get("template")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok((preset, template))
+/// Parse an explicit preset string (kebab), or a `bad_request` naming it.
+fn parse_preset_str(s: &str) -> Result<TerminalPreset, (String, String)> {
+    serde_json::from_value(Value::String(s.to_string()))
+        .map_err(|_| err("bad_request", format!("unknown preset: {s}")))
 }
 
 /// Whether a preset's terminal is installed (drives the Preferences picker). Custom
@@ -134,6 +125,8 @@ pub struct Handler {
     /// The bundled terminal-opener scripts dir (`<resources>/bin`), or `None` in an
     /// unbundled dev/test run — resolve_launch falls back to a default terminal then.
     scripts_dir: Option<String>,
+    /// Persisted prefs (terminal preset + template) the terminal ops default to.
+    prefs: SharedPrefs,
     /// Monotonic token stamped onto each `sheds.refresh` so it can wait for the
     /// frontend to echo it back (a synchronous refresh — see [`Self::sheds_refresh`]).
     refresh_seq: AtomicU64,
@@ -147,6 +140,7 @@ impl Handler {
         ui: SharedUi,
         backend: Arc<Backend>,
         scripts_dir: Option<String>,
+        prefs: SharedPrefs,
     ) -> Self {
         Self {
             env,
@@ -154,6 +148,7 @@ impl Handler {
             ui,
             backend,
             scripts_dir,
+            prefs,
             refresh_seq: AtomicU64::new(0),
             pid: std::process::id(),
         }
@@ -192,6 +187,8 @@ impl Handler {
             "terminal.preview" => self.terminal_preview(params),
             "terminal.open" => self.terminal_open(params),
             "terminal.presets" => Ok(self.terminal_presets()),
+            "prefs.get" => Ok(self.prefs_get()),
+            "prefs.set_terminal" => self.prefs_set_terminal(params),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
@@ -303,7 +300,7 @@ impl Handler {
     fn terminal_preview(&self, params: &Value) -> Result<Value, (String, String)> {
         let shed = req_str(params, "shed")?;
         let cmd = self.ssh_command(params, shed)?;
-        let (preset, template) = parse_preset(params)?;
+        let (preset, template) = self.resolve_terminal_pref(params)?;
         let inv = terminal::resolve_launch(
             preset,
             &cmd,
@@ -331,7 +328,7 @@ impl Handler {
         }
         let shed = req_str(params, "shed")?;
         let cmd = self.ssh_command(params, shed)?;
-        let (preset, template) = parse_preset(params)?;
+        let (preset, template) = self.resolve_terminal_pref(params)?;
         let inv = terminal::resolve_launch(
             preset,
             &cmd,
@@ -386,6 +383,42 @@ impl Handler {
         self.backend
             .terminal_preview(host, shed, session)
             .map_err(|e| err("action_failed", e.to_string()))
+    }
+
+    /// The terminal preset + template for a terminal op: an explicit `preset` param
+    /// wins (with its optional `template`); otherwise the persisted pref — so the
+    /// shed-card "Open in Terminal" button opens the user's chosen terminal.
+    fn resolve_terminal_pref(
+        &self,
+        params: &Value,
+    ) -> Result<(TerminalPreset, Option<String>), (String, String)> {
+        match params.get("preset").and_then(Value::as_str) {
+            Some(s) => {
+                let template = params.get("template").and_then(Value::as_str).map(str::to_string);
+                Ok((parse_preset_str(s)?, template))
+            }
+            None => {
+                let p = self.prefs.get();
+                Ok((p.terminal_preset, Some(p.terminal_template)))
+            }
+        }
+    }
+
+    /// `prefs.get` → the persisted prefs (terminal preset + template).
+    fn prefs_get(&self) -> Value {
+        let p = self.prefs.get();
+        json!({
+            "terminal_preset": p.terminal_preset,
+            "terminal_template": p.terminal_template,
+        })
+    }
+
+    /// `prefs.set_terminal {preset, template?}` → persist the terminal preference.
+    fn prefs_set_terminal(&self, params: &Value) -> Result<Value, (String, String)> {
+        let preset = parse_preset_str(req_str(params, "preset")?)?;
+        let template = params.get("template").and_then(Value::as_str).map(str::to_string);
+        self.prefs.set_terminal(preset, template);
+        Ok(json!({}))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),
