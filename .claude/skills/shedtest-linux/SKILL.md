@@ -103,7 +103,7 @@ differs Linux↔macOS, so this is the way to see the true Linux look.
 - **`tools/shed/build-in-shed.sh`** — points `CARGO_TARGET_DIR` at a shed-local dir
   (`~/sdt`) so the Linux build never touches the macOS artifacts in the mount, and
   `cargo build -p shed-gtk` (or `$SHED_BUILD_PKG`). The harness reads `SHED_GTK_BIN`
-  (`~/sdt/debug/shed-gtk`) to find the shed-local binary.
+  (`~/sdt/debug/shed-desktop`) to find the shed-local binary.
 - **Box model:** a long-lived `sd-gtk-dev` shed + a `sd-gtk-base` snapshot cache.
   Treat both as a *cache* — a shed upgrade may invalidate them; `--reprovision`
   (or delete both) and re-run. The snapshot boots a fresh box in seconds instead

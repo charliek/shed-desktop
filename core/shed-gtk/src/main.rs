@@ -1,4 +1,4 @@
-//! shed-gtk — GTK4/libadwaita client for the shed toolchain, on the shared
+//! shed-desktop (crate shed-gtk) — GTK4/libadwaita client for the shed toolchain, on the shared
 //! shed-core. Primary target is Linux; also builds + runs on macOS via Homebrew
 //! GTK (`brew install gtk4 libadwaita`) as a dev / UI-comparison loop.
 //!
@@ -21,7 +21,7 @@ use shed_gtk::ipc::{Handler, IpcServer, UiRequest};
 
 use crate::app::App;
 
-const APP_ID: &str = "ai.stridelabs.ShedGtk";
+const APP_ID: &str = "ai.stridelabs.ShedDesktop";
 
 /// Drop the cosmetic `g_settings_schema_source_lookup` GLib warning that fires
 /// on macOS Homebrew GTK4 when libadwaita queries a missing GSettings schema at
@@ -67,7 +67,7 @@ fn main() -> glib::ExitCode {
         .block_on(IpcServer::bind(&env.socket_path, handler))
         .unwrap_or_else(|e| {
             panic!(
-                "bind shed-gtk IPC server at {}: {e}",
+                "bind shed-desktop IPC server at {}: {e}",
                 env.socket_path.display()
             )
         });

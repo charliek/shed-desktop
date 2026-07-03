@@ -14,7 +14,7 @@ name = "shed_gtk"
 path = "src/lib.rs"
 
 [[bin]]
-name = "shed-gtk"
+name = "shed-desktop"
 path = "src/main.rs"
 
 [lints]

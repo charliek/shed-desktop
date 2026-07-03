@@ -18,7 +18,7 @@ from pathlib import Path
 from client import GtkClient, GtkError, scaled_timeout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BIN = REPO_ROOT / "core" / "target" / "debug" / "shed-gtk"
+BIN = REPO_ROOT / "core" / "target" / "debug" / "shed-desktop"
 
 
 def ensure_built() -> None:

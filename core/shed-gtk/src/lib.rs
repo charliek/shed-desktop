@@ -1,6 +1,6 @@
 //! shed-gtk — the display-free, testable surface of the GTK client: env/config
 //! resolution (`env`), the shed-core-backed data layer (`backend`), and the IPC
-//! dispatch (`ipc`). The `shed-gtk` binary (`src/main.rs`) wires gtk4-rs +
+//! dispatch (`ipc`). The `shed-desktop` binary (crate `shed-gtk`) (`src/main.rs`) wires gtk4-rs +
 //! libadwaita onto this, so `cargo test -p shed-gtk --lib` exercises IPC + config
 //! without a display (GTK libs must be installed to compile; no X server needed
 //! to run the lib tests).

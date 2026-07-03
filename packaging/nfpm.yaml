@@ -1,11 +1,11 @@
-# nfpm config for the shed-gtk Linux .deb.
+# nfpm config for the shed-desktop Linux .deb.
 #
 # Built by linux/scripts/build-deb.sh, which stages the binary into ./dist/ and
 # sets SHED_GTK_VERSION + SHED_GTK_ARCH. nfpm expands ${ENV} in this file at
 # package time. Paths are relative to the repo root (build-deb.sh runs there).
 #
-# Output: shed-gtk_${SHED_GTK_VERSION}_${SHED_GTK_ARCH}.deb
-name: shed-gtk
+# Output: shed-desktop_${SHED_GTK_VERSION}_${SHED_GTK_ARCH}.deb
+name: shed-desktop
 arch: ${SHED_GTK_ARCH}
 version: ${SHED_GTK_VERSION}
 platform: linux
@@ -17,7 +17,7 @@ homepage: https://github.com/charliek/shed-desktop
 license: MIT
 description: |
   GTK4/libadwaita client for the shed toolchain.
-  shed-gtk is the Linux desktop client for shed-server, built on the shared Rust
+  shed-desktop is the Linux desktop client for shed-server, built on the shared Rust
   shed-core (the same protocol layer as the macOS app): a dashboard of sheds with
   lifecycle + create, drivable + observable over a JSON IPC socket.
 
@@ -29,13 +29,13 @@ depends:
   - libc6 (>= 2.31)
 
 contents:
-  - src: ./dist/shed-gtk
-    dst: /usr/bin/shed-gtk
-  - src: ./packaging/shed-gtk.desktop
-    dst: /usr/share/applications/ai.stridelabs.ShedGtk.desktop
-  - src: ./packaging/icons/hicolor/256x256/apps/shed-gtk.png
-    dst: /usr/share/icons/hicolor/256x256/apps/shed-gtk.png
-  - src: ./packaging/icons/hicolor/512x512/apps/shed-gtk.png
-    dst: /usr/share/icons/hicolor/512x512/apps/shed-gtk.png
+  - src: ./dist/shed-desktop
+    dst: /usr/bin/shed-desktop
+  - src: ./packaging/shed-desktop.desktop
+    dst: /usr/share/applications/ai.stridelabs.ShedDesktop.desktop
+  - src: ./packaging/icons/hicolor/256x256/apps/shed-desktop.png
+    dst: /usr/share/icons/hicolor/256x256/apps/shed-desktop.png
+  - src: ./packaging/icons/hicolor/512x512/apps/shed-desktop.png
+    dst: /usr/share/icons/hicolor/512x512/apps/shed-desktop.png
   - src: ./packaging/copyright
-    dst: /usr/share/doc/shed-gtk/copyright
+    dst: /usr/share/doc/shed-desktop/copyright

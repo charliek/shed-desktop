@@ -65,7 +65,7 @@ run_e2e() {
   #  - GDK_BACKEND=x11 (matches CI): avoids the libEGL/DRI3 path under Xvfb.
   #  - system pytest (python3 -m pytest): there is no `uv` in the shed.
   in_shed "cd ~/shed-desktop && \
-    SHED_GTK_BIN=$RT/debug/shed-gtk \
+    SHED_GTK_BIN=$RT/debug/shed-desktop \
     SHED_GTK_TEST_MODE=1 GDK_BACKEND=x11 XDG_RUNTIME_DIR=/tmp/sdt-xdg \
     xvfb-run -a --server-args='-screen 0 2560x1440x24' \
     python3 -m pytest tools/shedgtktest -q"

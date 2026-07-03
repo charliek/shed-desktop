@@ -60,7 +60,7 @@ gtk-build:  ## Build shed-gtk (Homebrew GTK on macOS; libgtk-4-dev on Linux)
 	cd core && cargo build -p shed-gtk
 
 gtk-run: gtk-build  ## Build + launch shed-gtk (native window on macOS/Linux)
-	cd core && cargo run -p shed-gtk
+	cd core && cargo run -p shed-gtk --bin shed-desktop
 
 gtk-lint:  ## clippy shed-gtk (needs GTK dev libs)
 	cd core && cargo clippy -p shed-gtk --all-targets -- -D warnings
@@ -77,7 +77,7 @@ gtk-build-linux:  ## Build + clippy shed-gtk on Linux in Docker (ubuntu:24.04 + 
 	            cargo clippy -p shed-gtk --all-targets --locked -- -D warnings && \
 	            cargo test -p shed-gtk --lib --locked'
 
-deb:  ## Build the shed-gtk .deb in Docker (ubuntu:24.04 + GTK + nfpm) → out/ (DEB_VERSION=x)
+deb:  ## Build the shed-desktop .deb in Docker (ubuntu:24.04 + GTK + nfpm) → out/ (DEB_VERSION=x)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux
 	docker run --rm \
 	  -v "$(CURDIR):/repo" \
@@ -90,7 +90,7 @@ deb:  ## Build the shed-gtk .deb in Docker (ubuntu:24.04 + GTK + nfpm) → out/ 
 	            ./linux/scripts/build-deb.sh $(DEB_VERSION)'
 
 deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 container
-	./linux/scripts/validate-deb.sh $$(ls -t out/shed-gtk_*.deb | head -1)
+	./linux/scripts/validate-deb.sh $$(ls -t out/shed-desktop_*.deb | head -1)
 
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux

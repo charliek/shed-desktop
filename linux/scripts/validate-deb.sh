@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the shed-gtk .deb in a CLEAN ubuntu:24.04 container and assert the
+# Install the shed-desktop .deb in a CLEAN ubuntu:24.04 container and assert the
 # installed binary launches (its runtime deps resolve) and answers identify.
 # Used by `make deb-validate` and the CI deb job — proves the .deb's `depends:`
 # are correct on a machine without the -dev packages.
@@ -20,6 +20,6 @@ docker run --rm \
     apt-get update -qq
     # apt resolves the .deb's runtime deps (libgtk-4-1, libadwaita-1-0, libc6).
     apt-get install -y -qq /pkg/${DEB_FILE} xvfb python3 >/dev/null
-    command -v shed-gtk
+    command -v shed-desktop
     python3 /scripts/deb_identify_check.py
   "

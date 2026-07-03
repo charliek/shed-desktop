@@ -165,7 +165,7 @@ jobs:
         # apt-installs the .deb (resolving its runtime deps) in a fresh ubuntu:24.04
         # and asserts the binary launches under Xvfb + answers identify. Build-in-CI
         # only; apt-repo / release-asset wiring is deferred (see docs/enhancements.md).
-        run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-gtk_*.deb | head -1)"
+        run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-desktop_*.deb | head -1)"
 
   docs:
     name: docs build

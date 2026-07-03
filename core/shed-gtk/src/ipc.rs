@@ -273,7 +273,7 @@ impl IpcServer {
                     tokio::spawn(async move { serve_conn(stream, handler).await });
                 }
                 Err(e) => {
-                    eprintln!("shed-gtk: ipc accept error: {e}");
+                    eprintln!("shed-desktop: ipc accept error: {e}");
                     break;
                 }
             }
