@@ -8,6 +8,7 @@
 //! struct, so the GTK + Tauri clients share one implementation.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use tokio::runtime::Handle;
 
@@ -16,6 +17,7 @@ use shed_core::create::{CreateProgress, CreateStore};
 use shed_core::http::{Client, ShedError};
 use shed_core::models::{CreateShedRequest, Shed, SystemDiskUsage};
 use shed_core::terminal::{self, TerminalCommand};
+use shed_core::token::TokenMinter;
 
 pub struct Backend {
     /// (server_name, client) — shed-core stamps each shed's `host` with the name.
@@ -49,6 +51,19 @@ impl Backend {
         mock_base_url: Option<&str>,
         config_path: &Path,
     ) -> Self {
+        Self::from_env_parts_with_minter(test_mode, mock_base_url, config_path, None)
+    }
+
+    /// As [`from_env_parts`](Self::from_env_parts), but threads a control-token
+    /// `minter` (the host-agent bridge) into every non-mock server's client, so a
+    /// secure server mints/refreshes its bearer via `token.get` and fails closed
+    /// on a mint failure (F6). GTK passes `None` (static-token only).
+    pub fn from_env_parts_with_minter(
+        test_mode: bool,
+        mock_base_url: Option<&str>,
+        config_path: &Path,
+        minter: Option<&Arc<dyn TokenMinter>>,
+    ) -> Self {
         if test_mode && mock_base_url.is_none() {
             return Self {
                 clients: Vec::new(),
@@ -58,34 +73,49 @@ impl Backend {
             };
         }
         let config = ShedConfig::load(&config_path.to_string_lossy());
-        Self::from_config(&config, mock_base_url)
+        Self::from_config_with_minter(&config, mock_base_url, minter)
     }
 
     /// Build clients from an already-parsed config. When `mock_base_url` is set
     /// (test mode) every server is redirected to that single hermetic mock —
     /// plain HTTP, no pin, no token — so no real host is touched.
     pub fn from_config(config: &ShedConfig, mock_base_url: Option<&str>) -> Self {
+        Self::from_config_with_minter(config, mock_base_url, None)
+    }
+
+    /// As [`from_config`](Self::from_config), but threads a control-token `minter`
+    /// into every non-mock server (see
+    /// [`from_env_parts_with_minter`](Self::from_env_parts_with_minter)). The mock
+    /// path never gets a minter (hermetic — a static, tokenless mock).
+    pub fn from_config_with_minter(
+        config: &ShedConfig,
+        mock_base_url: Option<&str>,
+        minter: Option<&Arc<dyn TokenMinter>>,
+    ) -> Self {
         let clients = config
             .servers
             .iter()
             .filter_map(|s| {
-                let (base_url, pin, token) = match mock_base_url {
-                    Some(mock) => (mock.to_string(), String::new(), String::new()),
-                    None => {
-                        let r = s.resolved_endpoint();
-                        (r.base_url, r.pin, s.control_token.clone())
+                let client = match mock_base_url {
+                    Some(mock) => {
+                        Client::new(mock.to_string(), s.name.clone(), String::new(), None, None)
                     }
-                };
-                // A pin on a non-https URL fails closed in Client::new → that
-                // server is skipped rather than sent plaintext. Host-agent token
-                // minting is deferred (Phase B / the approval spine).
-                let client = Client::new(
-                    base_url,
-                    s.name.clone(),
-                    token,
-                    (!pin.is_empty()).then_some(pin),
-                    None,
-                )
+                    None => {
+                        // A pin on a non-https URL fails closed in Client::new → that
+                        // server is skipped rather than sent plaintext. Secure servers
+                        // mint/refresh their control token via the host agent; on a
+                        // mint failure the client sends no token — never the static
+                        // config token (F6).
+                        let r = s.resolved_endpoint();
+                        Client::new(
+                            r.base_url,
+                            s.name.clone(),
+                            s.control_token.clone(),
+                            (!r.pin.is_empty()).then_some(r.pin),
+                            minter.map(Arc::clone),
+                        )
+                    }
+                }
                 .ok()?;
                 Some((s.name.clone(), client))
             })
@@ -351,8 +381,7 @@ mod tests {
     #[tokio::test]
     async fn from_env_parts_test_mode_without_mock_builds_no_clients() {
         // Hermeticity: a partial test env must not dial the developer's real hosts.
-        let backend =
-            Backend::from_env_parts(true, None, &PathBuf::from("/does/not/matter"));
+        let backend = Backend::from_env_parts(true, None, &PathBuf::from("/does/not/matter"));
         assert!(backend.list_sheds().await.is_empty());
     }
 
@@ -434,7 +463,10 @@ mod tests {
             .expect("start dispatched");
         started.assert_async().await;
         // an unknown action is a config error, not a silent delete fallthrough
-        let e = backend.shed_action(Some("s"), "x", "bogus").await.unwrap_err();
+        let e = backend
+            .shed_action(Some("s"), "x", "bogus")
+            .await
+            .unwrap_err();
         assert!(matches!(e, ShedError::Config(_)));
     }
 
@@ -457,7 +489,8 @@ mod tests {
         let good = MockServer::start_async().await;
         good.mock_async(|w, t| {
             w.method(GET).path("/api/sheds");
-            t.status(200).body(r#"{"sheds":[{"name":"g","status":"running"}]}"#);
+            t.status(200)
+                .body(r#"{"sheds":[{"name":"g","status":"running"}]}"#);
         })
         .await;
         let down = || async {
@@ -473,14 +506,21 @@ mod tests {
         let bad2 = down().await;
 
         // all healthy → sheds, no rollup error
-        let r = backend_with(vec![client_at("g", good.base_url())]).refresh().await;
+        let r = backend_with(vec![client_at("g", good.base_url())])
+            .refresh()
+            .await;
         assert_eq!(r.sheds.len(), 1);
         assert!(r.last_error.is_none());
 
         // one host down → that host's error (not the plural summary)
-        let r = backend_with(vec![client_at("b1", bad1.base_url())]).refresh().await;
+        let r = backend_with(vec![client_at("b1", bad1.base_url())])
+            .refresh()
+            .await;
         assert!(r.sheds.is_empty());
-        assert!(r.last_error.as_deref().is_some_and(|e| e.starts_with("b1:")));
+        assert!(r
+            .last_error
+            .as_deref()
+            .is_some_and(|e| e.starts_with("b1:")));
 
         // two down → "2 hosts unreachable"
         let r = backend_with(vec![
@@ -545,7 +585,10 @@ mod tests {
         let cmd = backend.terminal_preview(None, "web", Some("main")).unwrap();
         assert!(cmd.argv.contains(&"web@10.0.0.9".to_string()));
         assert!(cmd.command.contains("-p 2200"));
-        assert_eq!(&cmd.argv[cmd.argv.len() - 4..], ["tmux", "attach", "-t", "main"]);
+        assert_eq!(
+            &cmd.argv[cmd.argv.len() - 4..],
+            ["tmux", "attach", "-t", "main"]
+        );
         // an unknown host is a config error, not a silent default.
         assert!(backend.terminal_preview(Some("nope"), "web", None).is_err());
     }

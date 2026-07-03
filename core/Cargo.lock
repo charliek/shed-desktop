@@ -2363,12 +2363,15 @@ dependencies = [
 name = "shed-app"
 version = "0.0.1"
 dependencies = [
+ "async-trait",
  "chrono",
  "futures",
  "httpmock",
  "serde",
+ "serde_json",
  "shed-core",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
