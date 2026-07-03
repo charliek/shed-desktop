@@ -132,6 +132,7 @@ impl Handler {
             "create.status" => self.create_status(params),
             "create.cancel" => self.create_cancel(params),
             "system.df" => Ok(json!({ "usage": self.backend.system_df().await })),
+            "terminal.preview" => self.terminal_preview(params),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
@@ -234,6 +235,21 @@ impl Handler {
         let id = req_str(params, "create_id")?;
         self.backend.create_cancel(id);
         Ok(json!({}))
+    }
+
+    /// `terminal.preview {host?, name, session?}` → the ssh command that would open
+    /// a shell in the shed (`{argv, command}`), WITHOUT spawning — cross-platform +
+    /// hermetic. The preset launch is `terminal.open` (A1c-2b).
+    fn terminal_preview(&self, params: &Value) -> Result<Value, (String, String)> {
+        // `shed` (not `name`) — matches the mac terminal.preview contract, this
+        // being a mac+tauri parity op (gtk has no terminal).
+        let shed = req_str(params, "shed")?;
+        let host = params.get("host").and_then(Value::as_str);
+        let session = params.get("session").and_then(Value::as_str);
+        self.backend
+            .terminal_preview(host, shed, session)
+            .map(|cmd| json!(cmd))
+            .map_err(|e| err("action_failed", e.to_string()))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),

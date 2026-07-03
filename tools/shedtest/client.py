@@ -359,3 +359,13 @@ class TauriClient(_RustCoreClient):
     def system_df(self) -> list[dict]:
         """Per-host disk usage (`[HostDiskUsage]`); each row has host/usage/error."""
         return self.call("system.df")["usage"]
+
+    def terminal_preview(self, shed: str, host: str | None = None, session: str | None = None) -> dict:
+        """The ssh command (`{argv, command}`) that would open the shed — no spawn.
+        Same `terminal.preview` contract as the mac app (param key `shed`)."""
+        params: dict = {"shed": shed}
+        if host:
+            params["host"] = host
+        if session:
+            params["session"] = session
+        return self.call("terminal.preview", params)

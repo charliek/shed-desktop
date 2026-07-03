@@ -118,3 +118,18 @@ def test_system_pane_renders(tauri):
     tauri.wait_until(lambda: tauri.current_pane() == "system", timeout=15, what="pane=system")
     png, w, h = tauri.screenshot(scale=1)
     assert png[:8] == PNG_MAGIC and w > 0 and h > 0
+
+
+def test_terminal_preview_builds_ssh_command(tauri):
+    # A1c-2a: the shared ssh command (mac+tauri parity; gtk has no terminal), built
+    # from the fixture's ssh endpoint (127.0.0.1:2222) with strict host-key pinning.
+    # No spawn — terminal.open (the preset launch) is A1c-2b.
+    r = tauri.terminal_preview("hello-world")
+    argv = r["argv"]
+    assert argv[0] == "ssh" and "-t" in argv
+    assert "StrictHostKeyChecking=yes" in argv
+    assert "hello-world@127.0.0.1" in argv  # shed name is the ssh user
+    assert argv[argv.index("-p") + 1] == "2222"
+    # a tmux session attaches
+    r2 = tauri.terminal_preview("hello-world", session="main")
+    assert r2["argv"][-4:] == ["tmux", "attach", "-t", "main"]

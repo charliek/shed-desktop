@@ -15,15 +15,26 @@ use shed_core::config::ShedConfig;
 use shed_core::create::{CreateProgress, CreateStore};
 use shed_core::http::{Client, ShedError};
 use shed_core::models::{CreateShedRequest, Shed, SystemDiskUsage};
+use shed_core::terminal::{self, TerminalCommand};
 
 pub struct Backend {
     /// (server_name, client) — shed-core stamps each shed's `host` with the name.
     clients: Vec<(String, Client)>,
+    /// (server_name, ssh host+port) for `terminal.preview`, from config. Built for
+    /// EVERY configured server (not the client-filtered set): SSH is independent of
+    /// the HTTP client, and unlike the HTTP path it's never mock-redirected.
+    ssh_targets: Vec<(String, SshTarget)>,
     /// The config's `default_server`, used to resolve host-less lifecycle/create
     /// ops (`ShedConfig` sorts servers by name, so "first" is not the default).
     default_server: Option<String>,
     /// Pull-based store of in-flight creates (the pure shed-core orchestration).
     creates: CreateStore,
+}
+
+/// A server's SSH endpoint (from config) — where `terminal.preview` points ssh.
+struct SshTarget {
+    host: String,
+    port: u16,
 }
 
 impl Backend {
@@ -41,6 +52,7 @@ impl Backend {
         if test_mode && mock_base_url.is_none() {
             return Self {
                 clients: Vec::new(),
+                ssh_targets: Vec::new(),
                 default_server: None,
                 creates: CreateStore::new(),
             };
@@ -78,8 +90,22 @@ impl Backend {
                 Some((s.name.clone(), client))
             })
             .collect();
+        let ssh_targets = config
+            .servers
+            .iter()
+            .map(|s| {
+                (
+                    s.name.clone(),
+                    SshTarget {
+                        host: s.host.clone(),
+                        port: s.ssh_port,
+                    },
+                )
+            })
+            .collect();
         Self {
             clients,
+            ssh_targets,
             default_server: config.default_server.clone(),
             creates: CreateStore::new(),
         }
@@ -88,24 +114,8 @@ impl Backend {
     /// Resolve a client by host name; a host-less op targets the config's
     /// `default_server`, falling back to the first configured host.
     fn client_for(&self, host: Option<&str>) -> Result<&Client, ShedError> {
-        let by_name = |n: &str| {
-            self.clients
-                .iter()
-                .find(|(name, _)| name == n)
-                .map(|(_, c)| c)
-        };
-        let found = match host {
-            Some(h) => by_name(h),
-            None => self
-                .default_server
-                .as_deref()
-                .and_then(by_name)
-                .or_else(|| self.clients.first().map(|(_, c)| c)),
-        };
-        found.ok_or_else(|| {
-            let which = host.map(|h| format!(": {h}")).unwrap_or_default();
-            ShedError::Config(format!("no configured host{which}"))
-        })
+        resolve(&self.clients, self.default_server.as_deref(), host)
+            .ok_or_else(|| no_configured_host(host))
     }
 
     /// Fetch sheds from every configured host concurrently (host-stamped by
@@ -232,6 +242,64 @@ impl Backend {
             })
             .collect()
     }
+
+    // -- terminal (A1c-2) -------------------------------------------------
+
+    /// Resolve the ssh command that opens a shell in `shed` on `host` (host-less →
+    /// default server), pinning the server's key in `~/.shed/known_hosts`. A pure
+    /// build, NO spawn — backs `terminal.preview`; the preset openers are the
+    /// clients' platform-specific job.
+    pub fn terminal_preview(
+        &self,
+        host: Option<&str>,
+        shed: &str,
+        session: Option<&str>,
+    ) -> Result<TerminalCommand, ShedError> {
+        let target = self.ssh_target_for(host)?;
+        Ok(terminal::ssh_command(
+            shed,
+            &target.host,
+            target.port,
+            &known_hosts_path(),
+            session,
+        ))
+    }
+
+    /// A server's SSH endpoint by host name (host-less → default → first) — the
+    /// same resolution `client_for` uses, over the SSH targets.
+    fn ssh_target_for(&self, host: Option<&str>) -> Result<&SshTarget, ShedError> {
+        resolve(&self.ssh_targets, self.default_server.as_deref(), host)
+            .ok_or_else(|| no_configured_host(host))
+    }
+}
+
+/// Resolve a `(name, T)` entry by host name: an explicit host matches by name; a
+/// host-less op prefers `default_server`, else the first entry. Shared by
+/// `client_for` (HTTP) and `ssh_target_for` (SSH).
+fn resolve<'a, T>(
+    items: &'a [(String, T)],
+    default_server: Option<&str>,
+    host: Option<&str>,
+) -> Option<&'a T> {
+    let by_name = |n: &str| items.iter().find(|(name, _)| name == n).map(|(_, t)| t);
+    match host {
+        Some(h) => by_name(h),
+        None => default_server
+            .and_then(by_name)
+            .or_else(|| items.first().map(|(_, t)| t)),
+    }
+}
+
+fn no_configured_host(host: Option<&str>) -> ShedError {
+    let which = host.map(|h| format!(": {h}")).unwrap_or_default();
+    ShedError::Config(format!("no configured host{which}"))
+}
+
+/// The shed CLI's `known_hosts` file (`~/.shed/known_hosts`, the same file
+/// `shed server add` pins keys into) — `~/.shed` on both macOS and Linux.
+fn known_hosts_path() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    format!("{home}/.shed/known_hosts")
 }
 
 /// All hosts' sheds + a rollup of per-host reachability failures (what the Swift
@@ -262,6 +330,7 @@ mod tests {
     fn backend_with(clients: Vec<(String, Client)>) -> Backend {
         Backend {
             clients,
+            ssh_targets: Vec::new(),
             default_server: None,
             creates: CreateStore::new(),
         }
@@ -331,6 +400,7 @@ mod tests {
                 client_at("z-first", first.base_url()),
                 client_at("a-second", "http://127.0.0.1:1".to_string()),
             ],
+            ssh_targets: Vec::new(),
             default_server: Some("nonexistent".to_string()),
             creates: CreateStore::new(),
         };
@@ -446,5 +516,30 @@ mod tests {
         let b = rows.iter().find(|r| r.host == "bad").unwrap();
         assert!(b.usage.is_none());
         assert!(b.error.is_some());
+    }
+
+    #[test]
+    fn terminal_preview_targets_the_configured_ssh_endpoint() {
+        use shed_core::config::{ShedConfig, ShedServerEntry};
+        let config = ShedConfig {
+            servers: vec![ShedServerEntry {
+                name: "prod".into(),
+                host: "10.0.0.9".into(),
+                http_port: 8080,
+                ssh_port: 2200,
+                control_token: String::new(),
+                api_url: String::new(),
+                tls_cert_fingerprint: String::new(),
+            }],
+            default_server: Some("prod".into()),
+        };
+        let backend = Backend::from_config(&config, Some("http://mock"));
+        // host-less → default "prod": ssh web@10.0.0.9 -p 2200, tmux-attaching "main".
+        let cmd = backend.terminal_preview(None, "web", Some("main")).unwrap();
+        assert!(cmd.argv.contains(&"web@10.0.0.9".to_string()));
+        assert!(cmd.command.contains("-p 2200"));
+        assert_eq!(&cmd.argv[cmd.argv.len() - 4..], ["tmux", "attach", "-t", "main"]);
+        // an unknown host is a config error, not a silent default.
+        assert!(backend.terminal_preview(Some("nope"), "web", None).is_err());
     }
 }
