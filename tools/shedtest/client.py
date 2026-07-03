@@ -360,12 +360,25 @@ class TauriClient(_RustCoreClient):
         """Per-host disk usage (`[HostDiskUsage]`); each row has host/usage/error."""
         return self.call("system.df")["usage"]
 
-    def terminal_preview(self, shed: str, host: str | None = None, session: str | None = None) -> dict:
-        """The ssh command (`{argv, command}`) that would open the shed — no spawn.
-        Same `terminal.preview` contract as the mac app (param key `shed`)."""
+    def terminal_preview(self, shed: str, host: str | None = None, session: str | None = None,
+                         preset: str | None = None, template: str | None = None) -> dict:
+        """The ssh command + resolved preset/invocation that would open the shed —
+        no spawn. Same `terminal.preview` contract as the mac app (param key `shed`)."""
+        return self.call("terminal.preview", self._terminal_params(shed, host, session, preset, template))
+
+    def terminal_open(self, shed: str, host: str | None = None, session: str | None = None,
+                      preset: str | None = None, template: str | None = None) -> dict:
+        """Spawn the terminal opener (disabled under test mode → `not_enabled`)."""
+        return self.call("terminal.open", self._terminal_params(shed, host, session, preset, template))
+
+    def terminal_presets(self) -> list[dict]:
+        """The offerable terminal presets + whether each is installed."""
+        return self.call("terminal.presets")["presets"]
+
+    @staticmethod
+    def _terminal_params(shed, host, session, preset, template) -> dict:
         params: dict = {"shed": shed}
-        if host:
-            params["host"] = host
-        if session:
-            params["session"] = session
-        return self.call("terminal.preview", params)
+        for k, v in (("host", host), ("session", session), ("preset", preset), ("template", template)):
+            if v is not None:
+                params[k] = v
+        return params

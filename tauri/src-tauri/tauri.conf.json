@@ -27,6 +27,10 @@
   "bundle": {
     "active": true,
     "targets": ["app"],
+    "resources": {
+      "../../Resources/bin/shed-open-ghostty": "bin/shed-open-ghostty",
+      "../../Resources/bin/shed-open-roost.py": "bin/shed-open-roost.py"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

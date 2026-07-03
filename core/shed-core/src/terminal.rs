@@ -8,7 +8,7 @@
 //! key in the shed CLI's `known_hosts` with strict checking. Mirrors the Swift
 //! `TerminalLauncher.sshCommand` + `ShedSSH.hostKeyOptions`.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// The ssh command as an argv array + a shell-quoted single line (for display
 /// and for handing to a terminal app).
@@ -65,6 +65,126 @@ fn shell_quote(s: &str) -> String {
     }
 }
 
+/// Which terminal to open a shed in. Narrowed to the two terminals used on both
+/// platforms + a custom escape hatch (the Swift app also offers Terminal.app /
+/// iTerm2 / Warp, which are macOS-only).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TerminalPreset {
+    Ghostty,
+    Roost,
+    Custom,
+}
+
+impl TerminalPreset {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Ghostty => "ghostty",
+            Self::Roost => "roost",
+            Self::Custom => "custom",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ghostty => "Ghostty",
+            Self::Roost => "Roost",
+            Self::Custom => "Custom",
+        }
+    }
+
+    /// One-line description shown in the Preferences picker (empty for custom,
+    /// which shows a template field instead).
+    pub fn detail(self) -> &'static str {
+        match self {
+            Self::Ghostty => "Opens the ssh command in Ghostty.",
+            Self::Roost => "Opens a new Roost tab in a project named after the shed.",
+            Self::Custom => "",
+        }
+    }
+
+    /// The bundled opener `(interpreter, script)` for the script-backed presets;
+    /// `None` for custom (resolved inline). The scripts are cross-platform.
+    pub fn helper(self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Self::Ghostty => Some(("/bin/bash", "shed-open-ghostty")),
+            Self::Roost => Some(("/usr/bin/python3", "shed-open-roost.py")),
+            Self::Custom => None,
+        }
+    }
+}
+
+/// A resolved "what to exec" for a launch — the pure output of [`resolve_launch`],
+/// with no side effects, so it crosses the IPC boundary and is testable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LaunchInvocation {
+    pub executable: String,
+    pub arguments: Vec<String>,
+}
+
+/// Resolve (purely, no spawn) what to exec to open `cmd` in the chosen terminal:
+/// - `Custom` → `/bin/sh -c <template>` with `{cmd}`/`{shed}` substituted (an
+///   empty template falls back to the platform default terminal).
+/// - script presets → `<interp> <scripts_dir>/<script> <shed> <cmd.command>`
+///   (the opener scripts handle macOS vs Linux themselves); a missing
+///   `scripts_dir` (e.g. an unbundled dev run) falls back too.
+///
+/// Mirrors the Swift `TerminalLauncher.resolveLaunch`.
+pub fn resolve_launch(
+    preset: TerminalPreset,
+    cmd: &TerminalCommand,
+    shed: &str,
+    custom_template: Option<&str>,
+    scripts_dir: Option<&str>,
+) -> LaunchInvocation {
+    match preset {
+        TerminalPreset::Custom => {
+            let template = custom_template.map(str::trim).unwrap_or_default();
+            if template.is_empty() {
+                return default_terminal(cmd);
+            }
+            let expanded = template.replace("{cmd}", &cmd.command).replace("{shed}", shed);
+            LaunchInvocation {
+                executable: "/bin/sh".to_string(),
+                arguments: vec!["-c".to_string(), expanded],
+            }
+        }
+        _ => match (preset.helper(), scripts_dir) {
+            (Some((interp, script)), Some(dir)) => LaunchInvocation {
+                executable: interp.to_string(),
+                arguments: vec![format!("{dir}/{script}"), shed.to_string(), cmd.command.clone()],
+            },
+            _ => default_terminal(cmd),
+        },
+    }
+}
+
+/// The platform default terminal running the ssh command — the fallback when a
+/// preset's opener is unavailable (no bundled scripts / empty custom template).
+fn default_terminal(cmd: &TerminalCommand) -> LaunchInvocation {
+    #[cfg(target_os = "macos")]
+    {
+        let escaped = cmd.command.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!("tell application \"Terminal\"\nactivate\ndo script \"{escaped}\"\nend tell");
+        LaunchInvocation {
+            executable: "/usr/bin/osascript".to_string(),
+            arguments: vec!["-e".to_string(), script],
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        LaunchInvocation {
+            executable: "x-terminal-emulator".to_string(),
+            arguments: vec![
+                "-e".to_string(),
+                "/bin/sh".to_string(),
+                "-lc".to_string(),
+                cmd.command.clone(),
+            ],
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +223,58 @@ mod tests {
         let c = ssh_command("web", "h", 22, "/home/a b/.shed/known_hosts", None);
         assert!(c.command.contains("'UserKnownHostsFile=/home/a b/.shed/known_hosts'"));
         assert_eq!(shell_quote("it's"), r"'it'\''s'");
+    }
+
+    #[test]
+    fn resolve_launch_custom_expands_template() {
+        let cmd = ssh_command("web", "h", 22, "/k", None);
+        let inv = resolve_launch(
+            TerminalPreset::Custom,
+            &cmd,
+            "web",
+            Some("kitty -e {cmd} # {shed}"),
+            None,
+        );
+        assert_eq!(inv.executable, "/bin/sh");
+        assert_eq!(inv.arguments[0], "-c");
+        assert!(inv.arguments[1].contains(&cmd.command)); // {cmd} substituted
+        assert!(inv.arguments[1].contains("# web")); // {shed} substituted
+    }
+
+    #[test]
+    fn resolve_launch_script_presets_run_the_bundled_opener() {
+        let cmd = ssh_command("web", "h", 22, "/k", None);
+        let g = resolve_launch(TerminalPreset::Ghostty, &cmd, "web", None, Some("/opt/bin"));
+        assert_eq!(g.executable, "/bin/bash");
+        assert_eq!(g.arguments, ["/opt/bin/shed-open-ghostty", "web", &cmd.command]);
+        let r = resolve_launch(TerminalPreset::Roost, &cmd, "web", None, Some("/opt/bin"));
+        assert_eq!(r.executable, "/usr/bin/python3");
+        assert_eq!(r.arguments[0], "/opt/bin/shed-open-roost.py");
+    }
+
+    #[test]
+    fn resolve_launch_falls_back_when_opener_missing() {
+        // A script preset without a scripts_dir, or an empty custom template, still
+        // yields a runnable invocation carrying the ssh command (platform default).
+        let cmd = ssh_command("web", "h", 22, "/k", None);
+        for inv in [
+            resolve_launch(TerminalPreset::Ghostty, &cmd, "web", None, None),
+            resolve_launch(TerminalPreset::Custom, &cmd, "web", Some("  "), None),
+        ] {
+            assert!(!inv.executable.is_empty());
+            assert!(inv.arguments.iter().any(|a| a.contains(&cmd.command)));
+        }
+    }
+
+    #[test]
+    fn terminal_preset_serde_is_kebab() {
+        assert_eq!(
+            serde_json::to_string(&TerminalPreset::Ghostty).unwrap(),
+            "\"ghostty\""
+        );
+        assert_eq!(
+            serde_json::from_str::<TerminalPreset>("\"custom\"").unwrap(),
+            TerminalPreset::Custom
+        );
     }
 }

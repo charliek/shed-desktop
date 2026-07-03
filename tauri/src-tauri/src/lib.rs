@@ -20,6 +20,7 @@ use ipc::{Handler, IpcServer};
 use shed_app::Backend;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
+use tauri::Manager;
 
 /// The React frontend reports its rendered snapshot (`{pane, style, sheds,
 /// refresh_token}`) here, so the harness reads the real rendered state over IPC
@@ -112,7 +113,23 @@ pub fn run() {
         .manage(backend.clone())
         .invoke_handler(tauri::generate_handler![ui_report, list_sheds, shed_action, system_df])
         .setup(move |app| {
-            let handler = Handler::new(env.clone(), app.handle().clone(), ui.clone(), backend.clone());
+            // The bundled terminal openers live in <resources>/bin; None in an
+            // unbundled dev/test run — resolve_launch then falls back to a default
+            // terminal (and terminal.open is disabled in test mode regardless).
+            let scripts_dir = app
+                .path()
+                .resource_dir()
+                .ok()
+                .map(|d| d.join("bin"))
+                .filter(|d| d.exists())
+                .map(|d| d.to_string_lossy().into_owned());
+            let handler = Handler::new(
+                env.clone(),
+                app.handle().clone(),
+                ui.clone(),
+                backend.clone(),
+                scripts_dir,
+            );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.
             let server = tauri::async_runtime::block_on(IpcServer::bind(&env.socket_path, handler))

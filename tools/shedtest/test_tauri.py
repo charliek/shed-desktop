@@ -133,3 +133,32 @@ def test_terminal_preview_builds_ssh_command(tauri):
     # a tmux session attaches
     r2 = tauri.terminal_preview("hello-world", session="main")
     assert r2["argv"][-4:] == ["tmux", "attach", "-t", "main"]
+
+
+def test_terminal_presets_and_open_gate(tauri):
+    # A1c-2b: the offerable presets (Ghostty/Roost/Custom; custom always installed)
+    # and terminal.open disabled in test mode (spawning a terminal isn't hermetic).
+    presets = {p["id"]: p for p in tauri.terminal_presets()}
+    assert set(presets) == {"ghostty", "roost", "custom"}
+    assert presets["custom"]["available"] is True
+    with pytest.raises(ShedError) as e:
+        tauri.terminal_open("hello-world")
+    assert e.value.code == "not_enabled"
+    # an explicit but unrecognized preset (e.g. a mac-only one) is a bad_request,
+    # not a silent coercion to Custom.
+    with pytest.raises(ShedError) as e2:
+        tauri.terminal_preview("hello-world", preset="iterm2")
+    assert e2.value.code == "bad_request"
+
+
+def test_terminal_preview_resolves_custom_invocation(tauri):
+    # A1c-2b: a custom preset resolves to `/bin/sh -c <template>` with {cmd}/{shed}
+    # substituted — the deterministic cross-platform launch (script presets need the
+    # bundled openers, so they fall back in the unbundled harness).
+    r = tauri.terminal_preview("hello-world", preset="custom", template="kitty -e {cmd} # {shed}")
+    assert r["preset"] == "custom"
+    inv = r["invocation"]
+    assert inv["executable"] == "/bin/sh"
+    assert inv["arguments"][0] == "-c"
+    assert r["command"] in inv["arguments"][1]  # {cmd} substituted
+    assert "# hello-world" in inv["arguments"][1]  # {shed} substituted

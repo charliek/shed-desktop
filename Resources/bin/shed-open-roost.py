@@ -13,20 +13,46 @@ Stdlib only — no third-party deps.
 """
 import json
 import os
+import platform
 import socket
 import subprocess
 import sys
 import time
 
-SOCKET_PATH = os.path.expanduser("~/Library/Caches/Roost/roost.sock")
 ROOST_BUNDLE_ID = "ai.stridelabs.Roost"
+
+
+def _socket_path():
+    """Roost's IPC socket, per platform (roost docs/reference/ipc.md)."""
+    if platform.system() == "Darwin":
+        return os.path.expanduser("~/Library/Caches/Roost/roost.sock")
+    # Linux: under $XDG_RUNTIME_DIR/roost/ when it's a usable (absolute) path, else
+    # a FLAT /tmp fallback (no nested roost/ subdir) — matching roost's own resolver.
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime and os.path.isabs(runtime):
+        return os.path.join(runtime, "roost", "roost.sock")
+    return "/tmp/roost-%d/roost.sock" % os.getuid()
+
+
+SOCKET_PATH = _socket_path()
 
 
 def ensure_running():
     """Launch Roost if its IPC socket isn't present yet, then wait for it."""
     if os.path.exists(SOCKET_PATH):
         return
-    subprocess.run(["/usr/bin/open", "-b", ROOST_BUNDLE_ID], check=False)
+    if platform.system() == "Darwin":
+        subprocess.run(["/usr/bin/open", "-b", ROOST_BUNDLE_ID], check=False)
+    else:
+        # Linux: launch the roost binary detached; it creates the socket on boot.
+        try:
+            subprocess.Popen(
+                ["roost"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except FileNotFoundError:
+            return  # not installed — main() reports the missing socket
     for _ in range(100):  # up to ~10s
         if os.path.exists(SOCKET_PATH):
             return
