@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 shed-core = { path = "../shed-core" }
 tokio = { workspace = true }
+serde = { workspace = true }
 # Concurrent per-host list_sheds via futures::future::join_all.
 futures = "0.3"
 

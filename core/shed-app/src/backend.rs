@@ -159,6 +159,42 @@ impl Backend {
     pub fn create_cancel(&self, id: &str) {
         self.creates.cancel(id);
     }
+
+    // -- A1a-add: reachability rollup (additive; GTK ignores it) ----------
+
+    /// Like [`list_sheds`](Self::list_sheds) but ALSO rolls up per-host failures
+    /// into a `last_error` summary (`0 → None`, `1 → that error`, `2+ → "N hosts
+    /// unreachable"`) — the Swift AppModel's reachability rollup. Additive:
+    /// `list_sheds` keeps its error-dropping contract (GTK uses it and never
+    /// surfaces the rollup); the Tauri client surfaces `last_error`.
+    pub async fn refresh(&self) -> Reachability {
+        let fetches = self
+            .clients
+            .iter()
+            .map(|(name, c)| async move { (name.clone(), c.list_sheds().await) });
+        let mut sheds = Vec::new();
+        let mut errors = Vec::new();
+        for (name, result) in futures::future::join_all(fetches).await {
+            match result {
+                Ok(mut s) => sheds.append(&mut s),
+                Err(e) => errors.push(format!("{name}: {e}")),
+            }
+        }
+        let last_error = match errors.len() {
+            0 => None,
+            1 => errors.into_iter().next(),
+            n => Some(format!("{n} hosts unreachable")),
+        };
+        Reachability { sheds, last_error }
+    }
+}
+
+/// All hosts' sheds + a rollup of per-host reachability failures (what the Swift
+/// AppModel surfaces as "N hosts unreachable").
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct Reachability {
+    pub sheds: Vec<Shed>,
+    pub last_error: Option<String>,
 }
 
 #[cfg(test)]
@@ -263,5 +299,45 @@ mod tests {
             .await;
         let backend = backend_with(vec![client_at("s", server.base_url())]);
         assert!(backend.list_sheds().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_rolls_up_reachability() {
+        let good = MockServer::start_async().await;
+        good.mock_async(|w, t| {
+            w.method(GET).path("/api/sheds");
+            t.status(200).body(r#"{"sheds":[{"name":"g","status":"running"}]}"#);
+        })
+        .await;
+        let down = || async {
+            let s = MockServer::start_async().await;
+            s.mock_async(|w, t| {
+                w.method(GET).path("/api/sheds");
+                t.status(500);
+            })
+            .await;
+            s
+        };
+        let bad1 = down().await;
+        let bad2 = down().await;
+
+        // all healthy → sheds, no rollup error
+        let r = backend_with(vec![client_at("g", good.base_url())]).refresh().await;
+        assert_eq!(r.sheds.len(), 1);
+        assert!(r.last_error.is_none());
+
+        // one host down → that host's error (not the plural summary)
+        let r = backend_with(vec![client_at("b1", bad1.base_url())]).refresh().await;
+        assert!(r.sheds.is_empty());
+        assert!(r.last_error.as_deref().is_some_and(|e| e.starts_with("b1:")));
+
+        // two down → "2 hosts unreachable"
+        let r = backend_with(vec![
+            client_at("b1", bad1.base_url()),
+            client_at("b2", bad2.base_url()),
+        ])
+        .refresh()
+        .await;
+        assert_eq!(r.last_error.as_deref(), Some("2 hosts unreachable"));
     }
 }

@@ -2347,6 +2347,7 @@ version = "0.0.1"
 dependencies = [
  "futures",
  "httpmock",
+ "serde",
  "shed-core",
  "tokio",
 ]
