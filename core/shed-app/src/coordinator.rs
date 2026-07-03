@@ -67,7 +67,8 @@ impl Default for SshPrefs {
     fn default() -> Self {
         Self {
             method: ApprovalMethod::BiometricsOrPassword,
-            policy: SshApprovalPolicy::AlwaysAsk,
+            // Mac default: prompt once, then grant for the duration.
+            policy: SshApprovalPolicy::TimeBasedAllow,
             ttl: DEFAULT_APPROVAL_TTL.to_string(),
         }
     }
@@ -95,6 +96,10 @@ enum Command {
     },
     GateResolved {
         id: String,
+        /// The request + gate that opened the prompt (phase 2 binds to these).
+        /// Boxed — an `ApprovalRequest` is much larger than the other variants.
+        request: Box<ApprovalRequest>,
+        gate: PolicyGate,
         choice: ApprovalChoice,
         outcome: AuthOutcome,
         reply: oneshot::Sender<()>,
@@ -338,11 +343,13 @@ async fn run(mut state: State, mut rx: mpsc::UnboundedReceiver<Command>) {
             Command::Decide { id, choice, reply } => state.begin_decide(id, choice, reply),
             Command::GateResolved {
                 id,
+                request,
+                gate,
                 choice,
                 outcome,
                 reply,
             } => {
-                state.finish_decide(&id, &choice, &outcome);
+                state.finish_decide(&id, &request, gate, &choice, &outcome);
                 let _ = reply.send(());
             }
             Command::SetSshApproval {
@@ -476,20 +483,27 @@ impl State {
             let _ = reply.send(());
             return;
         }
-        if choice.decision == ApprovalDecision::Approve && item.gate.is_biometric() {
+        // Capture the request + gate that OPEN the prompt. Phase 2 commits against
+        // these (not whatever is in `pending[id]` when the gate resolves), so a
+        // same-id replacement while the gate is up can't hijack the decision.
+        let captured_gate = item.gate;
+        if choice.decision == ApprovalDecision::Approve && captured_gate.is_biometric() {
             let prompt = AuthPrompt {
                 reason: format!(
                     "Approve {} {} for shed {}",
                     item.request.namespace, item.request.op, item.request.shed
                 ),
-                biometrics_only: item.gate == PolicyGate::Biometrics,
+                biometrics_only: captured_gate == PolicyGate::Biometrics,
             };
             let gate = self.gate.clone();
             let tx = self.self_tx.clone();
+            let request = Box::new(item.request);
             tokio::spawn(async move {
                 let outcome = gate.gate(prompt).await;
                 let _ = tx.send(Command::GateResolved {
                     id,
+                    request,
+                    gate: captured_gate,
                     choice,
                     outcome,
                     reply,
@@ -497,34 +511,53 @@ impl State {
             });
         } else {
             // No gate (prompt/none) or a deny — commit directly, no await.
-            self.finish_decide(&id, &choice, &AuthOutcome::Approved);
+            self.finish_decide(
+                &id,
+                &item.request,
+                captured_gate,
+                &choice,
+                &AuthOutcome::Approved,
+            );
             let _ = reply.send(());
         }
     }
 
     /// Phase 2 — runs in the actor after the gate resolves (or directly for the
-    /// no-gate path). Re-validates presence + expiry (F4 post-gate), then commits.
-    fn finish_decide(&mut self, id: &str, choice: &ApprovalChoice, outcome: &AuthOutcome) {
-        // F4 post-gate: the request may have expired (and been denied by the tick)
-        // or been dropped (disconnect) while the gate was up.
-        let Some(item) = self.pending.get(id).cloned() else {
+    /// no-gate path). Re-validates presence + binding + expiry (F4 post-gate),
+    /// then commits against the CAPTURED request/gate (never a replacement).
+    fn finish_decide(
+        &mut self,
+        id: &str,
+        captured_request: &ApprovalRequest,
+        captured_gate: PolicyGate,
+        choice: &ApprovalChoice,
+        outcome: &AuthOutcome,
+    ) {
+        // The request must still be pending, be the SAME request that opened the
+        // gate (a same-id replacement while the gate was up must not inherit this
+        // decision), and not have expired (it may have been denied by the tick or
+        // dropped by a disconnect while the gate was up).
+        let Some(item) = self.pending.get(id) else {
             return; // gone -> no late decision
         };
-        if !self.not_expired(&item.request) {
+        if item.request != *captured_request {
+            return; // replaced -> don't commit a stale gate outcome
+        }
+        if !self.not_expired(captured_request) {
             return;
         }
-        let req = &item.request;
+        let req = captured_request;
         let decision = choice.decision;
         // A biometric approve honors the gate outcome; a non-Approved outcome
         // leaves the request pending (mac-parity — retry or expire), surfacing why.
         if decision == ApprovalDecision::Approve
-            && item.gate.is_biometric()
+            && captured_gate.is_biometric()
             && *outcome != AuthOutcome::Approved
         {
             self.last_error = Some(format!("auth not confirmed for {}: {outcome:?}", req.shed));
             return;
         }
-        let decided_by = if decision == ApprovalDecision::Approve && item.gate.is_biometric() {
+        let decided_by = if decision == ApprovalDecision::Approve && captured_gate.is_biometric() {
             DecidedBy::Touchid
         } else {
             DecidedBy::User
@@ -660,6 +693,12 @@ impl State {
             };
             let decision = self.engine.decide(&item.request, &grants);
             if decision.action == PolicyAction::Prompt {
+                // Still a prompt, but the gate may have changed (the method was
+                // strengthened/weakened) — refresh the stored gate so the change
+                // takes effect on this already-pending request too.
+                if let Some(p) = self.pending.get_mut(&id) {
+                    p.gate = decision.gate;
+                }
                 continue;
             }
             let d = if decision.action == PolicyAction::Approve {
@@ -1418,5 +1457,65 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
         panic!("gate_namespaces not published");
+    }
+
+    #[tokio::test]
+    async fn gate_is_bound_to_the_original_request_not_a_replacement() {
+        // If a same-id request replaces the pending entry while the gate is up, the
+        // stale gate outcome must NOT commit against the replacement.
+        let (gate, entered, release) = BlockableGate::make();
+        let h = Harness::build(gate, 1_000);
+        h.coord
+            .set_policy_rules(vec![default_rule(
+                PolicyAction::Prompt,
+                PolicyGate::BiometricsOrPassword,
+            )])
+            .await;
+        h.inject(ssh_req("r1", "shedA", 5_000));
+        assert!(h.wait_queued(1).await);
+        let c = h.coord.clone();
+        let dec = tokio::spawn(async move { c.decide_approval("r1", approve_session("1h")).await });
+        entered.notified().await; // gate up for shedA's r1
+                                  // Replace pending[r1] with a different request (same id, different shed).
+        h.inject(ssh_req("r1", "shedB", 5_000));
+        for _ in 0..300 {
+            let list = h.coord.approvals_list().await;
+            if list.first().map(|i| i.request.shed.as_str()) == Some("shedB") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        // Release the (shedA) gate as Approved.
+        release.send(AuthOutcome::Approved).unwrap();
+        dec.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        // The stale gate must not commit against the replacement.
+        assert!(
+            h.responder.calls().is_empty(),
+            "stale gate committed against a replacement"
+        );
+        assert_eq!(h.coord.approvals_list().await.len(), 1); // shedB still pending
+    }
+
+    #[tokio::test]
+    async fn reevaluate_refreshes_pending_gate_on_method_change() {
+        // Strengthening the SSH method while a request is pending updates its gate.
+        let h = Harness::new(1_000);
+        h.coord
+            .set_ssh_approval(
+                Some(ApprovalMethod::Prompt),
+                Some(SshApprovalPolicy::AlwaysAsk),
+                None,
+            )
+            .await;
+        h.inject(ssh_req("r1", "s", 5_000));
+        assert!(h.wait_queued(1).await);
+        assert_eq!(h.coord.approvals_list().await[0].gate, PolicyGate::None);
+        h.coord
+            .set_ssh_approval(Some(ApprovalMethod::BiometricsOrPassword), None, None)
+            .await;
+        let list = h.coord.approvals_list().await;
+        assert_eq!(list.len(), 1); // still pending
+        assert_eq!(list[0].gate, PolicyGate::BiometricsOrPassword); // gate refreshed
     }
 }
