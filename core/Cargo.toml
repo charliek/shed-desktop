@@ -4,13 +4,16 @@
 # linking shed-core directly.
 [workspace]
 resolver = "2"
-members = ["shed-core", "shed-core-ffi", "shed-gtk"]
+members = ["shed-core", "shed-core-ffi", "shed-gtk", "shedctl"]
 # The GTK client is a member but NOT a default member: a plain `cargo build` /
-# `cargo test` (and `make core-test`) build only shed-core + shed-core-ffi, so
-# the macOS dev loop + CI never need GTK installed. Building shed-gtk is opt-in
+# `cargo test` (and `make core-test`) build shed-core + shed-core-ffi + shedctl,
+# so the macOS dev loop + CI never need GTK installed. Building shed-gtk is opt-in
 # (`cargo build -p shed-gtk` / `make gtk-build` / `make gtk-run`), which works on
 # Linux and on macOS with Homebrew GTK (`brew install gtk4 libadwaita`).
-default-members = ["shed-core", "shed-core-ffi"]
+# shedctl (the headless Linux CLI driver for shed-gtk's IPC socket) has no GTK
+# dependency, so it IS a default member and gets Mac `cargo test` coverage; the
+# Mac bundle is unaffected (build-core.sh is `-p shed-core-ffi`-scoped).
+default-members = ["shed-core", "shed-core-ffi", "shedctl"]
 
 [workspace.package]
 version = "0.0.1"

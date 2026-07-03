@@ -2389,6 +2389,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shedctl"
+version = "0.0.1"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "serde_json",
+]
+
+[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

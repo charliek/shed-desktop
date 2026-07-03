@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the shed-desktop Linux .deb: cargo build --release -p shed-gtk, stage the
-# binary + packaging assets, and run nfpm to emit out/shed-desktop_<ver>_<arch>.deb.
+# Build the shed-desktop Linux .deb: cargo build --release the shed-gtk +
+# shedctl binaries, stage them + packaging assets, and run nfpm to emit
+# out/shed-desktop_<ver>_<arch>.deb.
 #
 # Run on the target architecture (no cross-compile): an amd64 deb is built on
 # amd64, arm64 on arm64. Prereqs (Ubuntu/Debian): libgtk-4-dev libadwaita-1-dev
@@ -34,20 +35,24 @@ fi
 export SHED_GTK_ARCH
 export SHED_GTK_VERSION="${VERSION}"
 
-echo "==> cargo build --release -p shed-gtk"
-( cd core && cargo build --release -p shed-gtk )
+echo "==> cargo build --release -p shed-gtk -p shedctl"
+( cd core && cargo build --release -p shed-gtk -p shedctl )
 
 CARGO_TARGET="${CARGO_TARGET_DIR:-${REPO_ROOT}/core/target}"
 BIN="${CARGO_TARGET}/release/shed-desktop"
-if [ ! -x "${BIN}" ]; then
-  echo "error: expected binary not found: ${BIN}" >&2
-  exit 1
-fi
+CTL="${CARGO_TARGET}/release/shedctl"
+for b in "${BIN}" "${CTL}"; do
+  if [ ! -x "${b}" ]; then
+    echo "error: expected binary not found: ${b}" >&2
+    exit 1
+  fi
+done
 
 echo "==> Staging dist/"
 rm -rf "${REPO_ROOT}/dist"
 mkdir -p "${REPO_ROOT}/dist"
 install -m 0755 "${BIN}" "${REPO_ROOT}/dist/shed-desktop"
+install -m 0755 "${CTL}" "${REPO_ROOT}/dist/shedctl"
 
 echo "==> nfpm pkg (version=${SHED_GTK_VERSION}, arch=${SHED_GTK_ARCH})"
 mkdir -p "${REPO_ROOT}/out"

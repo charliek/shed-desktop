@@ -31,6 +31,10 @@ depends:
 contents:
   - src: ./dist/shed-desktop
     dst: /usr/bin/shed-desktop
+  # shedctl: the headless CLI driver for shed-desktop's JSON IPC socket
+  # (mirrors roost shipping roostctl alongside roost).
+  - src: ./dist/shedctl
+    dst: /usr/bin/shedctl
   - src: ./packaging/shed-desktop.desktop
     dst: /usr/share/applications/ai.stridelabs.ShedDesktop.desktop
   - src: ./packaging/icons/hicolor/256x256/apps/shed-desktop.png
