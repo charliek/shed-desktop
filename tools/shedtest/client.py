@@ -355,3 +355,7 @@ class TauriClient(_RustCoreClient):
         """A computed-style sample the frontend reported (body bg/color + accent),
         so a test can confirm the WebView applied the theme."""
         return self.call("ui.computed_style").get("style")
+
+    def system_df(self) -> list[dict]:
+        """Per-host disk usage (`[HostDiskUsage]`); each row has host/usage/error."""
+        return self.call("system.df")["usage"]

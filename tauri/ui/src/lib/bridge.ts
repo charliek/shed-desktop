@@ -141,3 +141,24 @@ export async function shedAction(action: string, name: string, host: string): Pr
   if (!inTauri()) return;
   await invoke("shed_action", { action, name, host });
 }
+
+/** Disk-usage shapes (shed-core's df models, serialized). */
+export type DiskSize = { logical_bytes: number; physical_bytes: number };
+export type DiskTotals = {
+  images: DiskSize;
+  sheds: DiskSize;
+  snapshots: DiskSize;
+  orphans: DiskSize;
+  all: DiskSize;
+};
+export type HostDiskUsage = {
+  host: string;
+  usage: { backend?: string | null; totals: DiskTotals } | null;
+  error?: string | null;
+};
+
+/** Per-host disk usage for the System pane (the same data the `system.df` op
+ *  serves the harness). An unreachable host comes back as an error row. */
+export async function fetchSystemDf(): Promise<HostDiskUsage[]> {
+  return (await invoke<HostDiskUsage[]>("system_df")) ?? [];
+}

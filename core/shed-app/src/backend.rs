@@ -14,7 +14,7 @@ use tokio::runtime::Handle;
 use shed_core::config::ShedConfig;
 use shed_core::create::{CreateProgress, CreateStore};
 use shed_core::http::{Client, ShedError};
-use shed_core::models::{CreateShedRequest, Shed};
+use shed_core::models::{CreateShedRequest, Shed, SystemDiskUsage};
 
 pub struct Backend {
     /// (server_name, client) — shed-core stamps each shed's `host` with the name.
@@ -206,6 +206,32 @@ impl Backend {
         };
         Reachability { sheds, last_error }
     }
+
+    /// Per-host disk usage (`GET /api/system/df`) for the System pane. Unlike
+    /// `list_sheds`, a per-host failure is KEPT as an error row (the pane shows
+    /// which host is unreachable + why), mirroring the Swift `system.df`. Concurrent.
+    pub async fn system_df(&self) -> Vec<HostDiskUsage> {
+        let fetches = self
+            .clients
+            .iter()
+            .map(|(name, c)| async move { (name.clone(), c.system_df().await) });
+        futures::future::join_all(fetches)
+            .await
+            .into_iter()
+            .map(|(host, result)| match result {
+                Ok(usage) => HostDiskUsage {
+                    host,
+                    usage: Some(usage),
+                    error: None,
+                },
+                Err(e) => HostDiskUsage {
+                    host,
+                    usage: None,
+                    error: Some(e.to_string()),
+                },
+            })
+            .collect()
+    }
 }
 
 /// All hosts' sheds + a rollup of per-host reachability failures (what the Swift
@@ -214,6 +240,15 @@ impl Backend {
 pub struct Reachability {
     pub sheds: Vec<Shed>,
     pub last_error: Option<String>,
+}
+
+/// One host's disk usage, or the error that host returned — the System pane shows
+/// an error row per host rather than dropping unreachable hosts (unlike list_sheds).
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HostDiskUsage {
+    pub host: String,
+    pub usage: Option<SystemDiskUsage>,
+    pub error: Option<String>,
 }
 
 #[cfg(test)]
@@ -378,5 +413,38 @@ mod tests {
         .refresh()
         .await;
         assert_eq!(r.last_error.as_deref(), Some("2 hosts unreachable"));
+    }
+
+    #[tokio::test]
+    async fn system_df_keeps_error_row_for_down_host() {
+        let good = MockServer::start_async().await;
+        good.mock_async(|w, t| {
+            w.method(GET).path("/api/system/df");
+            t.status(200).body(
+                r#"{"server_name":"g","backend":"vz","totals":{"all":{"logical_bytes":42,"physical_bytes":42}}}"#,
+            );
+        })
+        .await;
+        let bad = MockServer::start_async().await;
+        bad.mock_async(|w, t| {
+            w.method(GET).path("/api/system/df");
+            t.status(500);
+        })
+        .await;
+        let rows = backend_with(vec![
+            client_at("good", good.base_url()),
+            client_at("bad", bad.base_url()),
+        ])
+        .system_df()
+        .await;
+        assert_eq!(rows.len(), 2);
+        // healthy host → usage present, no error
+        let g = rows.iter().find(|r| r.host == "good").unwrap();
+        assert_eq!(g.usage.as_ref().unwrap().totals.all.logical_bytes, 42);
+        assert!(g.error.is_none());
+        // down host → KEPT as an error row (not dropped), usage absent
+        let b = rows.iter().find(|r| r.host == "bad").unwrap();
+        assert!(b.usage.is_none());
+        assert!(b.error.is_some());
     }
 }

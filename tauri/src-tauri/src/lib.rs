@@ -58,6 +58,15 @@ async fn shed_action(
         .map_err(|e| e.to_string())
 }
 
+/// The WebView's live per-host disk usage — `invoke("system_df")` when the System
+/// pane mounts / on its Refresh. Each row is a host's `SystemDiskUsage` or the
+/// error it returned (unreachable hosts are kept, not dropped). The harness reads
+/// the same via the `system.df` IPC op.
+#[tauri::command]
+async fn system_df(backend: tauri::State<'_, Arc<Backend>>) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(backend.system_df().await))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -101,7 +110,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(ui.clone())
         .manage(backend.clone())
-        .invoke_handler(tauri::generate_handler![ui_report, list_sheds, shed_action])
+        .invoke_handler(tauri::generate_handler![ui_report, list_sheds, shed_action, system_df])
         .setup(move |app| {
             let handler = Handler::new(env.clone(), app.handle().clone(), ui.clone(), backend.clone());
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can

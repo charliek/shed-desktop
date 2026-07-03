@@ -7,12 +7,15 @@ show_window / activate) that aren't in the cross-target shared suite. Gated on
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 
 import pytest
 
 import ui
 from client import ShedError, scaled_timeout
+
+PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SHED_TEST_TARGET", "mac") != "tauri",
@@ -84,3 +87,34 @@ def test_second_launch_hands_off(tauri):
     assert tauri.identify()["platform"] == "tauri"
     # ...and app.activate (the op the hand-off invoked) still succeeds.
     tauri.call("app.activate")
+
+
+_GiB = 1024 ** 3
+
+
+def test_system_df_returns_per_host_usage(tauri):
+    # A1c: the System pane's per-host disk usage on the shared shed-app Backend
+    # (the same `system.df` the mac app exposes; gtk has no System pane). The row
+    # shape + values match the mock df fixture.
+    usage = tauri.system_df()
+    assert usage, "expected at least one host"
+    row = usage[0]
+    assert row["host"] == "mock"
+    totals = row["usage"]["totals"]
+    assert totals["sheds"]["physical_bytes"] == _GiB
+    assert totals["all"]["physical_bytes"] == _GiB + _GiB // 2
+
+
+def test_system_pane_renders(tauri):
+    # A1c parity with the mac test_system_pane_renders + the A1b dashboard render:
+    # the live SystemPane paints per-host df without crashing (the data itself is
+    # pinned by test_system_df_returns_per_host_usage above). Screenshot is the
+    # smoke; TCC-gated on macOS, so Linux/Xvfb is the real gate.
+    if platform.system() == "Darwin":
+        pytest.skip("tauri screenshot on macOS is Screen-Recording-TCC-gated; Linux/Xvfb is the gate")
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    tauri.show_window()
+    tauri.navigate("system")
+    tauri.wait_until(lambda: tauri.current_pane() == "system", timeout=15, what="pane=system")
+    png, w, h = tauri.screenshot(scale=1)
+    assert png[:8] == PNG_MAGIC and w > 0 and h > 0

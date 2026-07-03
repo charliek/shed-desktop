@@ -4,14 +4,17 @@
    `ui.navigate` op (via the `navigate` Tauri event); the rendered pane + a
    computed-style sample are reported back to Rust (useUiBridge) so the harness can
    assert them over IPC. */
-import { createElement, useEffect, useState } from "react";
+import { createElement, useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes, Shield, Sparkles, ScrollText, HardDrive, Box, Plus,
   Terminal, RotateCw, Square, Play, Trash2, RefreshCw, ExternalLink, Key,
   Fingerprint, Moon, Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useUiBridge, shedAction, type Pane, type Shed } from "@/lib/bridge";
+import {
+  useUiBridge, shedAction, fetchSystemDf,
+  type Pane, type Shed, type HostDiskUsage,
+} from "@/lib/bridge";
 
 /* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
 const SEED_AGENTS = [
@@ -26,16 +29,6 @@ const SEED_ACTIVITY = [
 const SEED_APPROVALS = [
   { id: "ap1", op: "sign", target: "localmac-dev/ztest", desc: "SSH sign request", expires: 18 },
 ];
-const TRANSPORT_ERR =
-  'transport error: Error Domain=NSURLErrorDomain Code=-1004 "Could not connect to the server."';
-const HOSTS = [
-  { name: "localmac-dev", backend: "vz", online: true, total: "4.34 GB", parts: ["1.9 GB", "2.43 GB", "Zero KB", "Zero KB"] },
-  { name: "mini2", backend: "firecracker", online: true, total: "1.36 GB", parts: ["1.36 GB", "Zero KB", "Zero KB", "Zero KB"] },
-  { name: "mini3", backend: "firecracker", online: true, total: "1.36 GB", parts: ["1.36 GB", "Zero KB", "Zero KB", "Zero KB"] },
-  { name: "mini3-dev", backend: null, online: false, error: TRANSPORT_ERR },
-  { name: "my-server-dev", backend: null, online: false, error: TRANSPORT_ERR },
-];
-
 const NAV: [Pane, string, typeof Box][] = [
   ["sheds", "Sheds", Boxes],
   ["approvals", "Approvals", Shield],
@@ -140,6 +133,19 @@ function metaLine(s: Shed): string {
   if (s.memory_mb) bits.push(`${Math.round(s.memory_mb / 1024)} GB`);
   bits.push(s.status);
   return bits.join(" · ");
+}
+
+/** Human-readable bytes for the System pane (matches the mock's "Zero KB" empties). */
+function formatBytes(n: number): string {
+  if (n <= 0) return "Zero KB";
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(v < 10 ? 2 : 0)} ${units[i]}`;
 }
 
 /* ---- panes ---------------------------------------------------------------- */
@@ -289,33 +295,58 @@ function ActivityPane() {
 }
 
 function SystemPane() {
+  const [rows, setRows] = useState<HostDiskUsage[]>([]);
+  // Generation guard (as in useUiBridge's fetchSheds): a slower earlier Refresh
+  // can't resolve last and overwrite a newer fetch with stale rows.
+  const gen = useRef(0);
+  const load = useCallback(() => {
+    const g = ++gen.current;
+    void fetchSystemDf().then((r) => {
+      if (g === gen.current) setRows(r);
+    });
+  }, []);
+  useEffect(() => load(), [load]);
   return (
     <div>
-      <PageHead title="System" sub="Disk usage per host (images, sheds, snapshots, orphans)." right={<HeadAction icon={RefreshCw} label="Refresh" />} />
+      <PageHead
+        title="System"
+        sub="Disk usage per host (images, sheds, snapshots, orphans)."
+        right={<HeadAction icon={RefreshCw} label="Refresh" onClick={load} />}
+      />
       <div className="flex flex-col gap-3.5">
-        {HOSTS.map((h) => (
-          <div key={h.name} className={cn(card, "px-5 py-4")}>
-            <div className={cn("flex items-center gap-3", h.online ? "mb-4" : "mb-3")}>
-              <HardDrive size={20} className="text-shed-text-muted" />
-              <span className="text-[17px] font-bold text-shed-text">{h.name}</span>
-              {h.backend && <Tag kind={h.backend} />}
-              <span className="flex-1" />
-              {h.online && <span className="text-[19px] font-bold text-shed-text">{h.total}</span>}
-            </div>
-            {h.online ? (
-              <div className="grid grid-cols-4 gap-2.5">
-                {["Images", "Sheds", "Snapshots", "Orphans"].map((label, j) => (
-                  <div key={label}>
-                    <div className="mb-1.5 text-[12px] text-shed-text-muted">{label}</div>
-                    <div className="font-mono text-[15px] font-medium text-shed-text">{h.parts![j]}</div>
-                  </div>
-                ))}
+        {rows.map((h) => {
+          const t = h.usage?.totals;
+          return (
+            <div key={h.host} className={cn(card, "px-5 py-4")}>
+              <div className={cn("flex items-center gap-3", t ? "mb-4" : "mb-3")}>
+                <HardDrive size={20} className="text-shed-text-muted" />
+                <span className="text-[17px] font-bold text-shed-text">{h.host}</span>
+                {h.usage?.backend && <Tag kind={h.usage.backend} />}
+                <span className="flex-1" />
+                {t && <span className="text-[19px] font-bold text-shed-text">{formatBytes(t.all.physical_bytes)}</span>}
               </div>
-            ) : (
-              <div className="break-words font-mono text-[13px] leading-relaxed" style={{ color: "var(--shed-danger)" }}>{h.error}</div>
-            )}
-          </div>
-        ))}
+              {t ? (
+                <div className="grid grid-cols-4 gap-2.5">
+                  {(
+                    [
+                      ["Images", t.images],
+                      ["Sheds", t.sheds],
+                      ["Snapshots", t.snapshots],
+                      ["Orphans", t.orphans],
+                    ] as const
+                  ).map(([label, size]) => (
+                    <div key={label}>
+                      <div className="mb-1.5 text-[12px] text-shed-text-muted">{label}</div>
+                      <div className="font-mono text-[15px] font-medium text-shed-text">{formatBytes(size.physical_bytes)}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="break-words font-mono text-[13px] leading-relaxed" style={{ color: "var(--shed-danger)" }}>{h.error}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

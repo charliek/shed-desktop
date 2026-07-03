@@ -131,6 +131,7 @@ impl Handler {
             "create.start" => self.create_start(params).await,
             "create.status" => self.create_status(params),
             "create.cancel" => self.create_cancel(params),
+            "system.df" => Ok(json!({ "usage": self.backend.system_df().await })),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }

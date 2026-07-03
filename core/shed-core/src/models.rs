@@ -119,7 +119,7 @@ pub struct ImageList {
 }
 
 /// A logical/physical byte pair. Missing halves -> 0.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct DiskSize {
     #[serde(default)]
     pub logical_bytes: i64,
@@ -128,7 +128,7 @@ pub struct DiskSize {
 }
 
 /// One image/shed/orphan disk entry. Absent `name` -> `"?"`, absent size -> 0/0.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct DiskEntry {
     #[serde(default = "unknown_name")]
     pub name: String,
@@ -137,7 +137,7 @@ pub struct DiskEntry {
     pub size: DiskSize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct DiskTotals {
     #[serde(default)]
     pub images: DiskSize,
@@ -152,7 +152,7 @@ pub struct DiskTotals {
 }
 
 /// `GET /api/system/df`. Arrays default to `[]` (null/omitted), totals to zero.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize, Serialize)]
 pub struct SystemDiskUsage {
     pub server_name: Option<String>,
     pub backend: Option<String>,

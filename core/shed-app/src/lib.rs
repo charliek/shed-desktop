@@ -8,4 +8,4 @@
 
 pub mod backend;
 
-pub use backend::{Backend, Reachability};
+pub use backend::{Backend, HostDiskUsage, Reachability};
