@@ -14,6 +14,41 @@ permissions:
   contents: read
 
 jobs:
+  # Path-filter so Mac-only and docs-only PRs skip the Linux/GTK/deb legs
+  # (mirrors roost). `swift` is never gated — it's the primary check. The `ci`
+  # filter (this workflow / Makefile) forces every leg to run.
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      packaging: ${{ steps.filter.outputs.packaging }}
+      harness: ${{ steps.filter.outputs.harness }}
+      docs: ${{ steps.filter.outputs.docs }}
+      ci: ${{ steps.filter.outputs.ci }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'core/**'
+            packaging:
+              - 'packaging/**'
+              - 'linux/**'
+            harness:
+              - 'tools/**'
+            docs:
+              - 'docs/**'
+              - 'mkdocs.yml'
+            ci:
+              - '.github/workflows/ci.yml'
+              - 'Makefile'
+
   swift:
     name: build · test · e2e
     runs-on: macos-15
@@ -72,8 +107,18 @@ jobs:
         run: ./scripts/smoke-launch-window.sh
 
   core-linux:
-    name: core-linux
-    runs-on: ubuntu-latest
+    name: core-linux (${{ matrix.arch }})
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
+    # Both arches on CI: ubuntu-latest was already x86_64; the arm64 leg (free on
+    # public repos) covers the .deb's other target. aarch64 was Docker-only before.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -94,6 +139,8 @@ jobs:
 
   gtk-build:
     name: gtk-build
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -114,6 +161,8 @@ jobs:
 
   e2e-gtk:
     name: e2e-gtk
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.harness == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -147,6 +196,8 @@ jobs:
 
   deb:
     name: deb
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.packaging == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -169,6 +220,8 @@ jobs:
 
   docs:
     name: docs build
+    needs: changes
+    if: ${{ needs.changes.outputs.docs == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -176,12 +229,25 @@ jobs:
       - name: Build docs
         run: uv run --group docs mkdocs build
 
-  # Single required check for the `main` ruleset: green only when both jobs
-  # pass. Lets the branch rule name one check instead of tracking each matrix
-  # leg (and release.yml's ci-gate can poll this one name).
+  # Single required check for the `main` ruleset. `if: always()` + an explicit
+  # per-job result scan is load-bearing: with the path-filter above, a leg that
+  # doesn't apply is `skipped`, and a plain `needs:` gate would itself skip —
+  # leaving the required check unreported and the PR unmergeable forever. Here
+  # skipped counts as pass; only failure/cancelled fails the gate.
   ci-success:
     name: ci-success
-    needs: [swift, core-linux, gtk-build, e2e-gtk, deb, docs]
+    if: always()
+    needs: [changes, swift, core-linux, gtk-build, e2e-gtk, deb, docs]
     runs-on: ubuntu-latest
     steps:
-      - run: echo "build · test · e2e + core-linux + gtk-build + e2e-gtk + deb + docs are green"
+      - name: Require no job failed (skipped-by-filter counts as pass)
+        run: |
+          results="${{ needs.changes.result }} ${{ needs.swift.result }} ${{ needs.core-linux.result }} ${{ needs.gtk-build.result }} ${{ needs.e2e-gtk.result }} ${{ needs.deb.result }} ${{ needs.docs.result }}"
+          echo "job results: ${results}"
+          for r in ${results}; do
+            case "${r}" in
+              success|skipped) ;;
+              *) echo "::error::a required CI job did not pass (${results})"; exit 1 ;;
+            esac
+          done
+          echo "all required jobs passed (success or skipped-by-filter)"
