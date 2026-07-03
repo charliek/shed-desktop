@@ -1,6 +1,11 @@
 # Tauri Phase A — a real Linux client (foundation)
 
-Status: **panel-reviewed (Kimi K2.6 + CodeRabbit + Cursor, 2026-07-03; Codex rate-limited/skipped) — all
+Status: **✅ SHIPPED (2026-07-03) — merged as PR #27 into `feat/rust-core`, CI-green.** Delivered A0
+(foundation) → A1a (shed-app extraction) → A1b (Sheds) → A1c (System + Terminal) → A1c-2 (Terminal
+openers + Preferences) → New-Shed dialog; verified on both WebViews; real sheds created on a local host
++ a mini. This file is retained as the plan-of-record. **Phase B is next** — [`tauri-phase-b.md`](tauri-phase-b.md).
+
+Status (planning): **panel-reviewed (Kimi K2.6 + CodeRabbit + Cursor, 2026-07-03; Codex rate-limited/skipped) — all
 findings folded.** The detailed implementation plan for **Phase A** of [`tauri-desktop.md`](tauri-desktop.md)
 (the master plan; read it for the why + the 3-phase shape + the locked decisions). Standalone — a reviewer
 needs no prior chat context.

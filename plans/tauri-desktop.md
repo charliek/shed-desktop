@@ -4,6 +4,12 @@ Status: **panel-reviewed (Codex + Kimi K2.6 + CodeRabbit), 2026-07-03 — restru
 per unanimous feedback.** One roadmap; each phase is its own implementation effort (Phase B gets its
 own security-focused plan + panel when we reach it). Premise validated by the `spike/tauri` scaffold.
 
+> **Progress (2026-07-03): Phase A SHIPPED** — merged as **PR #27 into `feat/rust-core`** (15 commits,
+> CI-green). Foundation + Sheds (lifecycle + create-SSE + open-in-terminal) + System (df) + Terminal
+> (Ghostty/Roost/Custom, in-app Preferences) + the New-Shed dialog, on macOS (WKWebView) + Linux
+> (WebKitGTK, shipped). Real sheds created on a local host + a mini. See [`tauri-phase-a.md`](tauri-phase-a.md).
+> **Phase B is next** and gets its own plan + threat model + panel — [`tauri-phase-b.md`](tauri-phase-b.md).
+
 **Decisions locked (2026-07-03):** branch = `tauri-desktop` **stacked on `feat/rust-core`** (rebase onto
 `main` after PR #26 merges); frontend = **React + Vite + Tailwind + shadcn/ui** (themed to the linen
 mockup); drivability = `dashboard.dump` primary + best-effort `app.screenshot`. The detailed **Phase A**
@@ -196,8 +202,10 @@ bits (Sparkle/notarization) stay the Mac app's.
 ## Process
 Three separate phase plans (A → B → C), each **`/planning:ask-panel`'d on its own** and refined with the
 **learnings from the prior phase** before it's built (Phase B especially gets a dedicated
-security-reviewed plan). **All phases land in ONE PR** — a single `tauri-desktop` branch **stacked on
-`feat/rust-core`** (rebased onto `main` after PR #26 merges). Phase A's detailed plan is
+security-reviewed plan). **One PR per phase onto `feat/rust-core`** (revised from the original
+"all phases in one PR" once the phases proved large): Phase A shipped as **PR #27** from `tauri-desktop`;
+**Phase B** is on `tauri-phase-b` (stacked on `feat/rust-core`) → its own PR; Phase C likewise.
+`feat/rust-core` rebases onto `main` after PR #26 merges. Phase A's detailed plan is
 [`tauri-phase-a.md`](tauri-phase-a.md) (panel'd on its own); B and C get theirs JIT. Commits via the
 usual per-commit loop: `/simplify` → **`/cursor:rescue` (primary — Codex is rate-limited for now; use
 Codex again once it recovers)** → tests + lint → commit. Panels lean on Kimi + CodeRabbit (+ Codex when
