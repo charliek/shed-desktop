@@ -1,9 +1,12 @@
 name: release
 
 # Triggered by a vX.Y.Z tag (created by scripts/release/update-version.sh + the
-# release flow). Builds the bundle (Sparkle.framework embedded), packages a
-# drag-install DMG, attaches it to the GitHub release, EdDSA-signs it for the
-# Sparkle appcast, and the release-bot App pushes docs/appcast.xml to main.
+# release flow). A create-release job cuts the GitHub Release up front, then the
+# macOS + Linux build jobs upload to it in parallel: macOS builds the bundle
+# (Sparkle.framework embedded), packages a drag-install DMG, EdDSA-signs it for
+# the Sparkle appcast (release-bot pushes docs/appcast.xml to main); Linux builds
+# the shed-desktop .deb per native arch and, on a stable tag, dispatches
+# charliek/apt-charliek to pull it into the apt index.
 #
 # Developer ID signing + notarization activate automatically once all six Apple
 # secrets exist (the CAN_NOTARIZE gate): the cert is imported into a throwaway
@@ -21,7 +24,35 @@ permissions:
   contents: write
 
 jobs:
+  # Cut the GitHub Release up front (idempotent) so the parallel macOS + Linux
+  # build jobs both upload assets to an existing release rather than racing on
+  # who creates it. Also the single early version gate.
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag == VERSION == core/Cargo.toml
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          FILE="$(tr -d '[:space:]' < VERSION)"
+          CARGO="$(grep -m1 '^version = ' core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG" != "$FILE" ] || [ "$TAG" != "$CARGO" ]; then
+            echo "::error::version mismatch — tag=$TAG VERSION=$FILE core/Cargo.toml=$CARGO" >&2
+            exit 1
+          fi
+      - name: Create the release if absent (idempotent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME already exists — reusing it"
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+              --notes "Release $GITHUB_REF_NAME — assets are uploading."
+          fi
+
   build:
+    needs: create-release
     runs-on: macos-15
     env:
       # Sign + notarize only when the FULL prerequisite set is present. Any
@@ -40,14 +71,6 @@ jobs:
           # republishes Pages. The repo is public, so the unauthenticated
           # `git fetch origin main` below still works.
           persist-credentials: false
-      - name: Verify tag matches VERSION
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          FILE="$(tr -d '[:space:]' < VERSION)"
-          if [ "$TAG" != "$FILE" ]; then
-            echo "tag $TAG does not match VERSION $FILE" >&2
-            exit 1
-          fi
 
       # Inert until all six Apple secrets exist. When present, imports the
       # Developer ID Application cert into a throwaway keychain so codesign (in
@@ -115,21 +138,21 @@ jobs:
             echo "value=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Create release
+      - name: Upload the DMG + set the notarization-aware notes
+        # The release was created up front by create-release; upload the DMG to it
+        # and set the final notes from the real (stapled) notarization state.
         env:
           GH_TOKEN: ${{ github.token }}
           NOTARIZED: ${{ steps.dmg_notarized.outputs.value }}
         run: |
           VER="${GITHUB_REF_NAME#v}"
+          gh release upload "$GITHUB_REF_NAME" "build/ShedDesktop-${VER}.dmg" --clobber
           if [ "${NOTARIZED}" = "true" ]; then
             NOTES="Notarized Developer ID build (auto-updates via Sparkle). Drag to /Applications and open normally."
           else
             NOTES="Ad-hoc signed build (auto-updates via Sparkle). Not notarized yet — see FIRST-LAUNCH.txt in the DMG for the one-time Gatekeeper step."
           fi
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "${NOTES}" \
-            "build/ShedDesktop-${VER}.dmg"
+          gh release edit "$GITHUB_REF_NAME" --notes "${NOTES}"
 
       # ---- Sparkle appcast: sign the DMG + publish the feed as the release bot ----
       - name: Mint release-bot token
@@ -199,3 +222,84 @@ jobs:
             git rebase FETCH_HEAD || { echo "::error::rebase conflict on docs/appcast.xml"; exit 1; }
           done
           echo "::error::push failed after 3 attempts."; exit 1
+
+  # ---- Linux: the shed-desktop .deb, per native arch, → the same Release ----
+  linux:
+    needs: create-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, arch: amd64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+      - name: GTK dev libs
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+      - name: Install nfpm (pinned)
+        run: |
+          NFPM_VERSION=2.46.3
+          case "${{ matrix.arch }}" in
+            amd64) NA=x86_64 ;;
+            arm64) NA=arm64 ;;
+            *) echo "::error::unsupported arch ${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          curl -sSfL "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_${NA}.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin nfpm
+      - name: Assert the runner arch matches the matrix
+        # Runner-label availability isn't provable by actionlint; fail loudly here
+        # rather than silently ship an amd64 .deb labelled arm64.
+        run: |
+          HAVE="$(dpkg --print-architecture)"
+          if [ "$HAVE" != "${{ matrix.arch }}" ]; then
+            echo "::error::runner arch $HAVE != matrix ${{ matrix.arch }}" >&2
+            exit 1
+          fi
+      - name: Build the .deb
+        run: ./linux/scripts/build-deb.sh "${GITHUB_REF_NAME#v}"
+      - name: Upload the .deb to the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" out/*.deb --clobber
+
+  # ---- Tell charliek/apt-charliek to pull the new .deb into its apt index ----
+  # Skips prereleases (X.Y.Z-suffix tags). Mints a token for the
+  # charliek-release-bot App scoped to apt-charliek, then fires a
+  # repository_dispatch; apt-charliek's publish.yml re-scans this repo's latest
+  # release + republishes. Secrets already present (shared with the appcast bot).
+  dispatch-apt-charliek:
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - name: Decide whether to dispatch
+        id: guard
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-*) echo "::notice::${GITHUB_REF_NAME} is a prerelease — skipping apt-charliek dispatch."
+                 echo "skip=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "skip=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: Mint an apt-charliek token
+        if: steps.guard.outputs.skip == 'false'
+        id: apt
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_APP_KEY }}
+          owner: charliek
+          repositories: apt-charliek
+      - name: Dispatch apt-charliek publish
+        if: steps.guard.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ steps.apt.outputs.token }}
+        run: |
+          gh api repos/charliek/apt-charliek/dispatches --method POST \
+            -f event_type=publish \
+            -F "client_payload[package]=shed-desktop" \
+            -F "client_payload[tag]=${GITHUB_REF_NAME}"
+          echo "::notice::Dispatched apt-charliek publish for shed-desktop ${GITHUB_REF_NAME}"

@@ -1,7 +1,9 @@
 # Releasing shed-desktop
 
-shed-desktop follows the release-workflows convention. The single version manifest is the
-top-level `VERSION` file (a pure-Swift package has no Cargo.toml/package.json to bump).
+shed-desktop follows the release-workflows convention. `scripts/release/update-version.sh`
+bumps two manifests in lockstep — the top-level `VERSION` (the macOS marketing version) and
+the Rust workspace's `core/Cargo.toml` (regenerating `core/Cargo.lock`) — so one tag means
+one version across the DMG, the Sparkle appcast, and the Linux `.deb`.
 
 ## Auto-update (Sparkle)
 
@@ -25,19 +27,33 @@ make dmg      # build/ShedDesktop-<version>.dmg (drag-install + first-launch not
 
 ## Cut a release
 
-1. Bump the version: `scripts/release/update-version.sh X.Y.Z`
+1. Bump the version: `scripts/release/update-version.sh X.Y.Z` (updates `VERSION` +
+   `core/Cargo.toml` + `core/Cargo.lock`).
 2. Commit the changelog + version bump.
 3. Tag `vX.Y.Z` and push with `--follow-tags`.
 
-The `release` workflow (`.github/workflows/release.yml`) verifies the tag matches `VERSION`,
-builds + bundles, and attaches the artifact to a GitHub release.
+The `release` workflow (`.github/workflows/release.yml`) cuts the GitHub Release up front (a
+`create-release` job that first checks tag == `VERSION` == `core/Cargo.toml`), then two build
+jobs upload to it in parallel:
+
+- **macOS** builds + bundles, packages the DMG, EdDSA-signs it, and the bot pushes the
+  Sparkle appcast to `main` (below).
+- **Linux** builds `shed-desktop_<ver>_<arch>.deb` on native `amd64` + `arm64` runners and,
+  on a stable tag, dispatches `charliek/apt-charliek` to pull it into the apt index (a
+  prerelease `vX.Y.Z-suffix` tag skips the dispatch — the `.deb` still uploads to the
+  Release). End users then `apt install shed-desktop` (see the apt-charliek README for the
+  one-time repo setup).
 
 ## Pipeline configuration (in place)
 
 The release-workflows + Sparkle appcast pipeline is fully wired:
 
 - **release-bot GitHub App** installed, with secrets `RELEASE_BOT_CLIENT_ID` /
-  `RELEASE_BOT_APP_KEY` (CI mints a token to push the signed appcast to `main`).
+  `RELEASE_BOT_APP_KEY` (CI mints a token to push the signed appcast to `main`, and a second
+  token — scoped to `charliek/apt-charliek` — to dispatch the `.deb` publish). The App must
+  be installed on **both** this repo and `apt-charliek`, and `shed-desktop` registered in
+  `apt-charliek/packages.yaml`. `.github/workflows/sanity-check-app.yml` (Actions → Run
+  workflow) verifies both reaches before a real release.
 - **`SPARKLE_ED_PRIVATE_KEY`** secret (the dedicated key above).
 - **`main-protection` ruleset**: requires `ci-success`, blocks force-push/deletion, with the
   release-bot App + repo admin as bypass actors (so the bot's appcast push and the
