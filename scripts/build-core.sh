@@ -66,7 +66,10 @@ echo "==> cargo build (${CONFIG}) shed-core-ffi staticlib"
 # arm64-only for now (dev machine + Rust-default-off POC; Intel uses the Swift
 # fallback). Universal: build each triple, `lipo -create` the per-arch libs, then
 # create-xcframework with the fat lib.
-( cd "${CORE_DIR}" && cargo build -p shed-core-ffi "${CARGO_FLAGS[@]}" )
+# `${arr[@]+"${arr[@]}"}` (not a bare `"${arr[@]}"`) so an empty CARGO_FLAGS
+# (debug builds) doesn't trip `set -u`'s "unbound variable" on macOS's bash 3.2
+# — the CI runner's /usr/bin/env bash, vs newer bash locally.
+( cd "${CORE_DIR}" && cargo build -p shed-core-ffi ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} )
 
 LIB="${CORE_DIR}/target/${CONFIG}/lib${CRATE}.a"
 [ -f "${LIB}" ] || { echo "error: staticlib not found at ${LIB}" >&2; exit 1; }
