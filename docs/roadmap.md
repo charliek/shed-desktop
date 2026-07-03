@@ -32,9 +32,17 @@ so the same logic backs every client instead of being re-implemented per languag
   `tools/shedtest --target mac|gtk` harness; GTK gained single-instance handoff (an
   `app.activate` IPC op) and parallel multi-host fetches; and an adversarial coverage pass
   hardened all three surfaces. See `plans/phase-3-enhancements.md`.
-- **Next — a third client.** A Flutter mobile spike on the same core, to exercise the API
-  boundary from a very different runtime before it's frozen.
-- **Then — consolidation.** Once the clients prove the foundation: move `shed-core` into the
+- **Next — a real cross-platform client (Tauri).** A Tauri desktop client on the same core, built to
+  **full Mac↔Linux feature parity** (except egress). Tauri's backend *is* Rust, so `shed-core` is a
+  direct dependency and one web frontend covers desktop now (mobile later); it runs on macOS (WKWebView,
+  a UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target). The GTK MVP proved the
+  architecture; this makes Linux a *real product* and, if it lands, **replaces the GTK client** as the
+  shipped Linux app. Three panel-reviewed phases in one PR — foundation → the approval spine → agents/
+  prefs/tray + release. See `plans/tauri-desktop.md`. (A **Flutter** mobile spike is superseded unless
+  Tauri's mobile target disappoints.)
+- **Then — a mobile client (Android-first).** A spike on the same core — Tauri if its Android target
+  proves out, else Flutter — remote-only config + a phone-shaped UI; iOS is post-roadmap.
+- **Later — consolidation.** Once the clients prove the foundation: move `shed-core` into the
   `shed` repo, pull `shed-extensions` in alongside it, and **replace `shed-host-agent` with
   a Rust implementation** on the shared core — retiring the separately-distributed broker
   binary and shrinking the install to one thing. This is the large, invisible-to-users
@@ -57,10 +65,12 @@ of key-holding Go, needs a Rust `shed/sdk` that doesn't exist yet, and would rev
   agent side — gated behind a clean policy story so frequent STS refreshes don't become
   prompt fatigue. See [Credential approvals](reference/approvals.md).
 - **Auto-approve with constraints** — e.g. docker limited to a registry allowlist.
-- **A GTK approval pane.** The Mac approval spine (PolicyEngine, AuditStore, the host-agent
-  protocol codec, the domain models) is pure, key-free logic; porting it into `shed-core`
-  would let the GTK client show approvals too (with libnotify + a non-biometric gate on
-  Linux). A Phase 2 fast-follow, not part of the first GTK milestone.
+- **Approvals on the Linux client.** The Mac approval spine (PolicyEngine, AuditStore, the host-agent
+  protocol codec, the domain models) is ~70% pure, key-free logic; porting it into the shared Rust core
+  (`shed-app`) lets the **Tauri** Linux client show approvals too — with a backend-mediated native/PAM
+  gate on Linux (biometrics stay macOS-only). This is **Phase B** of the Tauri client and gets its own
+  security-reviewed plan; the host-agent client + control-token minting land with it. See
+  `plans/tauri-desktop.md`.
 
 ## Broader control surface
 
@@ -79,7 +89,10 @@ independently useful:
   with an EdDSA-signed Sparkle appcast. The GTK/Linux client **ships** as the `shed-desktop`
   nfpm `.deb` (built per-arch — amd64 + arm64 — on tag, with a headless `shedctl` bundled)
   via `charliek/apt-charliek`, so end users `apt install shed-desktop`. One `git tag vX.Y.Z`
-  cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`.
+  cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`. The shipped
+  Linux `.deb` will **flip from the GTK client to the Tauri client** once its Phase A ships + a
+  release-candidate pass is green — a gated packaging transition (the `.deb` gains a WebKitGTK runtime
+  dep; `plans/tauri-desktop.md` Phase C).
 
 ## Larger bets
 
