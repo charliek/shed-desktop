@@ -167,14 +167,14 @@ Mirror the GTK op set (`shed-gtk/src/ipc.rs`) plus the two the new panes need:
 - **A0b — React/Vite/Tailwind-v3/shadcn shell + WebKitGTK gate.** The sidebar (Sheds/Approvals/Agents/
   Activity/System + count badges + HOSTS list + "host agent · connected" — later panes are stubs), the linen
   theme (the mockup — imported via the Design MCP project, **committed to `docs/design/shed-desktop-mockup.html`**
-  in this milestone as the checked-in parity reference), the Vite `beforeBuildCommand`, strict CSP. **CSS
-  hardening (machine-checked, not eyeballed):** a `stylelint`/PostCSS step fails the build on `oklch()`,
-  `color-mix()`, `:has()`, `@container`/container-queries, `@property`, or `backdrop-filter` in the built CSS;
-  Tailwind theme is **HSL-only**; frontend deps are **pinned** and re-audited on any bump. **Accept:** the new
-  **`tauri-build-linux` Docker job** (`webkit2gtk-4.1-dev` on `ubuntu:24.04`) builds + links; a **computed-style
-  IPC probe** (eval `getComputedStyle` on a known element over IPC, assert a resolved `rgb(...)`) confirms the
-  WebView actually rendered the theme; an Xvfb `app.screenshot` returns a non-empty PNG of the shell. Visual
-  parity vs the committed mockup = within-tolerance shed-local review, not a CI pixel-diff.
+  in this milestone as the checked-in parity reference), the Vite `beforeBuildCommand`, strict CSP. **CSS gate — empirical, on the
+  real target:** the theme KEEPS the design's authored **oklch** palette (+ inline `color-mix`); WebKitGTK 2.44
+  (Ubuntu 24.04) supports oklch, color-mix, `:has()`, `@container`, so a static denylist would be
+  *miscalibrated* — the render smoke IS the gate; frontend deps are **pinned**. **Accept:** `make
+  tauri-build-linux` (a `webkit2gtk-4.1-dev` + Xvfb Docker job) builds the Rust app and runs the `--target tauri`
+  e2e on real WebKitGTK 2.44 — a **computed-style probe** (the frontend reports
+  `getComputedStyle(body).backgroundColor`; a failed oklch parse falls back to transparent → the assertion
+  fails) + the scrot `app.screenshot` confirm the WebView rendered the theme. **Done: 7 passed on 2.44.**
 - **A1a-move — Extract `core/shed-app` (Tauri-agnostic, first, revertable).** Create `shed-app`; move
   `Backend` + `CreateStore` glue **verbatim** from `shed-gtk/src/backend.rs` (keep the hermetic guard);
   refactor `shed-gtk` to depend on it; delete `shed-gtk/src/backend.rs`; relocate/rewire the `ipc.rs:403–406`

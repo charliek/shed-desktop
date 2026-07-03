@@ -31,7 +31,7 @@ export default {
         },
       },
       borderRadius: { shed: "var(--shed-radius)" },
-      boxShadow: { shed: "var(--shed-shadow)", "shed-sel": "var(--shed-shadow-sel)" },
+      boxShadow: { shed: "var(--shed-shadow)" },
       fontFamily: {
         sans: ["-apple-system", "BlinkMacSystemFont", '"SF Pro Text"', "system-ui", "sans-serif"],
         mono: ["ui-monospace", "SFMono-Regular", "monospace"],

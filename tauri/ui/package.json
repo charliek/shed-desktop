@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview",
-    "css-audit": "node scripts/css-audit.mjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

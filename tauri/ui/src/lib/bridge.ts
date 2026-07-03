@@ -2,17 +2,16 @@ import { useEffect, useRef } from "react";
 
 export type Pane = "sheds" | "approvals" | "agents" | "activity" | "system";
 
+const PANES: readonly Pane[] = ["sheds", "approvals", "agents", "activity", "system"];
+
+/** Narrow an untrusted value (an IPC payload) to a known pane. */
+export function isPane(x: unknown): x is Pane {
+  return typeof x === "string" && (PANES as readonly string[]).includes(x);
+}
+
 /** Running inside a Tauri webview (vs a plain browser during `vite dev`)? */
 function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-}
-
-async function tauriApi() {
-  const [core, event] = await Promise.all([
-    import("@tauri-apps/api/core"),
-    import("@tauri-apps/api/event"),
-  ]);
-  return { core, event };
 }
 
 /** Sample the rendered theme so the harness's computed-style probe can confirm
@@ -28,7 +27,7 @@ function sampleStyle() {
 }
 
 function report(pane: Pane) {
-  void tauriApi().then(({ core }) =>
+  void import("@tauri-apps/api/core").then((core) =>
     core.invoke("ui_report", { pane, style: sampleStyle() }).catch(() => {}),
   );
 }
@@ -40,44 +39,42 @@ function report(pane: Pane) {
  *
  *  The initial report is emitted only AFTER the navigate listener is registered
  *  (its registration is async), so `current_pane != null` tells the harness the
- *  listener is live and a `ui.navigate` won't be missed to an attach race. */
+ *  listener is live and a `ui.navigate` won't be lost to an attach race — which is
+ *  also why `ui.navigate` fails `frontend_not_ready` until then. */
 export function useUiBridge(pane: Pane, setPane: (p: Pane) => void) {
   const paneRef = useRef(pane);
   paneRef.current = pane;
+  const ready = useRef(false);
 
   useEffect(() => {
     if (!inTauri()) return;
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     void (async () => {
-      const { event } = await tauriApi();
-      const un = await event.listen<{ pane: Pane }>("navigate", (e) => {
-        if (e.payload?.pane) setPane(e.payload.pane);
+      const { listen } = await import("@tauri-apps/api/event");
+      const un = await listen<{ pane?: unknown }>("navigate", (e) => {
+        if (isPane(e.payload?.pane)) setPane(e.payload.pane);
       });
       if (cancelled) {
         un();
         return;
       }
       unlisten = un;
-      report(paneRef.current); // listener is live → signal readiness
+      ready.current = true; // listener live → readiness signal + initial style
+      report(paneRef.current);
     })();
     return () => {
       cancelled = true;
+      ready.current = false;
       unlisten?.();
     };
   }, [setPane]);
 
-  // Report subsequent pane changes (the listener effect does the initial report,
-  // after attach — so skip the mount run here to keep `current_pane` a
-  // listener-is-ready signal). No requestAnimationFrame: it's paused while the
-  // window is backgrounded, which a harness-launched app usually is.
-  const mounted = useRef(false);
+  // Report subsequent pane changes. Gated on `ready` (not a first-run flag) so it
+  // stays reliable under React StrictMode's effect replay: the listener effect owns
+  // the initial report, so `current_pane` remains a true "listener is live" signal.
   useEffect(() => {
-    if (!inTauri()) return;
-    if (!mounted.current) {
-      mounted.current = true;
-      return;
-    }
+    if (!inTauri() || !ready.current) return;
     report(pane);
   }, [pane]);
 }

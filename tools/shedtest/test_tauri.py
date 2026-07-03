@@ -12,7 +12,7 @@ import subprocess
 import pytest
 
 import ui
-from client import scaled_timeout
+from client import ShedError, scaled_timeout
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("SHED_TEST_TARGET", "mac") != "tauri",
@@ -21,13 +21,23 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_ui_ops_ack(tauri):
-    # A0a: ui.navigate emits a `navigate` event to the frontend and acks;
-    # show_window + activate raise the window and ack. No shared test drives
-    # these; a raised error (non-`{}` envelope) fails the call.
-    tauri.navigate("system")
-    tauri.navigate("sheds")
+    # show_window + activate raise the window and ack (no frontend needed). Once the
+    # frontend is ready, ui.navigate acks too. A raised error (non-`{}` envelope)
+    # fails the call.
     tauri.show_window()
     tauri.activate()
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    tauri.navigate("system")
+    tauri.navigate("sheds")
+
+
+def test_navigate_rejects_unknown_pane(tauri):
+    # An unknown pane is a bad_request, not blindly emitted — a bogus pane would
+    # otherwise blank the UI (PANES[pane] undefined).
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    with pytest.raises(ShedError) as e:
+        tauri.navigate("bogus")
+    assert e.value.code == "bad_request"
 
 
 def test_navigate_reports_rendered_pane(tauri):

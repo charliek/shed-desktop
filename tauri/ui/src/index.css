@@ -141,8 +141,3 @@
     transform: none;
   }
 }
-@keyframes shed-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}

@@ -101,6 +101,15 @@ impl Handler {
     /// always acks so the harness can drive navigation.
     fn navigate(&self, params: &Value) -> Result<Value, (String, String)> {
         let pane = params.get("pane").and_then(Value::as_str).unwrap_or("");
+        if !matches!(pane, "sheds" | "approvals" | "agents" | "activity" | "system") {
+            return Err(err("bad_request", format!("unknown pane: {pane:?}")));
+        }
+        // The frontend's `navigate` listener attaches asynchronously; `current_pane`
+        // is set only once it's live, so a navigate before then would be lost. Fail
+        // fast so a caller retries (the harness waits for readiness first).
+        if self.ui.lock().ok().and_then(|s| s.current_pane.clone()).is_none() {
+            return Err(err("frontend_not_ready", "frontend has not reported yet; retry"));
+        }
         let _ = self.app.emit("navigate", json!({ "pane": pane }));
         Ok(json!({}))
     }

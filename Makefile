@@ -110,8 +110,14 @@ tauri-lint:  ## clippy the Tauri client (its own standalone workspace; kept out 
 # The render gate: build the Tauri Rust app + run the --target tauri e2e on
 # ubuntu:24.04 / WebKitGTK 2.44 under Xvfb, so the oklch linen theme + the
 # drivability probes + the scrot screenshot are verified on the real shipped
-# WebView. The frontend bundle is built on the host first (platform-independent);
-# the Rust builds to a /target volume so it never clobbers the mac target dir.
+# WebView (a static CSS denylist would be miscalibrated — 2.44 supports oklch,
+# color-mix, :has(), @container — so this render smoke IS the CSS gate). The
+# frontend bundle is built on the host first (platform-independent); the source is
+# copied into a writable /work because Tauri's build.rs writes gen/ next to
+# Cargo.toml (a read-only mount fails there); the Rust builds to a /target volume
+# so it never clobbers the mac target dir. --cap-add SYS_ADMIN + seccomp=unconfined
+# let WebKitGTK's web-process bubblewrap sandbox create the user namespaces Docker's
+# default seccomp blocks (else the content process dies and JS never runs).
 tauri-build-linux: tauri-ui-build  ## Render gate: Tauri e2e on ubuntu:24.04 + WebKitGTK 2.44 under Xvfb
 	docker build -t shed-tauri-linux:latest - < Dockerfile.tauri-linux
 	docker run --rm \
