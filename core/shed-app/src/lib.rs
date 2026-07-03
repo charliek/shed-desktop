@@ -7,5 +7,6 @@
 //! Swift-only (poller, df/images, the reachability rollup) will also land (A1a-add).
 
 pub mod backend;
+pub mod timefmt;
 
 pub use backend::{Backend, HostDiskUsage, Reachability};
