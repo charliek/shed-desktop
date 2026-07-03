@@ -346,3 +346,12 @@ class TauriClient(_RustCoreClient):
 
     def activate(self) -> None:
         self.call("app.activate")
+
+    def current_pane(self) -> str | None:
+        """The pane the React shell currently renders (reported via ui_report)."""
+        return self.call("ui.current_pane").get("pane")
+
+    def computed_style(self) -> dict | None:
+        """A computed-style sample the frontend reported (body bg/color + accent),
+        so a test can confirm the WebView applied the theme."""
+        return self.call("ui.computed_style").get("style")

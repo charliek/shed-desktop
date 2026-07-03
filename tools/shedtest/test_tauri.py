@@ -30,6 +30,30 @@ def test_ui_ops_ack(tauri):
     tauri.activate()
 
 
+def test_navigate_reports_rendered_pane(tauri):
+    # A0b round-trip: ui.navigate emits `navigate` → React switches the pane and
+    # reports it back (ui_report) → ui.current_pane reflects the RENDERED pane (the
+    # dashboard.dump-is-UI-truth pattern). Proves the WebView is running the app.
+    # current_pane becomes non-null only once the navigate listener is registered,
+    # so this wait also rules out the listener-attach race.
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    tauri.navigate("system")
+    tauri.wait_until(lambda: tauri.current_pane() == "system", timeout=15, what="pane=system")
+    tauri.navigate("agents")
+    tauri.wait_until(lambda: tauri.current_pane() == "agents", timeout=15, what="pane=agents")
+
+
+def test_computed_style_probe_confirms_theme(tauri):
+    # The machine-checkable half of the WebKitGTK render gate: the WebView actually
+    # applied the linen CSS, so the body background resolves to a real (non-
+    # transparent) color. If oklch/color-mix failed to parse, the var-backed bg
+    # would fall back to transparent (rgba(0, 0, 0, 0)).
+    tauri.wait_until(lambda: (tauri.computed_style() or {}).get("bg"), timeout=15, what="computed style reported")
+    style = tauri.computed_style()
+    assert style["bg"], f"no body background reported: {style}"
+    assert style["bg"] != "rgba(0, 0, 0, 0)", f"linen theme not applied (bg transparent): {style}"
+
+
 def test_second_launch_hands_off(tauri):
     # A second shed-desktop-tauri against the same runtime must detect the running
     # instance (the single-instance plugin), hand off by raising it, and exit —

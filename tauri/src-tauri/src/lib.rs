@@ -11,10 +11,25 @@ mod env;
 mod ipc;
 mod screenshot;
 mod single_instance;
+mod state;
+
+use std::sync::{Arc, Mutex};
 
 use env::Env;
 use ipc::{Handler, IpcServer};
 use single_instance::AcquireError;
+use state::{SharedUi, UiState};
+
+/// The React frontend reports its rendered pane + a computed-style sample here, so
+/// the harness can read the real rendered state over IPC (`ui.current_pane` /
+/// `ui.computed_style`). Invoked from `useUiBridge` on mount + every pane change.
+#[tauri::command]
+fn ui_report(ui: tauri::State<'_, SharedUi>, pane: String, style: serde_json::Value) {
+    if let Ok(mut s) = ui.lock() {
+        s.current_pane = Some(pane);
+        s.computed_style = Some(style);
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -43,9 +58,15 @@ pub fn run() {
         }
     };
 
+    // Shared with the IPC handler so `ui.current_pane` / `ui.computed_style` read
+    // what the frontend reported.
+    let ui: SharedUi = Arc::new(Mutex::new(UiState::default()));
+
     tauri::Builder::default()
+        .manage(ui.clone())
+        .invoke_handler(tauri::generate_handler![ui_report])
         .setup(move |app| {
-            let handler = Handler::new(env.clone(), app.handle().clone());
+            let handler = Handler::new(env.clone(), app.handle().clone(), ui.clone());
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.
             let server = tauri::async_runtime::block_on(IpcServer::bind(&env.socket_path, handler))

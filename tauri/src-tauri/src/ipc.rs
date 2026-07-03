@@ -21,6 +21,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 
 use crate::env::Env;
+use crate::state::SharedUi;
 
 /// A request line is tiny; cap it so a local client can't force unbounded
 /// buffering with a huge/unterminated frame.
@@ -58,14 +59,16 @@ fn identify_payload(env: &Env, pid: u32) -> Value {
 pub struct Handler {
     env: Env,
     app: AppHandle,
+    ui: SharedUi,
     pid: u32,
 }
 
 impl Handler {
-    pub fn new(env: Env, app: AppHandle) -> Self {
+    pub fn new(env: Env, app: AppHandle, ui: SharedUi) -> Self {
         Self {
             env,
             app,
+            ui,
             pid: std::process::id(),
         }
     }
@@ -76,6 +79,14 @@ impl Handler {
         match op {
             "identify" => Ok(identify_payload(&self.env, self.pid)),
             "ui.navigate" => self.navigate(params),
+            "ui.current_pane" => {
+                let pane = self.ui.lock().ok().and_then(|s| s.current_pane.clone());
+                Ok(json!({ "pane": pane }))
+            }
+            "ui.computed_style" => {
+                let style = self.ui.lock().ok().and_then(|s| s.computed_style.clone());
+                Ok(json!({ "style": style }))
+            }
             "ui.show_window" | "app.activate" => {
                 present_main_window(&self.app);
                 Ok(json!({}))
