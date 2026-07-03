@@ -94,12 +94,15 @@ deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 
 
 # ---- tauri (Phase A: a real Linux client toward Mac parity) -----------
 
-.PHONY: tauri-build tauri-run tauri-lint
-tauri-build:  ## Build the Tauri client (standalone workspace; WKWebView on macOS / WebKitGTK on Linux)
+.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build
+tauri-ui-build:  ## Build the Vite/React frontend bundle (tauri/ui/dist)
+	cd tauri/ui && npm run build
+
+tauri-build: tauri-ui-build  ## Build the Tauri client: the frontend bundle + the standalone Rust workspace
 	cd tauri/src-tauri && cargo build
 
-tauri-run: tauri-build  ## Build + launch the Tauri client
-	cd tauri/src-tauri && cargo run
+tauri-run:  ## Launch the Tauri client via the dev loop (Vite dev server + WKWebView/WebKitGTK)
+	cd tauri/src-tauri && cargo tauri dev
 
 tauri-lint:  ## clippy the Tauri client (its own standalone workspace; kept out of core-lint)
 	cd tauri/src-tauri && cargo clippy --all-targets -- -D warnings
