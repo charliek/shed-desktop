@@ -17,7 +17,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from client import GtkClient, IPCClient, ShedDesktop, ShedError, TauriClient, scaled_timeout
@@ -55,6 +55,12 @@ _SUBPROC: dict[str, _Subproc] = {
         env_prefix="SHED_TAURI", fallback_stem="shed-tauri",
         sock_rel="shed-tauri.sock", platform_id="tauri", client_cls=TauriClient),
 }
+
+# The Linux render gate builds the Tauri app with a relocated CARGO_TARGET_DIR (so
+# a container build can't clobber the mac target dir); let it point the harness at
+# that binary via SHED_TAURI_BIN.
+if os.environ.get("SHED_TAURI_BIN"):
+    _SUBPROC["tauri"] = replace(_SUBPROC["tauri"], binary=Path(os.environ["SHED_TAURI_BIN"]))
 
 # gtk's binary path as a module attr — test_gtk.py references `ui.BIN`.
 BIN = _SUBPROC["gtk"].binary

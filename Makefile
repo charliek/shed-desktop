@@ -94,18 +94,43 @@ deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 
 
 # ---- tauri (Phase A: a real Linux client toward Mac parity) -----------
 
-.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build
+.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build tauri-build-linux
 tauri-ui-build:  ## Build the Vite/React frontend bundle (tauri/ui/dist)
 	cd tauri/ui && npm run build
 
 tauri-build: tauri-ui-build  ## Build the Tauri client: the frontend bundle + the standalone Rust workspace
 	cd tauri/src-tauri && cargo build
 
-tauri-run:  ## Launch the Tauri client via the dev loop (Vite dev server + WKWebView/WebKitGTK)
-	cd tauri/src-tauri && cargo tauri dev
+tauri-run: tauri-ui-build  ## Build the frontend bundle + launch the Tauri client (loads the embedded dist)
+	cd tauri/src-tauri && cargo run
 
 tauri-lint:  ## clippy the Tauri client (its own standalone workspace; kept out of core-lint)
 	cd tauri/src-tauri && cargo clippy --all-targets -- -D warnings
+
+# The render gate: build the Tauri Rust app + run the --target tauri e2e on
+# ubuntu:24.04 / WebKitGTK 2.44 under Xvfb, so the oklch linen theme + the
+# drivability probes + the scrot screenshot are verified on the real shipped
+# WebView. The frontend bundle is built on the host first (platform-independent);
+# the Rust builds to a /target volume so it never clobbers the mac target dir.
+tauri-build-linux: tauri-ui-build  ## Render gate: Tauri e2e on ubuntu:24.04 + WebKitGTK 2.44 under Xvfb
+	docker build -t shed-tauri-linux:latest - < Dockerfile.tauri-linux
+	docker run --rm \
+	  --cap-add SYS_ADMIN --security-opt seccomp=unconfined --shm-size=1g \
+	  -v "$(CURDIR):/repo:ro" \
+	  -v shed-tauri-linux-cargo:/usr/local/cargo/registry \
+	  -v shed-tauri-linux-target:/target \
+	  -w /repo \
+	  -e CARGO_TARGET_DIR=/target \
+	  -e UV_PROJECT_ENVIRONMENT=/tmp/uv-venv \
+	  -e SHED_TAURI_BIN=/target/debug/shed-desktop-tauri \
+	  -e SHED_TAURI_TEST_TIMEOUT_SCALE=6 \
+	  shed-tauri-linux:latest \
+	  bash -lc 'set -e; mkdir -p /work; \
+	    tar -C /repo --exclude=tauri/src-tauri/target --exclude=tauri/ui/node_modules \
+	      -cf - tauri tools pyproject.toml uv.lock | tar -C /work -xf -; \
+	    cd /work && (cd tauri/src-tauri && cargo build --locked) && \
+	    xvfb-run -a --server-args="-screen 0 1400x900x24" \
+	      uv run --group test pytest tools/shedtest --target tauri -q -p no:cacheprovider'
 
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux
