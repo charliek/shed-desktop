@@ -416,16 +416,41 @@ fn our_uid() -> u32 {
     unsafe { libc::getuid() }
 }
 
-/// The peer (server) UID on a connected Unix socket, via `getpeereid` (portable
-/// across Linux + macOS). `None` on error → treated as untrusted (fail closed).
+/// The peer (server) UID on a connected Unix socket. `None` on error → treated as
+/// untrusted (fail closed). Linux uses `SO_PEERCRED` (glibc has no `getpeereid`);
+/// macOS/BSD use `getpeereid`.
 fn peer_uid(stream: &UnixStream) -> Option<u32> {
     use std::os::fd::AsRawFd;
-    let mut uid: libc::uid_t = 0;
-    let mut gid: libc::gid_t = 0;
-    // SAFETY: `stream` owns a valid connected AF_UNIX fd for the call's duration;
-    // the out-params are valid stack slots.
-    let rc = unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) };
-    (rc == 0).then_some(uid)
+    let fd = stream.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: `fd` is a valid connected AF_UNIX socket for the call's duration;
+        // `cred`/`len` are valid, correctly-sized out slots.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+                &mut len,
+            )
+        };
+        (rc == 0).then_some(cred.uid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        // SAFETY: `fd` is a valid connected AF_UNIX fd; the out-params are valid slots.
+        let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        (rc == 0).then_some(uid)
+    }
 }
 
 /// A1 trust rule: the peer must run as us. A lookup failure (`None`) is untrusted.
