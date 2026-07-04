@@ -463,6 +463,15 @@ impl State {
                 self.gate_namespaces.clear();
                 self.sink.emit(CoordinatorEvent::Connected);
             }
+            HostAgentEvent::Untrusted => {
+                // A1: the socket peer isn't running as us — we never handshook, so
+                // there's no delegation. Record a distinct reason (so it's not a
+                // silent connecting… loop) and keep the "not connected" indicator.
+                self.last_error =
+                    Some("host-agent socket peer failed the UID check (not running as us)".into());
+                self.gate_namespaces.clear();
+                self.sink.emit(CoordinatorEvent::Connected);
+            }
             HostAgentEvent::Frame(frame) => match *frame {
                 HostAgentInbound::ApprovalRequest(req) => self.handle_approval_request(req),
                 HostAgentInbound::Event(evt) => {

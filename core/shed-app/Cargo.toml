@@ -28,6 +28,9 @@ futures = "0.3"
 # DateFormatting). `clock` disabled — "now" comes from the injectable Clock seam,
 # not chrono, so no iana-time-zone/libc pull.
 chrono = { version = "0.4", default-features = false, features = ["std"] }
+# getpeereid(2) for the host-agent socket peer-UID check (A1 — the server must
+# run as us). Unix-only; the clients are Unix (Linux + macOS).
+libc = "0.2"
 
 [dev-dependencies]
 httpmock = { workspace = true }
