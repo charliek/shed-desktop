@@ -451,6 +451,11 @@ impl State {
                 }
                 self.pending.clear();
                 self.gating.clear(); // A2: any in-flight gates are moot now
+                // A3: drop ALL session grants — a reconnected (possibly different /
+                // squatting) agent must not inherit an auto-approve made to the
+                // previous connection. Clearing everything is simpler + strictly
+                // safer than scoping to a namespace across a reconnect.
+                self.session_grants.clear();
                 self.sink.emit(CoordinatorEvent::Approvals);
                 // The delegation is gone until we re-handshake; clear it (and signal
                 // the down-edge) so the UI's "host agent · connected" indicator, which
@@ -1103,6 +1108,32 @@ mod tests {
         assert!(h.wait_calls(1).await);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(h.responder.calls()[0].decision, ApprovalDecision::Approve);
+    }
+
+    #[tokio::test]
+    async fn a3_disconnect_clears_session_grants() {
+        // A3: a disconnect drops session grants, so a reconnected agent can't
+        // inherit an auto-approve granted to the previous connection.
+        let h = Harness::new(1_000);
+        h.coord
+            .set_policy_rules(vec![default_rule(PolicyAction::Prompt, PolicyGate::None)])
+            .await;
+        // r1 approved per-session → a grant for shed "s".
+        h.inject(ssh_req("r1", "s", 5_000));
+        assert!(h.wait_queued(1).await);
+        h.coord.decide_approval("r1", approve_session("1h")).await;
+        assert!(h.wait_calls(1).await);
+        // r2 same shed auto-approves via the grant.
+        h.inject(ssh_req("r2", "s", 5_000));
+        assert!(h.wait_calls(2).await);
+        assert_eq!(h.responder.calls()[1].decided_by, DecidedBy::Policy);
+        // Disconnect → the grant (and pending) are dropped.
+        h.events.send(HostAgentEvent::Disconnected).unwrap();
+        assert!(h.wait_queued(0).await);
+        // r3 same shed must RE-PROMPT (queue, not auto-approve) — the grant is gone.
+        h.inject(ssh_req("r3", "s", 5_000));
+        assert!(h.wait_queued(1).await);
+        assert_eq!(h.responder.calls().len(), 2, "r3 was auto-approved from a stale grant");
     }
 
     // -- harness helpers -----------------------------------------------------
