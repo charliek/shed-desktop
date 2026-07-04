@@ -104,7 +104,9 @@ tauri-build: tauri-ui-build  ## Build the Tauri client: the frontend bundle + th
 tauri-run: tauri-ui-build  ## Build the frontend bundle + launch the Tauri client (loads the embedded dist)
 	cd tauri/src-tauri && cargo run
 
-tauri-lint:  ## clippy the Tauri client (its own standalone workspace; kept out of core-lint)
+tauri-lint: tauri-ui-build  ## clippy the Tauri client (its own standalone workspace; kept out of core-lint)
+	# Needs the frontend bundle: compiling the crate runs tauri's generate_context!,
+	# which fails closed if tauri.conf.json's frontendDist (../ui/dist) is absent.
 	cd tauri/src-tauri && cargo clippy --all-targets -- -D warnings
 
 # The render gate: build the Tauri Rust app + run the --target tauri e2e on
@@ -144,7 +146,9 @@ tauri-build-linux: tauri-ui-build  ## Render gate: Tauri e2e on ubuntu:24.04 + W
 # AuthGate + libnotify Notifier are compiled): asserts the gate is fail-closed
 # (never Approved without a real polkit auth; biometrics-only → Unavailable). Uses
 # the same image as the render gate; no display needed. Joins the tauri CI leg.
-tauri-test-linux:  ## Tauri crate cargo test on ubuntu:24.04 (Linux-only approval-seam tests)
+tauri-test-linux: tauri-ui-build  ## Tauri crate cargo test on ubuntu:24.04 (Linux-only approval-seam tests)
+	# tauri-ui-build first: `cargo test` compiles the crate, whose generate_context!
+	# fails closed without the frontendDist bundle (tarred into the container below).
 	docker build -t shed-tauri-linux:latest - < Dockerfile.tauri-linux
 	docker run --rm \
 	  -v "$(CURDIR):/repo:ro" \
