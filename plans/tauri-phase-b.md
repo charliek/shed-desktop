@@ -165,6 +165,17 @@ appendix.
   on-disk rule persistence ships, so a reconnected/squatting same-UID agent can't inherit a grant.
   (b) `finish_decide`'s binding check distinguishes a same-id *replacement* but not a byte-identical
   *replayed* frame across a reconnect; trust-direction-safe today, revisit with (a).
+- **Defense-in-depth follow-ups (B6 review):** (c) `begin_decide` has no in-flight-gate dedup — a same-user
+  process looping `approval.decide` on one pending id spawns N concurrent `pkcheck`/polkit dialogs
+  (DoS/annoyance, not fail-open — each still needs real auth). Track an in-flight gate per id and drop
+  duplicate decides; worst case of a cleanup bug is a dropped approval (deny-safe). (d) The Linux `mod
+  linux` (PolkitGate/NotifySendNotifier) uses no Tauri API — only `tokio::process` + `shed_app::traits`;
+  when the GTK approval pane (M6) lands, **lift it into `shed-app`** rather than copy-pasting this
+  fail-closed logic into shed-gtk. (e) `notify-send` withdraw is a no-op (banners auto-expire) — precise
+  recall wants a Notify id + `CloseNotification` over D-Bus. Note: the polkit gate is only as strong as the
+  IPC socket ACL (best-effort `0600` under `$XDG_RUNTIME_DIR/0700`, same-user only) — a same-user process
+  *outside the shed* could `ui.set_ssh_approval {method:"prompt"}` to drop the gate (by-design under F13's
+  trust-webview-for-prefs); the shed-confined adversary (the real threat) can't reach the socket.
 
 ---
 
@@ -359,6 +370,25 @@ keeps the password in the OS agent, never the app.
 distinct, audited, **deny-safe** (and leave the request *pending* per the mac-parity semantics in §2.2).
 Under the hermetic harness the gate is bypassed (test-mode `Approved`), so the full approval matrix is
 green independent of polkit — B6 wires the real dialog + a manual real-desktop smoke.
+
+**B6 as built (2026-07-03):** the gate shells out to **`pkcheck --action-id
+ai.stridelabs.shed-desktop.approve-credential --process <pid> --allow-user-interaction`** (polkit's own
+CLI — no D-Bus crate, so nothing new to audit; the secret is entered into the OS agent, never the app);
+`biometrics_only` → `Unavailable` (F5); a missing `pkcheck` → `Unavailable` (fail-closed). The notifier
+shells out to **`notify-send`** (best-effort; withdraw is a no-op — banners auto-expire; precise
+`CloseNotification` recall is a follow-up). Both impls are `#[cfg(target_os="linux")]` (macOS keeps the
+fail-closed stubs, since the Tauri crate also builds for dev/e2e there). The polkit action ships as
+`packaging/polkit/ai.stridelabs.shed-desktop.policy` (`auth_self`, no `*_keep` — the app's own session
+grants own "don't ask again"); install it to `/usr/share/polkit-1/actions/` (with the Tauri package, once
+that ships; the `.deb` is still the GTK client). Automated: `make tauri-test-linux` asserts the gate never
+returns `Approved` without a real auth; the render gate + e2e stay green (test-mode fake gate).
+
+**Manual real-desktop smoke (the remaining B6 acceptance):** on a Linux desktop with a polkit agent —
+`sudo install -m0644 packaging/polkit/ai.stridelabs.shed-desktop.policy /usr/share/polkit-1/actions/`,
+run the Tauri client NOT in test mode against a host-agent whose approval mode routes to shed-desktop,
+choose the "Authenticate" method in Preferences, trigger an SSH sign, and confirm: the polkit password
+dialog appears; entering the password → the request approves (audit `decided_by=touchid`); cancelling →
+the request stays pending → expires to deny; a `notify-send` banner is posted on the pending request.
 
 ---
 

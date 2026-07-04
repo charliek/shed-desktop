@@ -386,10 +386,9 @@ pub fn run() {
             let (notifier, gate): (NotifierRef, AuthGateRef) = if env.test_mode {
                 (Arc::new(FakeNotifier::new()), Arc::new(AlwaysApprovedGate))
             } else {
-                (
-                    Arc::new(approval::NoopNotifier),
-                    Arc::new(approval::FailClosedGate),
-                )
+                // Linux: real polkit gate + libnotify notifier; other targets: the
+                // fail-closed stubs (the Tauri client's native gate is Linux-only).
+                approval::production_seams()
             };
             let audit = AuditStore::new(
                 app.path()

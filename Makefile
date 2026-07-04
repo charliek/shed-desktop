@@ -94,7 +94,7 @@ deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 
 
 # ---- tauri (Phase A: a real Linux client toward Mac parity) -----------
 
-.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build tauri-build-linux
+.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build tauri-build-linux tauri-test-linux
 tauri-ui-build:  ## Build the Vite/React frontend bundle (tauri/ui/dist)
 	cd tauri/ui && npm run build
 
@@ -139,6 +139,24 @@ tauri-build-linux: tauri-ui-build  ## Render gate: Tauri e2e on ubuntu:24.04 + W
 	    cd /work && (cd tauri/src-tauri && cargo build --locked) && \
 	    xvfb-run -a --server-args="-screen 0 1400x900x24" \
 	      uv run --group test pytest tools/shedtest --target tauri -q -p no:cacheprovider'
+
+# The Tauri Rust crate's unit tests on Linux (the platform where the polkit
+# AuthGate + libnotify Notifier are compiled): asserts the gate is fail-closed
+# (never Approved without a real polkit auth; biometrics-only → Unavailable). Uses
+# the same image as the render gate; no display needed. Joins the tauri CI leg.
+tauri-test-linux:  ## Tauri crate cargo test on ubuntu:24.04 (Linux-only approval-seam tests)
+	docker build -t shed-tauri-linux:latest - < Dockerfile.tauri-linux
+	docker run --rm \
+	  -v "$(CURDIR):/repo:ro" \
+	  -v shed-tauri-linux-cargo:/usr/local/cargo/registry \
+	  -v shed-tauri-linux-target:/target \
+	  -w /repo \
+	  -e CARGO_TARGET_DIR=/target \
+	  shed-tauri-linux:latest \
+	  bash -lc 'set -e; mkdir -p /work; \
+	    tar -C /repo --exclude=tauri/src-tauri/target --exclude=tauri/ui/node_modules --exclude=core/target \
+	      -cf - core tauri tools Resources pyproject.toml uv.lock | tar -C /work -xf -; \
+	    cd /work/tauri/src-tauri && cargo test --locked'
 
 core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring needs build-essential)
 	docker build -t shed-core-linux:latest - < Dockerfile.linux
