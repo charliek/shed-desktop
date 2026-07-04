@@ -474,6 +474,23 @@ Every commit: `make build && make test`; `make e2e-tauri` (mac) + `make tauri-bu
   `c688e40` PR. *Accept:* the Rust client mints + gates against the *real* `shed-host-agent`; a real
   secure-server request approves end-to-end.
 
+  **B7 is a MANUAL smoke on real infrastructure** (a running `shed-host-agent` holding real keys + a
+  configured secure server + a real desktop) — it cannot run in the hermetic harness or be driven by the
+  agent (which must not start a key-holding daemon or configure secure servers). Runbook:
+  1. **Agent up, routing to us:** ensure `shed-host-agent` is running with a secure server configured and
+     its approval mode = `shed-desktop` for the SSH namespace (so sign requests route to this client).
+  2. **Client, NOT test mode:** launch the Tauri client normally (no `SHED_TAURI_TEST_MODE`); confirm the
+     header shows **host agent · connected** (the real hello handshake → `gate_namespaces`).
+  3. **Minting (C2):** trigger an op that needs a CONTROL token against the secure server; confirm the
+     client mints via the agent's `token.get` (a stale token 401 → re-mint, not a hard failure) — watch
+     `Activity`/the agent logs.
+  4. **Gate + approve (Linux):** with the "Authenticate" method (Preferences), trigger an SSH sign in a
+     shed → the polkit dialog appears → enter the password → the request **approves** end-to-end (the
+     agent releases the credential; audit `decided_by=touchid`). On macOS (dev) the gate is `Unavailable`,
+     so use the **"Prompt only"** method there (button approve, no polkit) to validate the non-gated path.
+  5. **Fail-closed:** cancel the polkit dialog → the request stays pending → **expires to deny** (no
+     credential released). Kill the agent mid-pending → the queue drops (F3), no late approve.
+
 **Sequencing rationale:** the security *logic* (B0–B2) is proven by unit tests before any platform
 surface; the hermetic *matrix* (B3–B4) is green before the real gate (B6) and before real credentials
 (B7). The UI (B5) can precede or follow B4 since the matrix is IPC-driven; the Approvals/Activity pane
