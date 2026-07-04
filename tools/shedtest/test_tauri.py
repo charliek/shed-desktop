@@ -34,6 +34,16 @@ def test_ui_ops_ack(tauri):
     tauri.navigate("sheds")
 
 
+def test_tray_dump(tauri):
+    # B1a: the menu-bar/tray is drivable over IPC (the North Star). Its actionable
+    # menu ids are always reported; the tray *installs* on macOS (a status-bar host
+    # is always present), while a headless / no-SNI Linux box may be window-only.
+    dump = tauri.call("tray.dump")
+    assert dump["items"] == ["open", "quit"]
+    if platform.system() == "Darwin":
+        assert dump["present"] is True
+
+
 def test_navigate_rejects_unknown_pane(tauri):
     # An unknown pane is a bad_request, not blindly emitted — a bogus pane would
     # otherwise blank the UI (PANES[pane] undefined).

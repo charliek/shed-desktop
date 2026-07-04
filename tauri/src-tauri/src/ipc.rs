@@ -181,8 +181,19 @@ impl Handler {
             "notification.invoke" => self.notification_invoke(params).await,
             "notification.open" => self.notification_open(),
             "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
+            "tray.dump" => Ok(self.tray_dump()),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
+    }
+
+    /// `tray.dump` → the drivable view of the menu-bar/tray (B1a): whether the
+    /// tray installed on this host (a headless / no-SNI Linux box has nowhere to
+    /// show it → `false`, window-only) and its actionable menu-item ids.
+    fn tray_dump(&self) -> Value {
+        json!({
+            "present": self.app.tray_by_id(crate::tray::TRAY_ID).is_some(),
+            "items": crate::tray::menu_item_ids(),
+        })
     }
 
     /// `ui.navigate {pane}` → tell the frontend to switch panes (a `navigate`

@@ -23,7 +23,8 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# "tray-icon" backs the menu-bar/tray (B1 — macOS rich popover / Linux native menu).
+tauri = { version = "2", features = ["tray-icon"] }
 # The shared protocol + app-logic crates (cross-workspace path deps — this links
 # them; it does not make this crate a member of core's workspace).
 shed-core = { path = "../../core/shed-core" }

@@ -15,6 +15,7 @@ mod screenshot;
 mod single_instance;
 mod state;
 mod termctl;
+mod tray;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -445,8 +446,35 @@ pub fn run() {
                     )
                 })?;
             tauri::async_runtime::spawn(async move { server.run().await });
+
+            // The system tray (B1a). Best-effort: a headless / no-SNI host has
+            // nowhere to show it, so a failure logs and the app keeps running (the
+            // window is always reachable). The macOS rich popover lands in B1b.
+            if let Err(e) = tray::build(app.handle()) {
+                eprintln!("shed-desktop-tauri: tray unavailable ({e}); window-only");
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("run shed-desktop tauri app");
+        .build(tauri::generate_context!())
+        .expect("build shed-desktop tauri app")
+        .run(|app_handle, event| match event {
+            // Menu-bar/tray behavior: closing the window HIDES it (the app lives in
+            // the tray); a deliberate Quit (tray → app.exit(0)) still exits.
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if let Some(w) = app_handle.get_webview_window(&label) {
+                    let _ = w.hide();
+                }
+                api.prevent_close();
+            }
+            // An auto-exit (e.g. the last window closed) is prevented so we stay in
+            // the tray; a deliberate exit carries a code and is allowed through.
+            tauri::RunEvent::ExitRequested { code, api, .. } if code.is_none() => {
+                api.prevent_exit();
+            }
+            _ => {}
+        });
 }
