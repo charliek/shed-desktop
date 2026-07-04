@@ -104,5 +104,16 @@ lifecycle + create + IPC drivability (`dashboard.dump`/`screenshot`, single-inst
 `plans/phase-2-rust-clients.md` + `plans/phase-3-enhancements.md` (the GTK approval pane, M6, is
 deferred; the "delete-the-Swift-path" cleanups live in `plans/phase-4-rust-core-only.md`).
 
+A newer **Tauri** cross-platform client (`tauri/`, React/Vite/Tailwind on the same `shed-core` +
+`shed-app`) is being built toward full Mac↔Linux parity, to eventually **replace both the Swift mac app
+and the GTK `.deb`**. **Phase A** (read/lifecycle/create, PR #27) + **Phase B** (the full credential-approval
+spine — host-agent client, coordinator, audit, minting, the Linux polkit gate + a tauri CI leg; PR #28) are
+**merged** into `feat/rust-core`. **Phase C** (menu-bar/tray, the Agents/RC pane, a macOS Touch-ID gate +
+notifier, spine hardening) is **in progress** on branch `tauri-phase-c` — see `plans/tauri-phase-c.md`
+(its top "Status" section is the pick-up point). The Tauri crate is its OWN cargo workspace
+(`tauri/src-tauri`); its gates are `make e2e-tauri` (mac), `make tauri-build-linux` + `make tauri-test-linux`
+(WebKitGTK render gate — **run it for any shared/Linux change**), guarded per-PR by the CI `tauri-linux` +
+`tauri-mac` legs.
+
 Deferred directions (AWS/Docker gating, sessions/snapshots/images panes, notarization) live
 in `docs/roadmap.md`.

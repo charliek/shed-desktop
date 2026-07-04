@@ -7,6 +7,38 @@
 > not hand-rolled bindings); **Tauri emits no tray click events on Linux** (`tauri-2.11.5/src/tray/mod.rs`),
 > so the tray is a **platform split**, not one portable design.
 
+## Status — pick up here (2026-07-04)
+
+**Branch `tauri-phase-c`** (off merged `feat/rust-core` = `c10d386`). **5 of ~11 milestones LANDED, all
+gates green** (shed-app 65 · tauri crate tests 10 · e2e-tauri 45 · WebKitGTK render gate 47):
+- **B1a** — system tray + native menu + hide-on-close lifecycle + drivable `tray.dump` (both platforms).
+- **A1** — host-agent socket peer-UID check (fail closed). **A2** — one OS gate prompt per id (dedup).
+  **A3** — clear session grants on disconnect. **B5** — macOS approval notifier (osascript).
+- ⚠️ **Lesson:** the first A1 commit used `getpeereid`, which exists on macOS but **not** glibc, so it broke
+  the Linux build (fixed: Linux uses `SO_PEERCRED`). **Run `make tauri-build-linux` (the render gate) for
+  ANY shared/Linux change — the mac `e2e-tauri` alone won't catch it.**
+
+**NEXT FOCUS → B2, the Agents/RC pane (§3.2)** — the agent panel is high-value for hands-on testing, so it
+leads. Then **a real build/packaging + run test on both macOS + Linux** (toward the flip, §4–§5) — this
+hands-on run against a live `shed-host-agent` **can also serve as the B7 / A5 real-agent smoke** (mint +
+gate a real approval end-to-end), so B7 need not be a separate step. **When B2 lands, draft a TEST PLAN**
+(the key features done vs remaining, per platform) so the maintainer knows exactly what to exercise. After
+that: **B1b** (mac popover — the Swift-vs-Tauri decision), **B3** (macOS Touch-ID gate, objc2), **B4**
+(prefs + autostart), **A4** (D-Bus withdraw).
+
+**Outstanding design decisions to settle at the top of the next session (before/while building B2):**
+1. **RC extraction boundary** — pure classify / `normalizeRcPrompt` / argv / DTOs → **`shed-core`**;
+   process / SSH / session management → **`shed-app`** behind an `rc = ["tokio/process"]` feature (so
+   `shed-gtk` doesn't compile SSH-spawning it never uses). Panel-confirmed; lock the exact module layout.
+2. **Test-mode session store** (`rc.inject_test`) — the analog of `AlwaysApprovedGate`/`FakeNotifier`;
+   `test_agents.py` depends on it (a synthesized ready session). Where it lives + its seam.
+3. **SSH shell-out** — RC launch runs `ssh … shed-ext-rc create --wait`; the Tauri backend needs the SSH
+   setup + the `shed-ext-rc` binary. Decide the process-runner seam (test fake vs real).
+4. **No Swift-FFI in Phase C** — the Swift app keeps its own `RemoteControl.swift`; bridging `shed-app::rc`
+   to Swift is a Phase-4 milestone.
+5. **B1b tray** — Tauri webview popover vs a native-Swift mac menu: decide after the B1b spike (the user's
+   Swift interest is the *menu-bar*, not the gate, which is settled as objc2).
+
 ## 0. TL;DR
 
 Phase A (read / lifecycle / create) and Phase B (the credential-approval spine) are **merged** into
