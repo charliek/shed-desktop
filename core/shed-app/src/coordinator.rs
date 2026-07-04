@@ -153,6 +153,7 @@ impl Coordinator {
         let (tx, rx) = mpsc::unbounded_channel();
         let mut state = State {
             pending: HashMap::new(),
+            gating: HashSet::new(),
             session_grants: HashMap::new(),
             engine: PolicyEngine::new(vec![]),
             extra_rules: deps.extra_rules,
@@ -329,6 +330,10 @@ impl Coordinator {
 
 struct State {
     pending: HashMap<String, PendingApproval>,
+    /// Ids with an OS auth gate currently in flight (A2) — so a duplicate approve
+    /// doesn't stack a second native prompt. Cleared on every terminal path
+    /// (gate resolve, disconnect, same-id replacement).
+    gating: HashSet<String>,
     session_grants: HashMap<SessionGrantKey, GrantExpiry>,
     engine: PolicyEngine,
     extra_rules: Vec<PolicyRule>,
@@ -445,6 +450,7 @@ impl State {
                     self.notifier.withdraw(id);
                 }
                 self.pending.clear();
+                self.gating.clear(); // A2: any in-flight gates are moot now
                 self.sink.emit(CoordinatorEvent::Approvals);
                 // The delegation is gone until we re-handshake; clear it (and signal
                 // the down-edge) so the UI's "host agent · connected" indicator, which
@@ -485,6 +491,10 @@ impl State {
                 "",
             ),
             PolicyAction::Prompt => {
+                // A2: a same-id replacement supersedes any in-flight gate for that
+                // id (the old gate's outcome can't commit against the new request
+                // anyway — the binding check rejects it), so clear the marker.
+                self.gating.remove(&req.id);
                 self.notifier.post(&req);
                 self.pending.insert(
                     req.id.clone(),
@@ -517,6 +527,14 @@ impl State {
         // same-id replacement while the gate is up can't hijack the decision.
         let captured_gate = item.gate;
         if choice.decision == ApprovalDecision::Approve && captured_gate.is_biometric() {
+            // A2: one OS prompt per id. A duplicate approve while a gate is already
+            // in flight is dropped (it would just stack another polkit/Touch-ID
+            // dialog). `insert` returns false when already present. A DENY is never
+            // deduped — it falls to the else-branch and evicts pending immediately.
+            if !self.gating.insert(id.clone()) {
+                let _ = reply.send(());
+                return;
+            }
             let prompt = AuthPrompt {
                 reason: format!(
                     "Approve {} {} for shed {}",
@@ -562,6 +580,9 @@ impl State {
         choice: &ApprovalChoice,
         outcome: &AuthOutcome,
     ) {
+        // A2: the gate for this id resolved (whatever the outcome) — clear the
+        // in-flight marker so a fresh decide can re-gate.
+        self.gating.remove(id);
         // The request must still be pending, be the SAME request that opened the
         // gate (a same-id replacement while the gate was up must not inherit this
         // decision), and not have expired (it may have been denied by the tick or
@@ -917,7 +938,7 @@ mod tests {
     use super::*;
     use crate::fakes::{AlwaysApprovedGate, FakeNotifier, NoopEventSink};
     use crate::traits::{AuthGate, Clock, Responder};
-    use std::sync::atomic::{AtomicI64, Ordering};
+    use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::sync::Notify;
 
@@ -1014,6 +1035,74 @@ mod tests {
         async fn gate(&self, _prompt: AuthPrompt) -> AuthOutcome {
             AuthOutcome::Denied
         }
+    }
+
+    /// A gate that COUNTS calls + blocks the first until released — so A2 can prove
+    /// a duplicate decide opens no second prompt (a 2nd call just increments +
+    /// returns, so the test sees `calls == 1`).
+    struct CountingBlockableGate {
+        calls: Arc<AtomicUsize>,
+        entered: Arc<Notify>,
+        release: tokio::sync::Mutex<Option<oneshot::Receiver<AuthOutcome>>>,
+    }
+    #[async_trait::async_trait]
+    impl AuthGate for CountingBlockableGate {
+        async fn gate(&self, _prompt: AuthPrompt) -> AuthOutcome {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.entered.notify_one();
+            match self.release.lock().await.take() {
+                Some(rx) => rx.await.unwrap_or(AuthOutcome::Denied),
+                None => AuthOutcome::Denied, // a 2nd call (dedup failed) doesn't block
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a2_one_gate_prompt_per_id_under_duplicate_decide() {
+        // A2: a duplicate approve while an OS gate is in flight is dropped — exactly
+        // one native prompt per id (no dialog spam), and the request stays pending
+        // until the first gate resolves.
+        let calls = Arc::new(AtomicUsize::new(0));
+        let entered = Arc::new(Notify::new());
+        let (rel_tx, rel_rx) = oneshot::channel();
+        let gate: AuthGateRef = Arc::new(CountingBlockableGate {
+            calls: calls.clone(),
+            entered: entered.clone(),
+            release: tokio::sync::Mutex::new(Some(rel_rx)),
+        });
+        let h = Harness::build(gate, 1_000);
+        h.coord
+            .set_policy_rules(vec![default_rule(
+                PolicyAction::Prompt,
+                PolicyGate::BiometricsOrPassword,
+            )])
+            .await;
+        h.inject(ssh_req("r1", "s", 5_000));
+        assert!(h.wait_queued(1).await);
+
+        // First approve opens the gate (blocks).
+        let c = h.coord.clone();
+        let d1 = tokio::spawn(async move { c.decide_approval("r1", approve_session("1h")).await });
+        entered.notified().await;
+
+        // Duplicate approve while the gate is in flight → dropped, no second prompt.
+        h.coord.decide_approval("r1", approve_session("1h")).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "a duplicate approve spawned a second gate prompt"
+        );
+        assert!(
+            !h.coord.approvals_list().await.is_empty(),
+            "r1 must stay pending under the open gate"
+        );
+
+        // Release → the single gate resolves + commits exactly one approve.
+        let _ = rel_tx.send(AuthOutcome::Approved);
+        let _ = d1.await;
+        assert!(h.wait_calls(1).await);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(h.responder.calls()[0].decision, ApprovalDecision::Approve);
     }
 
     // -- harness helpers -----------------------------------------------------
