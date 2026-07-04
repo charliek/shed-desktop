@@ -75,7 +75,7 @@ pub type AuthGateRef = Arc<dyn AuthGate>;
 
 /// A notification the app asked to be shown — surfaced over IPC
 /// (`notifications.list`) so the harness can assert one was posted.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PostedNotification {
     pub id: String,
     pub title: String,
