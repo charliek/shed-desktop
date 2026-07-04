@@ -18,20 +18,25 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use shed_app::traits::{
-    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, CoordinatorEvent, EventSink, Notifier,
-    NotifierRef,
+    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, CoordinatorEvent, EventSink, NotifierRef,
 };
-use shed_core::approval::ApprovalRequest;
 
-/// The production notifier + auth gate for the running platform. Linux gets the
-/// real polkit gate + libnotify notifier; every other target (macOS dev/e2e) gets
-/// the fail-closed stubs. Test mode never calls this — it uses shed-app's fakes.
+/// The production notifier + auth gate for the running platform. Linux: the real
+/// polkit gate + libnotify notifier. macOS: the osascript notifier (B5) + the
+/// fail-closed gate until the Touch-ID gate lands (B3). Other targets: the
+/// fail-closed stubs. Test mode never calls this — it uses shed-app's fakes.
 pub fn production_seams() -> (NotifierRef, AuthGateRef) {
     #[cfg(target_os = "linux")]
     {
         (Arc::new(linux::NotifySendNotifier), Arc::new(linux::PolkitGate))
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    {
+        // B5: real approval banners on mac (the Swift app posts them). The gate is
+        // still fail-closed here until B3 wires the objc2 Touch-ID gate.
+        (Arc::new(macos::OsaNotifier), Arc::new(FailClosedGate))
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         (Arc::new(NoopNotifier), Arc::new(FailClosedGate))
     }
@@ -61,13 +66,23 @@ impl EventSink for TauriEventSink {
     }
 }
 
-/// The non-Linux / no-desktop-notifications notifier: a no-op.
-pub struct NoopNotifier;
+/// The no-desktop-notifications notifier (targets that are neither Linux nor
+/// macOS): a no-op. Linux + macOS have real notifiers, so it's only constructed
+/// on other targets.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+mod noop_notifier {
+    use shed_app::traits::Notifier;
+    use shed_core::approval::ApprovalRequest;
 
-impl Notifier for NoopNotifier {
-    fn post(&self, _req: &ApprovalRequest) {}
-    fn withdraw(&self, _id: &str) {}
+    pub struct NoopNotifier;
+
+    impl Notifier for NoopNotifier {
+        fn post(&self, _req: &ApprovalRequest) {}
+        fn withdraw(&self, _id: &str) {}
+    }
 }
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+use noop_notifier::NoopNotifier;
 
 /// The non-Linux auth gate: fail-closed. A biometric/password-gated approve can't
 /// be confirmed, so the request stays pending and expires to deny (F5). The
@@ -171,6 +186,69 @@ mod linux {
             });
         }
         fn withdraw(&self, _id: &str) {}
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use shed_app::traits::Notifier;
+    use shed_core::approval::ApprovalRequest;
+
+    /// Posts an approval banner via `osascript` (Notification Center) — the mac
+    /// analog of the Linux `notify-send` notifier (B5), matching the Swift app's
+    /// approval banners. Best-effort + fire-and-forget so the actor never blocks;
+    /// withdraw is a no-op (Notification Center banners auto-dismiss — precise
+    /// recall via `UNUserNotificationCenter` is a follow-up, as on Linux).
+    pub struct OsaNotifier;
+
+    impl Notifier for OsaNotifier {
+        fn post(&self, req: &ApprovalRequest) {
+            use shed_app::traits::approval_notification_text as text;
+            // AppleScript string literals: the request fields (namespace/op/shed/
+            // detail) are attacker-influenced off the wire, so quote them to close
+            // AppleScript injection — never interpolate raw.
+            let script = format!(
+                "display notification {} with title {}",
+                osa_quote(&text::body(req)),
+                osa_quote(&text::title(req)),
+            );
+            // We're inside the coordinator actor (a tokio task), so spawn is valid.
+            tokio::spawn(async move {
+                let _ = tokio::process::Command::new("/usr/bin/osascript")
+                    .args(["-e", &script])
+                    .status()
+                    .await;
+            });
+        }
+        fn withdraw(&self, _id: &str) {}
+    }
+
+    /// Quote a string as an AppleScript literal (`"..."`), escaping `\` and `"` so
+    /// no wire-controlled field can break out of the string or inject script.
+    fn osa_quote(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::osa_quote;
+
+        #[test]
+        fn osa_quote_escapes_quotes_and_backslashes() {
+            assert_eq!(osa_quote("plain"), "\"plain\"");
+            assert_eq!(osa_quote("a\"b"), "\"a\\\"b\""); // " → \"  (can't break out)
+            assert_eq!(osa_quote("a\\b"), "\"a\\\\b\""); // \ → \\  (escaped first)
+            // Every interior double-quote is backslash-escaped, so an injection
+            // attempt can't close the AppleScript literal.
+            let evil = osa_quote("x\" & (do shell script \"rm -rf\")");
+            let interior = &evil[1..evil.len() - 1];
+            for (i, _) in interior.match_indices('"') {
+                assert!(
+                    i > 0 && interior.as_bytes()[i - 1] == b'\\',
+                    "an unescaped quote survived at {i}"
+                );
+            }
+        }
     }
 }
 
