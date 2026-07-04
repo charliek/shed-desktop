@@ -27,6 +27,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       packaging: ${{ steps.filter.outputs.packaging }}
       harness: ${{ steps.filter.outputs.harness }}
+      tauri: ${{ steps.filter.outputs.tauri }}
       docs: ${{ steps.filter.outputs.docs }}
       ci: ${{ steps.filter.outputs.ci }}
     steps:
@@ -42,6 +43,10 @@ jobs:
               - 'linux/**'
             harness:
               - 'tools/**'
+            tauri:
+              - 'tauri/**'
+              - 'core/**'
+              - 'packaging/polkit/**'
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
@@ -218,6 +223,61 @@ jobs:
         # only; apt-repo / release-asset wiring is deferred (see docs/enhancements.md).
         run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-desktop_*.deb | head -1)"
 
+  tauri-linux:
+    name: tauri-linux
+    needs: changes
+    if: ${{ needs.changes.outputs.tauri == 'true' || needs.changes.outputs.harness == 'true' || needs.changes.outputs.ci == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Node (the Vite/React frontend bundle)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tauri/ui/package-lock.json
+      - name: Frontend deps
+        run: cd tauri/ui && npm ci
+      # The Tauri crate's Linux-only approval-seam tests (polkit/libnotify gate is
+      # fail-closed: never Approved without a real auth). Docker (ubuntu:24.04),
+      # same image as the render gate below; no display needed.
+      - name: Tauri crate tests (Linux)
+        run: make tauri-test-linux
+      # The render gate: builds the frontend + the Tauri app and runs the
+      # --target tauri hermetic e2e on WebKitGTK 2.44 under Xvfb (the pinned
+      # WebView = the real CSS/render gate). Docker with the sandbox caps the
+      # WebKitGTK web-process needs; GitHub runners allow privileged docker run.
+      - name: Tauri render gate + hermetic E2E (WebKitGTK)
+        run: make tauri-build-linux
+
+  tauri-mac:
+    name: tauri-mac
+    needs: changes
+    if: ${{ needs.changes.outputs.tauri == 'true' || needs.changes.outputs.harness == 'true' || needs.changes.outputs.ci == 'true' }}
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustc --version && cargo --version
+      - name: Node (the Vite/React frontend bundle)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tauri/ui/package-lock.json
+      - name: Frontend deps
+        run: cd tauri/ui && npm ci
+      - name: Tauri clippy (standalone workspace)
+        run: make tauri-lint
+      - uses: astral-sh/setup-uv@v6
+      - name: Hermetic Tauri E2E (macOS WKWebView)
+        # A wider timeout scale buys headroom on a shared CI runner (as the swift
+        # + gtk legs do). WKWebView needs no Xvfb; the mac screenshot op is
+        # TCC-gated so it's skipped here (the WebKitGTK leg is the screenshot gate).
+        run: SHED_TAURI_TEST_TIMEOUT_SCALE=4 make e2e-tauri
+
   docs:
     name: docs build
     needs: changes
@@ -237,12 +297,12 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [changes, swift, core-linux, gtk-build, e2e-gtk, deb, docs]
+    needs: [changes, swift, core-linux, gtk-build, e2e-gtk, deb, tauri-linux, tauri-mac, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require no job failed (skipped-by-filter counts as pass)
         run: |
-          results="${{ needs.changes.result }} ${{ needs.swift.result }} ${{ needs.core-linux.result }} ${{ needs.gtk-build.result }} ${{ needs.e2e-gtk.result }} ${{ needs.deb.result }} ${{ needs.docs.result }}"
+          results="${{ needs.changes.result }} ${{ needs.swift.result }} ${{ needs.core-linux.result }} ${{ needs.gtk-build.result }} ${{ needs.e2e-gtk.result }} ${{ needs.deb.result }} ${{ needs.tauri-linux.result }} ${{ needs.tauri-mac.result }} ${{ needs.docs.result }}"
           echo "job results: ${results}"
           for r in ${results}; do
             case "${r}" in
