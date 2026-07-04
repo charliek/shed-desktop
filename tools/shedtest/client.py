@@ -156,7 +156,64 @@ class IPCClient:
             time.sleep(0.1)
 
 
-class ShedDesktop(IPCClient):
+class _ApprovalOps:
+    """The credential-approval op surface (SSH-approval prefs / policy / approvals
+    / activity / notifications), shared by the mac app and the Tauri client — both
+    wire the same shed-core approval spine with identical op names + shapes.
+    `self.call` comes from the `IPCClient` base each mixes in with."""
+
+    def set_ssh_approval(self, method: str | None = None, policy: str | None = None,
+                         ttl: str | None = None) -> None:
+        """Set SSH approval prefs (any subset) and reset live SSH grants.
+
+        `policy` is one of: always-allow | per-shed-allow | time-based-allow |
+        always-ask | always-deny.
+        """
+        params: dict = {}
+        if method is not None:
+            params["method"] = method
+        if policy is not None:
+            params["policy"] = policy
+        if ttl is not None:
+            params["ttl"] = ttl
+        self.call("ui.set_ssh_approval", params)
+
+    def approvals_list(self) -> list[dict]:
+        return self.call("approvals.list")["approvals"]
+
+    def approval_decide(self, id: str, decision: str, scope: str | None = None,
+                        ttl: str | None = None, persist: bool = False) -> None:
+        params: dict = {"id": id, "decision": decision, "persist": persist}
+        if scope is not None:
+            params["scope"] = scope
+        if ttl is not None:
+            params["ttl"] = ttl
+        self.call("approval.decide", params)
+
+    def activity_list(self, limit: int = 200) -> list[dict]:
+        return self.call("activity.list", {"limit": limit})["entries"]
+
+    def activity_log_path(self) -> str:
+        return self.call("activity.log_path")["path"]
+
+    def policy_set(self, rules: list[dict]) -> None:
+        self.call("policy.set", {"rules": rules})
+
+    def policy_list(self) -> list[dict]:
+        return self.call("policy.list")["rules"]
+
+    def notifications_list(self) -> list[dict]:
+        return self.call("notifications.list")["notifications"]
+
+    def notification_invoke(self, id: str, action: str) -> None:
+        self.call("notification.invoke", {"id": id, "action": action})
+
+    def notification_open(self) -> None:
+        """Drive a notification-body tap → opens the dashboard on Approvals."""
+        self.call("notification.open")
+
+
+class ShedDesktop(_ApprovalOps, IPCClient):
     """The macOS app's full op surface (drives the SwiftUI dashboard, the
     approval gate, remote-control agents, prefs, and notifications)."""
 
@@ -170,22 +227,6 @@ class ShedDesktop(IPCClient):
 
     def navigate(self, pane: str) -> dict:
         return self.call("ui.navigate", {"pane": pane})
-
-    def set_ssh_approval(self, method: str | None = None, policy: str | None = None,
-                         ttl: str | None = None) -> None:
-        """Set SSH approval prefs (any subset) and reset live SSH grants.
-
-        `policy` is a CardDecision value: always-allow | per-shed-allow |
-        time-based-allow | always-ask | always-deny.
-        """
-        params: dict = {}
-        if method is not None:
-            params["method"] = method
-        if policy is not None:
-            params["policy"] = policy
-        if ttl is not None:
-            params["ttl"] = ttl
-        self.call("ui.set_ssh_approval", params)
 
     def show_window(self) -> None:
         self.call("ui.show_window")
@@ -270,42 +311,6 @@ class ShedDesktop(IPCClient):
                 params[k] = v
         self.call("rc.inject_test", params)
 
-    # -- M3: approvals + activity ----------------------------------------
-    def approvals_list(self) -> list[dict]:
-        return self.call("approvals.list")["approvals"]
-
-    def approval_decide(self, id: str, decision: str, scope: str | None = None,
-                        ttl: str | None = None, persist: bool = False) -> None:
-        params: dict = {"id": id, "decision": decision, "persist": persist}
-        if scope is not None:
-            params["scope"] = scope
-        if ttl is not None:
-            params["ttl"] = ttl
-        self.call("approval.decide", params)
-
-    def activity_list(self, limit: int = 200) -> list[dict]:
-        return self.call("activity.list", {"limit": limit})["entries"]
-
-    def activity_log_path(self) -> str:
-        return self.call("activity.log_path")["path"]
-
-    def policy_set(self, rules: list[dict]) -> None:
-        self.call("policy.set", {"rules": rules})
-
-    def policy_list(self) -> list[dict]:
-        return self.call("policy.list")["rules"]
-
-    # -- M5: notifications (fake presenter in test mode) ------------------
-    def notifications_list(self) -> list[dict]:
-        return self.call("notifications.list")["notifications"]
-
-    def notification_invoke(self, id: str, action: str) -> None:
-        self.call("notification.invoke", {"id": id, "action": action})
-
-    def notification_open(self) -> None:
-        """Drive a notification-body tap → opens the dashboard on Approvals."""
-        self.call("notification.open")
-
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 
@@ -333,10 +338,9 @@ class GtkClient(_RustCoreClient):
     """shed-gtk's op surface — the shared Rust-core base, no additions."""
 
 
-class TauriClient(_RustCoreClient):
-    """The Tauri client's op surface: the shared Rust-core base + pane `navigate`
-    and `show_window`/`activate` (A0a). A1b adds the sheds/create ops (already on
-    the `IPCClient` base) once the shed-app backend is wired in."""
+class TauriClient(_ApprovalOps, _RustCoreClient):
+    """The Tauri client's op surface: the shared Rust-core base + the approval ops
+    (`_ApprovalOps`, B3) + pane `navigate` and `show_window`/`activate` (A0a)."""
 
     def navigate(self, pane: str) -> None:
         self.call("ui.navigate", {"pane": pane})

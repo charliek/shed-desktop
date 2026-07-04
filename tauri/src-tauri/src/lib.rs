@@ -300,7 +300,6 @@ pub fn run() {
                 capabilities: vec!["approval.ssh".to_string(), "event.stream".to_string()],
                 replay_events: 50,
             };
-            let host_events = host.start(hello);
             let (notifier, gate): (NotifierRef, AuthGateRef) = if env.test_mode {
                 (Arc::new(FakeNotifier::new()), Arc::new(AlwaysApprovedGate))
             } else {
@@ -309,25 +308,36 @@ pub fn run() {
                     Arc::new(approval::FailClosedGate),
                 )
             };
-            let audit_path = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                .join("audit.jsonl");
-            let coordinator = Coordinator::spawn(
-                CoordinatorDeps {
-                    responder: Arc::new(host.clone()),
-                    notifier,
-                    gate,
-                    clock: clock.clone(),
-                    audit: AuditStore::new(audit_path),
-                    ssh: SshPrefs::default(),
-                    extra_rules: Vec::new(),
-                    provider_modes: HashMap::new(),
-                },
-                host_events,
+            let audit = AuditStore::new(
+                app.path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("audit.jsonl"),
             );
-            coordinator.start_expiry_tick();
+            let coord_clock = clock.clone();
+            // Start the client loop + coordinator actor + expiry tick INSIDE the
+            // Tauri (tokio) runtime — tokio::spawn needs a runtime context, and the
+            // setup hook itself has none (the same reason the IPC bind below uses
+            // block_on). The spawned tasks are detached and outlive the block.
+            let coordinator = tauri::async_runtime::block_on(async move {
+                let host_events = host.start(hello);
+                let responder: shed_app::traits::ResponderRef = Arc::new(host);
+                let coordinator = Coordinator::spawn(
+                    CoordinatorDeps {
+                        responder,
+                        notifier,
+                        gate,
+                        clock: coord_clock,
+                        audit,
+                        ssh: SshPrefs::default(),
+                        extra_rules: Vec::new(),
+                        provider_modes: HashMap::new(),
+                    },
+                    host_events,
+                );
+                coordinator.start_expiry_tick();
+                coordinator
+            });
             app.manage(coordinator.clone());
 
             let handler = Handler::new(
