@@ -31,3 +31,12 @@ needs_backend = pytest.mark.skipif(
     _TARGET not in _BACKEND_TARGETS,
     reason="target has no shed-core backend ops yet (tauri: lands in A1b)",
 )
+
+# Targets whose UI implements the credential-approval spine (mac + tauri; gtk's
+# approval pane is deferred — roadmap M6). Tauri gained it in Phase B (B3).
+_APPROVAL_TARGETS = {"mac", "tauri"}
+
+needs_approvals = pytest.mark.skipif(
+    _TARGET not in _APPROVAL_TARGETS,
+    reason="target has no approval spine (gtk: deferred)",
+)

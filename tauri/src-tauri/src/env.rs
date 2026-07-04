@@ -20,6 +20,10 @@ pub struct Env {
     /// with a `/tmp/shed-tauri-<uid>/shed-tauri.sock` fallback — no nested subdir,
     /// unlike shed-gtk, to stay under the macOS Unix-socket path limit).
     pub socket_path: PathBuf,
+    /// The host-agent approval socket (`SHED_TAURI_HOST_AGENT_SOCKET` in tests →
+    /// the fake agent; else the canonical `$SHED_HOST_AGENT_SOCKET_DIR` /
+    /// `$XDG_RUNTIME_DIR/shed` / `~/.local/share/shed` + `host-agent.sock`).
+    pub host_agent_socket: PathBuf,
 }
 
 impl Env {
@@ -44,8 +48,31 @@ impl Env {
             socket_path: var("SHED_TAURI_SOCKET")
                 .map(PathBuf::from)
                 .unwrap_or_else(default_socket_path),
+            host_agent_socket: var("SHED_TAURI_HOST_AGENT_SOCKET")
+                .map(PathBuf::from)
+                .unwrap_or_else(default_host_agent_socket),
         }
     }
+}
+
+/// The host agent's approval socket, resolved like shed-extensions' host-agent-ipc
+/// doc: `$SHED_HOST_AGENT_SOCKET_DIR`, else `$XDG_RUNTIME_DIR/shed`, else
+/// `~/.local/share/shed`, plus `host-agent.sock`.
+fn default_host_agent_socket() -> PathBuf {
+    let dir = std::env::var_os("SHED_HOST_AGENT_SOCKET_DIR")
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("XDG_RUNTIME_DIR")
+                .filter(|x| !x.is_empty())
+                .map(|x| PathBuf::from(x).join("shed"))
+        })
+        .unwrap_or_else(|| {
+            let home = std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_default();
+            home.join(".local/share/shed")
+        });
+    dir.join("host-agent.sock")
 }
 
 fn default_config_path() -> PathBuf {

@@ -21,7 +21,7 @@ use serde::{Deserialize, Deserializer, Serialize};
 /// empty collections (`{"sheds": null}`, `df` arrays), which a bare
 /// `#[serde(default)] Vec<_>` rejects. Pair them: `#[serde(default,
 /// deserialize_with = "null_default")]`.
-fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+pub(crate) fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de> + Default,

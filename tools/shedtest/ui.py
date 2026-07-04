@@ -225,14 +225,15 @@ def launch(target: str = "mac", *, mock_base_url: str, config_path: Path, state_
 
     `state_dir` is the throwaway per-session dir: on mac SHED_DESKTOP_STATE_DIR;
     on a subprocess target it doubles as HOME + XDG_RUNTIME_DIR (so ~/.shed and
-    the runtime socket are both isolated). `host_agent_socket` is mac-only.
+    the runtime socket are both isolated). `host_agent_socket` backs the approval
+    gate — set for mac + tauri (the fake host-agent); gtk has no approval spine.
     """
     if target == "mac":
         _launch_mac(mock_base_url=mock_base_url, config_path=config_path,
                     state_dir=state_dir, host_agent_socket=host_agent_socket)
     elif target in _SUBPROC:
         _launch_subproc(target, mock_base_url=mock_base_url, config_path=config_path,
-                        runtime_dir=state_dir)
+                        runtime_dir=state_dir, host_agent_socket=host_agent_socket)
     else:
         raise ValueError(f"unknown target {target!r} (want {'|'.join(TARGETS)})")
 
@@ -266,7 +267,7 @@ def _launch_mac(*, mock_base_url: str, config_path: Path, state_dir: Path,
 
 
 def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
-                    runtime_dir: Path) -> None:
+                    runtime_dir: Path, host_agent_socket: str | None = None) -> None:
     cfg = _SUBPROC[target]
     if not cfg.binary.exists():
         raise RuntimeError(
@@ -284,6 +285,10 @@ def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
     env[f"{cfg.env_prefix}_TEST_MODE"] = "1"
     env[f"{cfg.env_prefix}_MOCK_BASE_URL"] = mock_base_url
     env[f"{cfg.env_prefix}_SHED_CONFIG"] = str(config_path)
+    # The approval gate's host-agent socket (the fake, in tests). Only tauri has
+    # an approval spine among the subprocess targets; gtk ignores it.
+    if host_agent_socket:
+        env[f"{cfg.env_prefix}_HOST_AGENT_SOCKET"] = str(host_agent_socket)
     env.pop(f"{cfg.env_prefix}_SOCKET", None)
     st = _state[target]
     st.env = env

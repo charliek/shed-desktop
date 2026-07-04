@@ -7,6 +7,7 @@
 //! async runtime before the window paints — so a harness `identify` right after
 //! launch succeeds.
 
+mod approval;
 mod env;
 mod ipc;
 mod prefs;
@@ -15,12 +16,21 @@ mod single_instance;
 mod state;
 mod termctl;
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use env::Env;
 use ipc::{Handler, IpcServer};
-use shed_app::Backend;
+use shed_app::traits::{AuthGateRef, NotifierRef};
+use shed_app::{
+    AlwaysApprovedGate, AuditStore, Backend, Coordinator, CoordinatorDeps, FakeNotifier,
+    HelloClientInfo, HostAgentClient, HostAgentTokenMinter, SshPrefs,
+};
+use shed_core::approval::{
+    ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, SshApprovalPolicy,
+};
 use shed_core::models::CreateShedRequest;
+use shed_core::token::TokenMinter;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
 use tauri::Manager;
@@ -85,7 +95,11 @@ async fn create_start(
         no_provision: None,
     };
     backend
-        .create_start(&tokio::runtime::Handle::current(), form.host.as_deref(), req)
+        .create_start(
+            &tokio::runtime::Handle::current(),
+            form.host.as_deref(),
+            req,
+        )
         .map_err(|e| e.to_string())
 }
 
@@ -177,6 +191,80 @@ fn open_terminal(
         .map_err(|(_code, msg)| msg)
 }
 
+// -- approvals (the frontend Approvals/Activity panes + approval prefs) --------
+
+/// The pending approval cards (each with gate + scope/TTL defaults). The pane
+/// re-fetches on the `approvals-changed` event (see TauriEventSink).
+#[tauri::command]
+async fn approvals_list(
+    coordinator: tauri::State<'_, Coordinator>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.approvals_list().await))
+}
+
+/// Approve/deny a pending request (the card's buttons). Tauri deserializes the
+/// enum args from their wire strings ("approve"|"deny", "per-request"|…) via serde.
+#[tauri::command]
+async fn approval_decide(
+    coordinator: tauri::State<'_, Coordinator>,
+    id: String,
+    decision: ApprovalDecision,
+    scope: Option<ApprovalScope>,
+    ttl: Option<String>,
+    persist: Option<bool>,
+) -> Result<(), String> {
+    coordinator
+        .decide_approval(
+            id,
+            ApprovalChoice {
+                decision,
+                scope,
+                ttl,
+                persist: persist.unwrap_or(false),
+            },
+        )
+        .await;
+    Ok(())
+}
+
+/// The merged audit feed (most-recent-first). Re-fetched on `activity-changed`.
+#[tauri::command]
+async fn activity_list(
+    coordinator: tauri::State<'_, Coordinator>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.activity_list(limit.unwrap_or(200)).await))
+}
+
+/// The namespaces the host agent delegates to us (drives which approval-prefs
+/// sections show + the "host agent · connected" indicator).
+#[tauri::command]
+async fn gate_namespaces(coordinator: tauri::State<'_, Coordinator>) -> Result<Vec<String>, String> {
+    Ok(coordinator.gate_namespaces().await)
+}
+
+/// Apply SSH approval prefs (method/policy/TTL) + re-evaluate the pending queue.
+/// Tauri deserializes the enum args from their wire strings via serde.
+#[tauri::command]
+async fn set_ssh_approval(
+    coordinator: tauri::State<'_, Coordinator>,
+    method: Option<ApprovalMethod>,
+    policy: Option<SshApprovalPolicy>,
+    ttl: Option<String>,
+) -> Result<(), String> {
+    coordinator.set_ssh_approval(method, policy, ttl).await;
+    Ok(())
+}
+
+/// The current SSH approval prefs (`{method, policy, ttl}`) — drives the
+/// Preferences dropdown so it reflects the running coordinator, not a guess.
+#[tauri::command]
+async fn ssh_prefs_get(
+    coordinator: tauri::State<'_, Coordinator>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.ssh_prefs().await))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -208,13 +296,26 @@ pub fn run() {
     // `dashboard.dump` read what the frontend reported.
     let ui: SharedUi = Arc::new(Mutex::new(UiState::default()));
 
+    // The host-agent connection (approvals + the all-namespace audit feed) + the
+    // control-token minter it backs. Construct BEFORE the Backend so each secure
+    // (non-mock) server's client mints its bearer via the agent's token.get (C2;
+    // fail-closed on a mint failure). The client CONNECTS in `setup`.
+    let clock = shed_app::traits::system_clock();
+    let host = HostAgentClient::new(env.host_agent_socket.clone(), clock.clone());
+    // Minting is for real (non-mock) servers only — the hermetic mock is tokenless.
+    let minter: Option<Arc<dyn TokenMinter>> = env
+        .mock_base_url
+        .is_none()
+        .then(|| Arc::new(HostAgentTokenMinter::new(host.clone())) as Arc<dyn TokenMinter>);
+
     // One shared shed-core-backed Backend behind both surfaces: the WebView's
     // `invoke` commands (list_sheds/shed_action) and the harness's IPC ops
     // (sheds.*/shed.*/create.*). Hermetic in test mode (every host → the mock).
-    let backend = Arc::new(Backend::from_env_parts(
+    let backend = Arc::new(Backend::from_env_parts_with_minter(
         env.test_mode,
         env.mock_base_url.as_deref(),
         &env.config_path,
+        minter.as_ref(),
     ));
 
     tauri::Builder::default()
@@ -233,7 +334,13 @@ pub fn run() {
             terminal_presets,
             get_prefs,
             set_terminal_pref,
-            open_terminal
+            open_terminal,
+            approvals_list,
+            approval_decide,
+            activity_list,
+            gate_namespaces,
+            set_ssh_approval,
+            ssh_prefs_get
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
@@ -257,15 +364,76 @@ pub fn run() {
             let prefs: prefs::SharedPrefs = Arc::new(prefs::PrefsStore::load(prefs_path));
             // The terminal ops (preset resolution, launch, detection, the pref),
             // shared by the IPC handler + the frontend invoke commands.
-            let terminal: termctl::SharedTerminal =
-                Arc::new(termctl::TerminalCtl::new(backend.clone(), prefs, scripts_dir));
+            let terminal: termctl::SharedTerminal = Arc::new(termctl::TerminalCtl::new(
+                backend.clone(),
+                prefs,
+                scripts_dir,
+            ));
             app.manage(terminal.clone());
+
+            // The approval spine: start the host-agent connection (its event stream
+            // feeds the coordinator), pick the seam impls (test-mode fakes vs the
+            // prod stubs — the real native gate + notifier land in B6), spawn the
+            // coordinator actor + its 1s expiry tick. The audit log lives under the
+            // app data dir (redirected + hermetic in test mode).
+            let hello = HelloClientInfo {
+                name: "shed-desktop".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                pid: std::process::id() as i32,
+                capabilities: vec!["approval.ssh".to_string(), "event.stream".to_string()],
+                replay_events: 50,
+            };
+            let (notifier, gate): (NotifierRef, AuthGateRef) = if env.test_mode {
+                (Arc::new(FakeNotifier::new()), Arc::new(AlwaysApprovedGate))
+            } else {
+                // Linux: real polkit gate + libnotify notifier; other targets: the
+                // fail-closed stubs (the Tauri client's native gate is Linux-only).
+                approval::production_seams()
+            };
+            let audit = AuditStore::new(
+                app.path()
+                    .app_data_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join("audit.jsonl"),
+            );
+            let coord_clock = clock.clone();
+            // Pushes coordinator changes to the webview (app.emit) so the
+            // Approvals/Activity panes re-fetch reactively.
+            let coord_sink: shed_app::traits::EventSinkRef =
+                Arc::new(approval::TauriEventSink::new(app.handle().clone()));
+            // Start the client loop + coordinator actor + expiry tick INSIDE the
+            // Tauri (tokio) runtime — tokio::spawn needs a runtime context, and the
+            // setup hook itself has none (the same reason the IPC bind below uses
+            // block_on). The spawned tasks are detached and outlive the block.
+            let coordinator = tauri::async_runtime::block_on(async move {
+                let host_events = host.start(hello);
+                let responder: shed_app::traits::ResponderRef = Arc::new(host);
+                let coordinator = Coordinator::spawn(
+                    CoordinatorDeps {
+                        responder,
+                        notifier,
+                        gate,
+                        clock: coord_clock,
+                        sink: coord_sink,
+                        audit,
+                        ssh: SshPrefs::default(),
+                        extra_rules: Vec::new(),
+                        provider_modes: HashMap::new(),
+                    },
+                    host_events,
+                );
+                coordinator.start_expiry_tick();
+                coordinator
+            });
+            app.manage(coordinator.clone());
+
             let handler = Handler::new(
                 env.clone(),
                 app.handle().clone(),
                 ui.clone(),
                 backend.clone(),
                 terminal,
+                coordinator,
             );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.

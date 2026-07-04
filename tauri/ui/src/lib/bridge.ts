@@ -233,3 +233,128 @@ export async function createStatus(createId: string): Promise<CreateProgress | u
 export async function createCancel(createId: string): Promise<void> {
   await invoke("create_cancel", { createId });
 }
+
+/* ---- approvals + activity (Phase B) --------------------------------------- */
+
+/** A pending approval card, as the coordinator serializes it (metadata only —
+ *  never key material). `gate` drives the fingerprint affordance. */
+export type Approval = {
+  id: string;
+  namespace: string;
+  op: string;
+  shed: string;
+  server?: string;
+  detail: string;
+  expires_at: string;
+  gate: "none" | "biometrics" | "biometrics-or-password";
+  default_scope: "per-request" | "per-session" | "per-shed";
+  default_ttl: string;
+};
+
+/** An audit entry (a decision or a streamed host event) for the Activity feed. */
+export type AuditEntry = {
+  id: string;
+  ts: string;
+  source: string;
+  server?: string | null;
+  shed?: string | null;
+  ns?: string | null;
+  op?: string | null;
+  result: string;
+  detail?: string | null;
+  approval?: string | null;
+  policy?: string | null;
+};
+
+export async function fetchApprovals(): Promise<Approval[]> {
+  return (await invoke<Approval[]>("approvals_list")) ?? [];
+}
+
+/** Approve/deny a pending request. `scope`/`ttl` apply the grant on approve;
+ *  `persist` installs a per-shed always-allow/deny rule. */
+export async function decideApproval(
+  id: string,
+  decision: "approve" | "deny",
+  opts?: { scope?: string; ttl?: string; persist?: boolean },
+): Promise<void> {
+  await invoke("approval_decide", {
+    id,
+    decision,
+    scope: opts?.scope,
+    ttl: opts?.ttl,
+    persist: opts?.persist ?? false,
+  });
+}
+
+export async function fetchActivity(limit = 200): Promise<AuditEntry[]> {
+  return (await invoke<AuditEntry[]>("activity_list", { limit })) ?? [];
+}
+
+export async function fetchGateNamespaces(): Promise<string[]> {
+  return (await invoke<string[]>("gate_namespaces")) ?? [];
+}
+
+/** The current SSH approval prefs, as the coordinator serializes them. */
+export type SshPrefs = {
+  method: "biometrics-or-password" | "biometrics" | "prompt";
+  policy: string;
+  ttl: string;
+};
+
+export async function getSshApproval(): Promise<SshPrefs> {
+  return (
+    (await invoke<SshPrefs>("ssh_prefs_get")) ??
+    { method: "biometrics-or-password", policy: "time-based-allow", ttl: "8h" }
+  );
+}
+
+export async function setSshApproval(method?: string, policy?: string, ttl?: string): Promise<void> {
+  await invoke("set_ssh_approval", { method, policy, ttl });
+}
+
+/** Keep a coordinator-backed slice live: fetch on mount, then re-fetch whenever
+ *  the coordinator emits `event` (the TauriEventSink app.emit). `fetch` is held
+ *  in a ref so the subscription is set up once (a no-op in a plain browser). */
+export function useCoordinatorData<T>(event: string, fetch: () => Promise<T>, initial: T): T {
+  const [data, setData] = useState<T>(initial);
+  const fetchRef = useRef(fetch);
+  fetchRef.current = fetch;
+  const gen = useRef(0);
+  useEffect(() => {
+    if (!inTauri()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    // A generation guard (as in useUiBridge): events can fire faster than fetches
+    // resolve (e.g. disconnect then expiry), so a slower older fetch must not
+    // overwrite a newer one's rows — drop any fetch that isn't the latest.
+    const reload = () => {
+      const mine = ++gen.current;
+      void fetchRef.current().then((d) => {
+        if (!cancelled && mine === gen.current) setData(d);
+      });
+    };
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const un = await listen(event, reload);
+      if (cancelled) un();
+      else unlisten = un;
+      reload(); // initial fetch, after the listener is live
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [event]);
+  return data;
+}
+
+/** A 1s wall-clock tick for the "expires in Ns" countdown (display only — the
+ *  backend's own tick decides the actual expiry). */
+export function useNowTick(intervalMs = 1000): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(t);
+  }, [intervalMs]);
+  return now;
+}

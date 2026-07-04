@@ -26,6 +26,13 @@ import ui
 from client import GtkClient, ShedDesktop, TauriClient
 from mockserver import MockShedServer
 
+# Targets whose UI implements the credential-approval spine (mac + tauri; gtk's
+# pane is deferred). Kept in sync with `_marks._APPROVAL_TARGETS`, but defined
+# here as a plain constant — importing `_marks` at conftest load (before
+# `pytest_configure` sets $SHED_TEST_TARGET) would freeze its markers at the
+# wrong target.
+_APPROVAL_TARGETS = {"mac", "tauri"}
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fake-host-agent"))
 from fake_host_agent import FakeHostAgent  # noqa: E402
 
@@ -81,18 +88,22 @@ def _app_session(mock, target, request):
     # Short prefix: on macOS the socket lives under this dir (which is itself under
     # a long /var/folders TMPDIR), and a Unix socket path must stay under SUN_LEN.
     state_dir = Path(tempfile.mkdtemp(prefix=f"shed-e2e-{target}-"))
+    # mac + tauri gate approvals → a fake host-agent; gtk has no approval spine.
+    host_agent_socket = (
+        request.getfixturevalue("fake").socket_path if target in _APPROVAL_TARGETS else None
+    )
     if target == "mac":
-        fake = request.getfixturevalue("fake")  # only the mac session needs it
         ui.launch(
             "mac",
             mock_base_url=mock.base_url,
             config_path=CONFIG,
             state_dir=state_dir,
-            host_agent_socket=fake.socket_path,
+            host_agent_socket=host_agent_socket,
         )
     else:
         # gtk + tauri are both subprocess targets with the same launch shape.
-        ui.launch(target, mock_base_url=mock.base_url, config_path=CONFIG, state_dir=state_dir)
+        ui.launch(target, mock_base_url=mock.base_url, config_path=CONFIG,
+                  state_dir=state_dir, host_agent_socket=host_agent_socket)
         if target == "tauri":
             # The WebView mounts AFTER `identify`; wait for its first snapshot so no
             # test drives a backend op before the frontend can echo a refresh — the
@@ -109,12 +120,13 @@ def _app_session(mock, target, request):
 
 @pytest.fixture(autouse=True)
 def _reset_policy(_app_session, target):
-    """Reset to the default prompt+touchid policy before each mac test (policy
-    is app state that persists across tests). gtk has no policy engine — no-op."""
-    if target != "mac":
+    """Reset to the default prompt+native-auth policy before each approval-capable
+    test (policy is app state that persists across tests). gtk has no policy
+    engine — no-op."""
+    if target not in _APPROVAL_TARGETS:
         yield
         return
-    c = ShedDesktop(ui.socket_path("mac"))
+    c = ui.make_client(target)
     try:
         c.policy_set([{"scope": "default", "action": "prompt", "gate": "biometrics-or-password"}])
     finally:

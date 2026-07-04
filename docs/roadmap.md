@@ -32,14 +32,24 @@ so the same logic backs every client instead of being re-implemented per languag
   `tools/shedtest --target mac|gtk` harness; GTK gained single-instance handoff (an
   `app.activate` IPC op) and parallel multi-host fetches; and an adversarial coverage pass
   hardened all three surfaces. See `plans/phase-3-enhancements.md`.
-- **Next — a real cross-platform client (Tauri).** A Tauri desktop client on the same core, built to
-  **full Mac↔Linux feature parity** (except egress). Tauri's backend *is* Rust, so `shed-core` is a
-  direct dependency and one web frontend covers desktop now (mobile later); it runs on macOS (WKWebView,
-  a UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target). The GTK MVP proved the
-  architecture; this makes Linux a *real product* and, if it lands, **replaces the GTK client** as the
-  shipped Linux app. Three panel-reviewed phases in one PR — foundation → the approval spine → agents/
-  prefs/tray + release. See `plans/tauri-desktop.md`. (A **Flutter** mobile spike is superseded unless
-  Tauri's mobile target disappoints.)
+- **A real cross-platform client (Tauri) — Phase A shipped; B/C next.** A Tauri desktop client on the
+  same core, built to **full Mac↔Linux feature parity** (except egress). Tauri's backend *is* Rust, so
+  `shed-core` is a direct dependency and one web frontend covers desktop now (mobile later); it runs on
+  macOS (WKWebView, a UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target). The
+  GTK MVP proved the architecture; this makes Linux a *real product* and, if it lands, **replaces the GTK
+  client** as the shipped Linux app. Panel-reviewed, one PR per phase:
+  - **Phase A — foundation + read/lifecycle/create surfaces (shipped, PR #27 → `feat/rust-core`).** The
+    drivable IPC spine + React/Vite/Tailwind shell + WebKitGTK render gate; the shared `core/shed-app`
+    (Backend) extracted from GTK; live **Sheds** (lifecycle + create-SSE + open-in-terminal), **System**
+    (df), **Terminal** (Ghostty/Roost/Custom preview+open, cross-platform, + in-app Preferences), and the
+    **New-Shed** dialog. Verified by the tauri e2e (`--target tauri`) + the WebKitGTK gate; GTK stayed
+    green throughout. Real sheds created on a local host + a mini. See `plans/tauri-phase-a.md`.
+  - **Phase B — the approval spine on Rust (next; security-critical).** Its own plan + threat model +
+    panel before any code. See `plans/tauri-phase-b.md`.
+  - **Phase C — Agents/RC + prefs/tray + release.** After B.
+
+  See `plans/tauri-desktop.md`. (A **Flutter** mobile spike is superseded unless Tauri's mobile target
+  disappoints.)
 - **Then — a mobile client (Android-first).** A spike on the same core — Tauri if its Android target
   proves out, else Flutter — remote-only config + a phone-shaped UI; iOS is post-roadmap.
 - **Later — consolidation.** Once the clients prove the foundation: move `shed-core` into the
@@ -69,8 +79,9 @@ of key-holding Go, needs a Rust `shed/sdk` that doesn't exist yet, and would rev
   protocol codec, the domain models) is ~70% pure, key-free logic; porting it into the shared Rust core
   (`shed-app`) lets the **Tauri** Linux client show approvals too — with a backend-mediated native/PAM
   gate on Linux (biometrics stay macOS-only). This is **Phase B** of the Tauri client and gets its own
-  security-reviewed plan; the host-agent client + control-token minting land with it. See
-  `plans/tauri-desktop.md`.
+  security-reviewed plan; the host-agent client + control-token minting land with it. (Control-token
+  minting is C2 — Phase A used the static config token and 401s on a stale one, which minting fixes.)
+  See `plans/tauri-phase-b.md`.
 
 ## Broader control surface
 

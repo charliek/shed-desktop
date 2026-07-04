@@ -25,7 +25,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::runtime::Handle;
 
-use shed_app::Backend;
+use shed_app::{Backend, Coordinator};
+use shed_core::approval::{
+    ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, PolicyRule, SshApprovalPolicy,
+};
 use shed_core::models::CreateShedRequest;
 
 use crate::env::Env;
@@ -88,6 +91,9 @@ pub struct Handler {
     /// Terminal ops (preset resolution, launch, install detection, the terminal
     /// preference), shared with the frontend invoke commands.
     terminal: SharedTerminal,
+    /// The approval coordinator (the security spine): the approvals queue, policy,
+    /// grants, audit, and the host-agent decision path.
+    coordinator: Coordinator,
     /// Monotonic token stamped onto each `sheds.refresh` so it can wait for the
     /// frontend to echo it back (a synchronous refresh — see [`Self::sheds_refresh`]).
     refresh_seq: AtomicU64,
@@ -101,6 +107,7 @@ impl Handler {
         ui: SharedUi,
         backend: Arc<Backend>,
         terminal: SharedTerminal,
+        coordinator: Coordinator,
     ) -> Self {
         Self {
             env,
@@ -108,6 +115,7 @@ impl Handler {
             ui,
             backend,
             terminal,
+            coordinator,
             refresh_seq: AtomicU64::new(0),
             pid: std::process::id(),
         }
@@ -146,7 +154,9 @@ impl Handler {
             "app.screenshot" => self.screenshot().await,
             "sheds.list" => Ok(json!({ "sheds": self.backend.list_sheds().await })),
             "sheds.refresh" => self.sheds_refresh().await,
-            "dashboard.dump" => Ok(json!({ "rows": self.ui_get("sheds").unwrap_or_else(|| json!([])) })),
+            "dashboard.dump" => {
+                Ok(json!({ "rows": self.ui_get("sheds").unwrap_or_else(|| json!([])) }))
+            }
             "shed.start" => self.shed_action(params, "start").await,
             "shed.stop" => self.shed_action(params, "stop").await,
             "shed.reset" => self.shed_action(params, "reset").await,
@@ -160,6 +170,17 @@ impl Handler {
             "terminal.presets" => Ok(self.terminal_presets()),
             "prefs.get" => Ok(self.prefs_get()),
             "prefs.set_terminal" => self.prefs_set_terminal(params),
+            // -- approvals (the security spine) --
+            "approvals.list" => self.approvals_list().await,
+            "approval.decide" => self.approval_decide(params).await,
+            "activity.list" => self.activity_list(params).await,
+            "activity.log_path" => self.activity_log_path().await,
+            "policy.set" => self.policy_set(params).await,
+            "policy.list" => self.policy_list().await,
+            "notifications.list" => self.notifications_list().await,
+            "notification.invoke" => self.notification_invoke(params).await,
+            "notification.open" => self.notification_open(),
+            "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
@@ -169,14 +190,20 @@ impl Handler {
     /// always acks so the harness can drive navigation.
     fn navigate(&self, params: &Value) -> Result<Value, (String, String)> {
         let pane = params.get("pane").and_then(Value::as_str).unwrap_or("");
-        if !matches!(pane, "sheds" | "approvals" | "agents" | "activity" | "system") {
+        if !matches!(
+            pane,
+            "sheds" | "approvals" | "agents" | "activity" | "system"
+        ) {
             return Err(err("bad_request", format!("unknown pane: {pane:?}")));
         }
         // The frontend's `navigate` listener attaches asynchronously; the snapshot
         // (hence `pane`) is reported only once it's live, so a navigate before then
         // would be lost. Fail fast so a caller retries (the harness waits first).
         if self.ui_get("pane").is_none() {
-            return Err(err("frontend_not_ready", "frontend has not reported yet; retry"));
+            return Err(err(
+                "frontend_not_ready",
+                "frontend has not reported yet; retry",
+            ));
         }
         let _ = self.app.emit("navigate", json!({ "pane": pane }));
         Ok(json!({}))
@@ -192,11 +219,7 @@ impl Handler {
         let token = self.refresh_seq.fetch_add(1, Ordering::SeqCst) + 1;
         // snapshot present ⟹ the frontend attached BOTH listeners then reported
         // (same readiness invariant as navigate), so the `refresh` emit is heard.
-        let has_frontend = self
-            .ui
-            .lock()
-            .ok()
-            .is_some_and(|s| s.snapshot.is_some());
+        let has_frontend = self.ui.lock().ok().is_some_and(|s| s.snapshot.is_some());
         let _ = self.app.emit("refresh", json!({ "token": token }));
         if !has_frontend {
             return Ok(json!({}));
@@ -276,7 +299,10 @@ impl Handler {
             shed,
             params.get("session").and_then(Value::as_str),
             params.get("preset").and_then(Value::as_str),
-            params.get("template").and_then(Value::as_str).map(str::to_string),
+            params
+                .get("template")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         )
     }
 
@@ -296,7 +322,10 @@ impl Handler {
             shed,
             params.get("session").and_then(Value::as_str),
             params.get("preset").and_then(Value::as_str),
-            params.get("template").and_then(Value::as_str).map(str::to_string),
+            params
+                .get("template")
+                .and_then(Value::as_str)
+                .map(str::to_string),
         )
     }
 
@@ -312,8 +341,129 @@ impl Handler {
 
     /// `prefs.set_terminal {preset, template?}` → persist the terminal preference.
     fn prefs_set_terminal(&self, params: &Value) -> Result<Value, (String, String)> {
-        let template = params.get("template").and_then(Value::as_str).map(str::to_string);
-        self.terminal.prefs_set_terminal(req_str(params, "preset")?, template)
+        let template = params
+            .get("template")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        self.terminal
+            .prefs_set_terminal(req_str(params, "preset")?, template)
+    }
+
+    // -- approvals (the security spine; the harness drives the full matrix) ----
+
+    /// `approvals.list` → the pending approval cards (each with its gate + the SSH
+    /// scope/TTL defaults), soonest-to-expire first.
+    async fn approvals_list(&self) -> Result<Value, (String, String)> {
+        Ok(json!({ "approvals": self.coordinator.approvals_list().await }))
+    }
+
+    /// `approval.decide {id, decision, scope?, ttl?, persist?}` → run the user
+    /// decision through the coordinator's two-phase gate.
+    async fn approval_decide(&self, params: &Value) -> Result<Value, (String, String)> {
+        #[derive(serde::Deserialize)]
+        struct P {
+            id: String,
+            decision: ApprovalDecision,
+            scope: Option<ApprovalScope>,
+            ttl: Option<String>,
+            #[serde(default)]
+            persist: bool,
+        }
+        let p: P = serde_json::from_value(params.clone())
+            .map_err(|e| err("bad_request", e.to_string()))?;
+        self.coordinator
+            .decide_approval(
+                p.id,
+                ApprovalChoice {
+                    decision: p.decision,
+                    scope: p.scope,
+                    ttl: p.ttl,
+                    persist: p.persist,
+                },
+            )
+            .await;
+        Ok(json!({}))
+    }
+
+    /// `activity.list {limit?}` → the merged audit feed, most-recent-first.
+    async fn activity_list(&self, params: &Value) -> Result<Value, (String, String)> {
+        let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
+        Ok(json!({ "entries": self.coordinator.activity_list(limit).await }))
+    }
+
+    /// `activity.log_path` → the audit JSONL path (the "reveal in files" action).
+    async fn activity_log_path(&self) -> Result<Value, (String, String)> {
+        Ok(json!({ "path": self.coordinator.audit_log_path().await }))
+    }
+
+    /// `policy.set {rules}` → replace the policy engine's rules. TEST-MODE ONLY —
+    /// installing an auto-approve policy from a driver is a privilege (F8).
+    async fn policy_set(&self, params: &Value) -> Result<Value, (String, String)> {
+        if !self.env.test_mode {
+            return Err(err("not_enabled", "policy.set requires test mode"));
+        }
+        #[derive(serde::Deserialize)]
+        struct P {
+            rules: Vec<PolicyRule>,
+        }
+        let p: P = serde_json::from_value(params.clone())
+            .map_err(|e| err("bad_request", e.to_string()))?;
+        self.coordinator.set_policy_rules(p.rules).await;
+        Ok(json!({}))
+    }
+
+    /// `policy.list` → the current policy rules.
+    async fn policy_list(&self) -> Result<Value, (String, String)> {
+        Ok(json!({ "rules": self.coordinator.policy_list().await }))
+    }
+
+    /// `notifications.list` → the posted approval notifications (the test presenter
+    /// records them; the prod notifier posts natively — B6 — and lists none).
+    async fn notifications_list(&self) -> Result<Value, (String, String)> {
+        Ok(json!({ "notifications": self.coordinator.notifications_list().await }))
+    }
+
+    /// `notification.invoke {id, action}` → drive an Approve/Deny from a posted
+    /// notification (the test presenter).
+    async fn notification_invoke(&self, params: &Value) -> Result<Value, (String, String)> {
+        let id = req_str(params, "id")?.to_string();
+        let action: ApprovalDecision =
+            serde_json::from_value(params.get("action").cloned().unwrap_or(Value::Null))
+                .map_err(|e| err("bad_request", format!("action: {e}")))?;
+        if self
+            .coordinator
+            .notification_invoke(id.clone(), action)
+            .await
+        {
+            Ok(json!({}))
+        } else {
+            Err(err("not_found", format!("no posted notification {id}")))
+        }
+    }
+
+    /// `notification.open` → the banner-body tap: raise the window on the Approvals
+    /// pane (mirrors the mac `onOpen`).
+    fn notification_open(&self) -> Result<Value, (String, String)> {
+        present_main_window(&self.app);
+        let _ = self.app.emit("navigate", json!({ "pane": "approvals" }));
+        Ok(json!({}))
+    }
+
+    /// `ui.set_ssh_approval {method?, policy?, ttl?}` → apply SSH approval prefs +
+    /// re-evaluate the pending queue (the same path as the UI Preferences view).
+    async fn set_ssh_approval(&self, params: &Value) -> Result<Value, (String, String)> {
+        #[derive(serde::Deserialize)]
+        struct P {
+            method: Option<ApprovalMethod>,
+            policy: Option<SshApprovalPolicy>,
+            ttl: Option<String>,
+        }
+        let p: P = serde_json::from_value(params.clone())
+            .map_err(|e| err("bad_request", e.to_string()))?;
+        self.coordinator
+            .set_ssh_approval(p.method, p.policy, p.ttl)
+            .await;
+        Ok(json!({}))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),
@@ -473,6 +623,7 @@ mod tests {
             mock_base_url: mock.map(str::to_string),
             config_path: PathBuf::new(),
             socket_path: PathBuf::from("/run/user/0/shed-tauri/shed-tauri.sock"),
+            host_agent_socket: PathBuf::from("/run/user/0/shed/host-agent.sock"),
         }
     }
 
