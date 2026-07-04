@@ -72,11 +72,22 @@ class FakeHostAgent:
         """Close the live connection but keep the listener up, so the client's
         backoff-reconnect is re-accepted. Drives the fail-closed-on-disconnect
         (F3) + reconnect scenarios. Use `hello_count`/`wait_hello_count` to
-        observe the client re-handshake."""
+        observe the client re-handshake.
+
+        `shutdown(SHUT_RDWR)` BEFORE `close()` is load-bearing: `_read_loop` is
+        blocked in `recv()` on this fd, and on Linux a bare `close()` from another
+        thread does NOT wake that recv or FIN the peer — so the client keeps a
+        "live" writer for its whole request-TTL and only notices the drop when it
+        next writes (a real disconnect the harness must model faithfully). shutdown
+        delivers the FIN synchronously, so the client's read sees EOF at once."""
         with self._lock:
             conn = self._conn
             self._conn = None
         if conn:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 conn.close()
             except OSError:

@@ -127,3 +127,26 @@ pub trait Responder: Send + Sync {
 }
 
 pub type ResponderRef = Arc<dyn Responder>;
+
+// ---- EventSink (push coordinator-state changes to the UI) ----
+
+/// What changed in the coordinator, so a UI can re-fetch just that slice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoordinatorEvent {
+    /// The pending-approvals queue changed (a new prompt, a decision, an expiry,
+    /// a disconnect drop, a policy re-evaluation).
+    Approvals,
+    /// A new audit entry (a decision or a streamed host event).
+    Activity,
+    /// The host-agent connection came up — the delegated `gate_namespaces` are
+    /// available (drives which approval-prefs sections show).
+    Connected,
+}
+
+/// Pushes coordinator-state changes to the platform UI (Tauri: `app.emit`; GTK/
+/// tests: no-op). Lets the webview re-fetch reactively instead of polling.
+pub trait EventSink: Send + Sync {
+    fn emit(&self, event: CoordinatorEvent);
+}
+
+pub type EventSinkRef = Arc<dyn EventSink>;

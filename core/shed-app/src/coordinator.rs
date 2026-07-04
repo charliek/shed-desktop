@@ -17,6 +17,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+use serde::Serialize;
 use tokio::sync::{mpsc, oneshot};
 
 use shed_core::approval::protocol::HostAgentInbound;
@@ -30,7 +31,8 @@ use shed_core::approval::{
 use crate::audit_store::AuditStore;
 use crate::host_agent::HostAgentEvent;
 use crate::traits::{
-    AuthGateRef, AuthOutcome, AuthPrompt, ClockRef, NotifierRef, PostedNotification, ResponderRef,
+    AuthGateRef, AuthOutcome, AuthPrompt, ClockRef, CoordinatorEvent, EventSinkRef, NotifierRef,
+    PostedNotification, ResponderRef,
 };
 
 /// Fallback grant duration (seconds) if even the default TTL can't parse.
@@ -56,7 +58,8 @@ enum GrantExpiry {
 }
 
 /// The SSH approval preferences the coordinator rebuilds its policy from.
-#[derive(Clone)]
+/// Serializes to the wire shape (`{method, policy, ttl}`) the prefs UI reads back.
+#[derive(Clone, Serialize)]
 pub struct SshPrefs {
     pub method: ApprovalMethod,
     pub policy: SshApprovalPolicy,
@@ -80,6 +83,7 @@ pub struct CoordinatorDeps {
     pub notifier: NotifierRef,
     pub gate: AuthGateRef,
     pub clock: ClockRef,
+    pub sink: EventSinkRef,
     pub audit: AuditStore,
     pub ssh: SshPrefs,
     pub extra_rules: Vec<PolicyRule>,
@@ -128,6 +132,7 @@ enum Command {
     },
     AuditLogPath(oneshot::Sender<String>),
     GateNamespaces(oneshot::Sender<Vec<String>>),
+    SshPrefs(oneshot::Sender<SshPrefs>),
 }
 
 /// A cloneable handle to the coordinator actor. Every method sends a command and
@@ -160,6 +165,7 @@ impl Coordinator {
             notifier: deps.notifier,
             gate: deps.gate,
             clock: deps.clock,
+            sink: deps.sink,
             self_tx: tx.clone(),
         };
         state.rebuild_policy(); // initial policy from prefs + extra rules
@@ -303,6 +309,14 @@ impl Coordinator {
             .unwrap_or_default()
     }
 
+    /// The current SSH approval prefs (drives the Preferences dropdown). Falls back
+    /// to the default if the actor is gone.
+    pub async fn ssh_prefs(&self) -> SshPrefs {
+        self.request(Command::SshPrefs)
+            .await
+            .unwrap_or_default()
+    }
+
     async fn request<T>(&self, make: impl FnOnce(oneshot::Sender<T>) -> Command) -> Option<T> {
         let (reply, rx) = oneshot::channel();
         if self.tx.send(make(reply)).is_ok() {
@@ -327,6 +341,7 @@ struct State {
     notifier: NotifierRef,
     gate: AuthGateRef,
     clock: ClockRef,
+    sink: EventSinkRef,
     self_tx: mpsc::UnboundedSender<Command>,
 }
 
@@ -407,6 +422,9 @@ async fn run(mut state: State, mut rx: mpsc::UnboundedReceiver<Command>) {
             Command::GateNamespaces(reply) => {
                 let _ = reply.send(state.gate_namespaces.clone());
             }
+            Command::SshPrefs(reply) => {
+                let _ = reply.send(state.ssh.clone());
+            }
         }
     }
 }
@@ -414,7 +432,10 @@ async fn run(mut state: State, mut rx: mpsc::UnboundedReceiver<Command>) {
 impl State {
     fn handle_host_event(&mut self, ev: HostAgentEvent) {
         match ev {
-            HostAgentEvent::Connected(ack) => self.gate_namespaces = ack.gate_namespaces,
+            HostAgentEvent::Connected(ack) => {
+                self.gate_namespaces = ack.gate_namespaces;
+                self.sink.emit(CoordinatorEvent::Connected);
+            }
             HostAgentEvent::Disconnected => {
                 // F3: in-flight requests are dead (the agent fails closed on its
                 // side); drop them so the user can't act on / persist a rule from a
@@ -424,6 +445,12 @@ impl State {
                     self.notifier.withdraw(id);
                 }
                 self.pending.clear();
+                self.sink.emit(CoordinatorEvent::Approvals);
+                // The delegation is gone until we re-handshake; clear it (and signal
+                // the down-edge) so the UI's "host agent · connected" indicator, which
+                // derives liveness from a non-empty namespace set, flips back.
+                self.gate_namespaces.clear();
+                self.sink.emit(CoordinatorEvent::Connected);
             }
             HostAgentEvent::Frame(frame) => match *frame {
                 HostAgentInbound::ApprovalRequest(req) => self.handle_approval_request(req),
@@ -431,6 +458,7 @@ impl State {
                     let entry =
                         AuditEntry::from_event_frame(evt, new_id(), self.clock.now_iso8601());
                     self.audit.append(entry);
+                    self.sink.emit(CoordinatorEvent::Activity);
                 }
                 _ => {}
             },
@@ -465,6 +493,7 @@ impl State {
                         gate: decision.gate,
                     },
                 );
+                self.sink.emit(CoordinatorEvent::Approvals);
             }
         }
     }
@@ -618,6 +647,7 @@ impl State {
         );
         self.pending.remove(id);
         self.notifier.withdraw(id);
+        self.sink.emit(CoordinatorEvent::Approvals);
     }
 
     fn expire_pending(&mut self) {
@@ -629,7 +659,8 @@ impl State {
             .filter(|r| self.expired_by_tick(r, now))
             .collect();
         for req in &expired {
-            self.respond_and_audit(
+            // Batch site: emit Activity ONCE below, not per expired item.
+            self.record_and_respond(
                 req,
                 ApprovalDecision::Deny,
                 DecidedBy::Timeout,
@@ -640,9 +671,28 @@ impl State {
             self.pending.remove(&req.id);
             self.notifier.withdraw(&req.id);
         }
+        if !expired.is_empty() {
+            self.sink.emit(CoordinatorEvent::Activity);
+            self.sink.emit(CoordinatorEvent::Approvals);
+        }
     }
 
     fn respond_and_audit(
+        &mut self,
+        req: &ApprovalRequest,
+        decision: ApprovalDecision,
+        decided_by: DecidedBy,
+        policy: &str,
+        scope: &str,
+        ttl: &str,
+    ) {
+        self.record_and_respond(req, decision, decided_by, policy, scope, ttl);
+        self.sink.emit(CoordinatorEvent::Activity);
+    }
+
+    /// Audit + transmit a decision WITHOUT emitting — the caller owns the emit, so
+    /// a batch (the expiry sweep) coalesces to a single `Activity` event.
+    fn record_and_respond(
         &mut self,
         req: &ApprovalRequest,
         decision: ApprovalDecision,
@@ -685,12 +735,19 @@ impl State {
     /// a card queued under an old prompting policy must resolve now rather than
     /// linger under a non-prompting policy. Prompts stay put.
     fn reevaluate_pending(&mut self) {
+        let now = self.clock.now_unix();
         let grants = self.valid_grants();
         let ids: Vec<String> = self.pending.keys().cloned().collect();
         for id in ids {
             let Some(item) = self.pending.get(&id).cloned() else {
                 continue;
             };
+            // F4: never emit a policy decision for an already-expired request — a
+            // policy flip (e.g. to AlwaysAllow) in the sub-1s window before the tick
+            // sweeps must NOT late-approve it. Leave it pending for the tick to deny.
+            if self.expired_by_tick(&item.request, now) {
+                continue;
+            }
             let decision = self.engine.decide(&item.request, &grants);
             if decision.action == PolicyAction::Prompt {
                 // Still a prompt, but the gate may have changed (the method was
@@ -717,6 +774,8 @@ impl State {
             self.pending.remove(&id);
             self.notifier.withdraw(&id);
         }
+        // A method change can refresh a pending gate + resolve prompts.
+        self.sink.emit(CoordinatorEvent::Approvals);
     }
 
     fn set_ssh_approval(
@@ -856,7 +915,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fakes::{AlwaysApprovedGate, FakeNotifier};
+    use crate::fakes::{AlwaysApprovedGate, FakeNotifier, NoopEventSink};
     use crate::traits::{AuthGate, Clock, Responder};
     use std::sync::atomic::{AtomicI64, Ordering};
     use std::sync::{Arc, Mutex};
@@ -1012,6 +1071,7 @@ mod tests {
                 notifier: Arc::new(FakeNotifier::new()),
                 gate,
                 clock,
+                sink: Arc::new(NoopEventSink),
                 audit: temp_audit(),
                 ssh: SshPrefs::default(),
                 extra_rules: vec![],
@@ -1151,6 +1211,36 @@ mod tests {
         assert_eq!(h.responder.calls()[0].decision, ApprovalDecision::Deny);
         assert_eq!(h.responder.calls()[0].decided_by, DecidedBy::Timeout);
         assert!(h.coord.approvals_list().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn policy_flip_does_not_approve_an_expired_request() {
+        // F4: a policy flip to AlwaysAllow in the sub-1s window after expiry but
+        // before the tick sweeps must NOT late-approve the pending request — it
+        // stays queued for the tick to deny (fail-closed).
+        let h = Harness::new(1_000);
+        h.coord
+            .set_ssh_approval(None, Some(SshApprovalPolicy::AlwaysAsk), None)
+            .await;
+        h.inject(ssh_req("r1", "s", 1_005));
+        assert!(h.wait_queued(1).await);
+        h.clock.set(1_006); // past expiry, tick hasn't swept
+        h.coord
+            .set_ssh_approval(None, Some(SshApprovalPolicy::AlwaysAllow), None)
+            .await; // → reevaluate_pending runs on the expired r1
+        assert!(
+            h.responder
+                .calls()
+                .iter()
+                .all(|c| c.decision != ApprovalDecision::Approve),
+            "an expired request was policy-approved"
+        );
+        assert!(!h.coord.approvals_list().await.is_empty(), "r1 should linger");
+        // The tick then denies it.
+        h.coord.expire_now().await;
+        assert!(h.wait_calls(1).await);
+        assert_eq!(h.responder.calls()[0].decision, ApprovalDecision::Deny);
+        assert_eq!(h.responder.calls()[0].decided_by, DecidedBy::Timeout);
     }
 
     #[tokio::test]
@@ -1450,13 +1540,26 @@ mod tests {
                 accepted: true,
             }))
             .unwrap();
+        let mut published = false;
         for _ in 0..300 {
             if h.coord.gate_namespaces().await == vec!["ssh-agent".to_string()] {
+                published = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        assert!(published, "gate_namespaces not published on connect");
+
+        // Down-edge: a disconnect clears the delegation, so the UI's "connected"
+        // indicator (derived from a non-empty namespace set) flips back.
+        h.events.send(HostAgentEvent::Disconnected).unwrap();
+        for _ in 0..300 {
+            if h.coord.gate_namespaces().await.is_empty() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
-        panic!("gate_namespaces not published");
+        panic!("gate_namespaces not cleared on disconnect");
     }
 
     #[tokio::test]

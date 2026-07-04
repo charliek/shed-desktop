@@ -26,6 +26,9 @@ use shed_app::{
     AlwaysApprovedGate, AuditStore, Backend, Coordinator, CoordinatorDeps, FakeNotifier,
     HelloClientInfo, HostAgentClient, HostAgentTokenMinter, SshPrefs,
 };
+use shed_core::approval::{
+    ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, SshApprovalPolicy,
+};
 use shed_core::models::CreateShedRequest;
 use shed_core::token::TokenMinter;
 use single_instance::AcquireError;
@@ -188,6 +191,80 @@ fn open_terminal(
         .map_err(|(_code, msg)| msg)
 }
 
+// -- approvals (the frontend Approvals/Activity panes + approval prefs) --------
+
+/// The pending approval cards (each with gate + scope/TTL defaults). The pane
+/// re-fetches on the `approvals-changed` event (see TauriEventSink).
+#[tauri::command]
+async fn approvals_list(
+    coordinator: tauri::State<'_, Coordinator>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.approvals_list().await))
+}
+
+/// Approve/deny a pending request (the card's buttons). Tauri deserializes the
+/// enum args from their wire strings ("approve"|"deny", "per-request"|…) via serde.
+#[tauri::command]
+async fn approval_decide(
+    coordinator: tauri::State<'_, Coordinator>,
+    id: String,
+    decision: ApprovalDecision,
+    scope: Option<ApprovalScope>,
+    ttl: Option<String>,
+    persist: Option<bool>,
+) -> Result<(), String> {
+    coordinator
+        .decide_approval(
+            id,
+            ApprovalChoice {
+                decision,
+                scope,
+                ttl,
+                persist: persist.unwrap_or(false),
+            },
+        )
+        .await;
+    Ok(())
+}
+
+/// The merged audit feed (most-recent-first). Re-fetched on `activity-changed`.
+#[tauri::command]
+async fn activity_list(
+    coordinator: tauri::State<'_, Coordinator>,
+    limit: Option<usize>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.activity_list(limit.unwrap_or(200)).await))
+}
+
+/// The namespaces the host agent delegates to us (drives which approval-prefs
+/// sections show + the "host agent · connected" indicator).
+#[tauri::command]
+async fn gate_namespaces(coordinator: tauri::State<'_, Coordinator>) -> Result<Vec<String>, String> {
+    Ok(coordinator.gate_namespaces().await)
+}
+
+/// Apply SSH approval prefs (method/policy/TTL) + re-evaluate the pending queue.
+/// Tauri deserializes the enum args from their wire strings via serde.
+#[tauri::command]
+async fn set_ssh_approval(
+    coordinator: tauri::State<'_, Coordinator>,
+    method: Option<ApprovalMethod>,
+    policy: Option<SshApprovalPolicy>,
+    ttl: Option<String>,
+) -> Result<(), String> {
+    coordinator.set_ssh_approval(method, policy, ttl).await;
+    Ok(())
+}
+
+/// The current SSH approval prefs (`{method, policy, ttl}`) — drives the
+/// Preferences dropdown so it reflects the running coordinator, not a guess.
+#[tauri::command]
+async fn ssh_prefs_get(
+    coordinator: tauri::State<'_, Coordinator>,
+) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!(coordinator.ssh_prefs().await))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -257,7 +334,13 @@ pub fn run() {
             terminal_presets,
             get_prefs,
             set_terminal_pref,
-            open_terminal
+            open_terminal,
+            approvals_list,
+            approval_decide,
+            activity_list,
+            gate_namespaces,
+            set_ssh_approval,
+            ssh_prefs_get
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
@@ -315,6 +398,10 @@ pub fn run() {
                     .join("audit.jsonl"),
             );
             let coord_clock = clock.clone();
+            // Pushes coordinator changes to the webview (app.emit) so the
+            // Approvals/Activity panes re-fetch reactively.
+            let coord_sink: shed_app::traits::EventSinkRef =
+                Arc::new(approval::TauriEventSink::new(app.handle().clone()));
             // Start the client loop + coordinator actor + expiry tick INSIDE the
             // Tauri (tokio) runtime — tokio::spawn needs a runtime context, and the
             // setup hook itself has none (the same reason the IPC bind below uses
@@ -328,6 +415,7 @@ pub fn run() {
                         notifier,
                         gate,
                         clock: coord_clock,
+                        sink: coord_sink,
                         audit,
                         ssh: SshPrefs::default(),
                         extra_rules: Vec::new(),

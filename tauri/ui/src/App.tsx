@@ -4,7 +4,7 @@
    `ui.navigate` op (via the `navigate` Tauri event); the rendered pane + a
    computed-style sample are reported back to Rust (useUiBridge) so the harness can
    assert them over IPC. */
-import { createElement, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Boxes, Shield, Sparkles, ScrollText, HardDrive, Box, Plus,
   Terminal, RotateCw, Square, Play, Trash2, RefreshCw, ExternalLink, Key,
@@ -15,23 +15,38 @@ import {
   useUiBridge, shedAction, fetchSystemDf, openTerminal,
   fetchTerminalPresets, getPrefs, setTerminalPref,
   createStart, createStatus, createCancel, fetchHosts,
+  fetchApprovals, decideApproval, fetchActivity, fetchGateNamespaces,
+  getSshApproval, setSshApproval,
+  useCoordinatorData, useNowTick,
   type Pane, type Shed, type HostDiskUsage, type TerminalPresetInfo,
-  type Modal, type CreateProgress,
+  type Modal, type CreateProgress, type Approval, type AuditEntry, type SshPrefs,
 } from "@/lib/bridge";
 
 /* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
 const SEED_AGENTS = [
   { id: "g1", shed: "localmac-dev/ztest", name: "claude-test", kind: "claude-rc", status: "ready", sub: "tmux rc-dqtzeu · /home/shed · made by shed" },
 ];
-const SEED_ACTIVITY = [
-  ["01:21:01", "sign · localmac-dev/ztest · ssh-ed25519", "shed-desktop"],
-  ["01:21:01", "sign · localmac-dev/ztest · SSH sign request", "shed-desktop"],
-  ["01:21:01", "list · localmac-dev/ztest · 1 keys", null],
-  ["01:20:50", "sign · localmac-dev/ztest · ssh-ed25519", "shed-desktop"],
-].map((r, i) => ({ id: "a" + i, time: r[0] as string, detail: r[1] as string, gate: r[2] as string | null }));
-const SEED_APPROVALS = [
-  { id: "ap1", op: "sign", target: "localmac-dev/ztest", desc: "SSH sign request", expires: 18 },
-];
+/** "server/shed" when multi-server, else the shed name. */
+function qualifiedShed(server: string | null | undefined, shed: string | null | undefined): string {
+  return server ? `${server}/${shed ?? ""}` : (shed ?? "");
+}
+/** HH:mm:ss of an ISO/flexible timestamp (best-effort; the raw string on a miss). */
+function shortTime(ts: string): string {
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime())
+    ? ts
+    : d.toLocaleTimeString(undefined, { hour12: false });
+}
+/** The one-line activity detail: `op · server/shed · detail`. */
+function activityDetail(e: AuditEntry): string {
+  return [e.op, qualifiedShed(e.server, e.shed), e.detail].filter(Boolean).join(" · ");
+}
+/** The hint under an approval card, reflecting the grant its Approve applies. */
+function approveHint(scope: Approval["default_scope"]): string {
+  if (scope === "per-session") return "Approve grants for this session";
+  if (scope === "per-shed") return "Approve grants for this shed";
+  return "Approve allows this request only";
+}
 const NAV: [Pane, string, typeof Box][] = [
   ["sheds", "Sheds", Boxes],
   ["approvals", "Approvals", Shield],
@@ -152,15 +167,18 @@ function formatBytes(n: number): string {
 }
 
 /* ---- panes ---------------------------------------------------------------- */
+/** The muted "nothing here yet" card shared by the empty panes. */
+function EmptyCard({ children }: { children: React.ReactNode }) {
+  return <div className={cn(card, "px-5 py-8 text-center text-[14px] text-shed-text-muted")}>{children}</div>;
+}
+
 function ShedsPane({ sheds, refresh, onNew }: { sheds: Shed[]; refresh: () => void; onNew: () => void }) {
   const act = (action: string, s: Shed) => void shedAction(action, s.name, s.host).then(refresh);
   return (
     <div>
       <PageHead title="Sheds" right={<HeadAction icon={Plus} label="New shed" onClick={onNew} />} />
       {sheds.length === 0 ? (
-        <div className={cn(card, "px-5 py-8 text-center text-[14px] text-shed-text-muted")}>
-          No sheds on the configured hosts.
-        </div>
+        <EmptyCard>No sheds on the configured hosts.</EmptyCard>
       ) : (
         groupByHost(sheds).map(([host, rows]) => (
           <div key={host} className="mb-5 last:mb-0">
@@ -204,7 +222,8 @@ function ShedsPane({ sheds, refresh, onNew }: { sheds: Shed[]; refresh: () => vo
   );
 }
 
-function ApprovalsPane() {
+function ApprovalsPane({ approvals }: { approvals: Approval[] }) {
+  const now = useNowTick();
   return (
     <div>
       <PageHead
@@ -212,31 +231,46 @@ function ApprovalsPane() {
         sub="Requests routed from shed-host-agent when its approval mode is shed-desktop."
         right={<span className="text-[14px] text-shed-text-muted">gate: shed-desktop</span>}
       />
-      <div className="flex flex-col gap-3">
-        {SEED_APPROVALS.map((a) => (
-          <div key={a.id} className={cn(card, "p-5")} style={{ animation: "shed-in .25s ease" }}>
-            <div className="flex items-start gap-4">
-              <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl" style={{ background: "var(--shed-tag-vz-bg)" }}>
-                <Key size={20} style={{ color: "var(--shed-tag-vz-text)" }} />
+      {approvals.length === 0 ? (
+        <EmptyCard>No pending approvals.</EmptyCard>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {approvals.map((a) => {
+            const t = Date.parse(a.expires_at);
+            // A malformed/absent expiry parses to NaN; the backend treats it as
+            // already-expired (fail-closed), so show 0s rather than "NaNs".
+            const secs = Number.isFinite(t) ? Math.max(0, Math.round((t - now) / 1000)) : 0;
+            const biometric = a.gate !== "none";
+            return (
+              <div key={a.id} className={cn(card, "p-5")} style={{ animation: "shed-in .25s ease" }}>
+                <div className="flex items-start gap-4">
+                  <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl" style={{ background: "var(--shed-tag-vz-bg)" }}>
+                    <Key size={20} style={{ color: "var(--shed-tag-vz-text)" }} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[18px] font-bold text-shed-text">{a.namespace} · {a.op}</div>
+                    <div className="mt-1.5 text-[14px] leading-snug text-shed-text-muted">shed {qualifiedShed(a.server, a.shed)} · {a.detail}</div>
+                  </div>
+                  <span className="flex-none text-[14px] font-semibold" style={{ color: "var(--shed-attention)" }}>expires in {secs}s</span>
+                </div>
+                <div className="mt-[18px] flex items-center">
+                  <span className="flex-1 text-[13px] text-shed-text-muted">{approveHint(a.default_scope)}</span>
+                  <div className="flex gap-2.5">
+                    <button onClick={() => void decideApproval(a.id, "deny")} className="hbtn rounded-[10px] px-5 py-[11px] text-[15px] font-semibold" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>Deny</button>
+                    <button
+                      onClick={() => void decideApproval(a.id, "approve", { scope: a.default_scope, ttl: a.default_ttl })}
+                      className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold"
+                      style={{ background: "var(--shed-approve)", color: "var(--shed-approve-fg)" }}
+                    >
+                      {biometric && <Fingerprint size={18} />} Approve
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="text-[18px] font-bold text-shed-text">ssh-agent · {a.op}</div>
-                <div className="mt-1.5 text-[14px] leading-snug text-shed-text-muted">shed {a.target} · {a.desc}</div>
-              </div>
-              <span className="flex-none text-[14px] font-semibold" style={{ color: "var(--shed-attention)" }}>expires in {a.expires}s</span>
-            </div>
-            <div className="mt-[18px] flex items-center">
-              <span className="flex-1 text-[13px] text-shed-text-muted">Approve allows this request only</span>
-              <div className="flex gap-2.5">
-                <button className="hbtn rounded-[10px] px-5 py-[11px] text-[15px] font-semibold" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>Deny</button>
-                <button className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold" style={{ background: "var(--shed-approve)", color: "var(--shed-approve-fg)" }}>
-                  <Fingerprint size={18} /> Approve (Touch ID)
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -273,26 +307,33 @@ function AgentsPane() {
 }
 
 function ActivityPane() {
+  const activity = useCoordinatorData<AuditEntry[]>("activity-changed", fetchActivity, []);
   return (
     <div>
       <PageHead
         title="Activity"
         sub="Host-agent credential audit + shed-desktop decisions, newest first."
-        right={<HeadAction icon={ScrollText} label="Reveal log" />}
       />
-      <div className={cn(card, "overflow-hidden")}>
-        {SEED_ACTIVITY.map((r, i) => (
-          <div key={r.id} className={cn("row-hover flex items-center gap-3.5 px-[18px] py-[13px]", i && "border-t border-shed-border")}>
-            <span className="w-[70px] flex-none font-mono text-[13px] text-shed-text-muted">{r.time}</span>
-            <span className="flex-none rounded-md px-1.5 py-1 font-mono text-[11px] font-semibold" style={{ background: "var(--shed-agent-pill-bg)", color: "var(--shed-agent-pill-text)" }}>ssh-agent</span>
-            <span className="min-w-0 flex-1 truncate text-[14px] text-shed-text-secondary">{r.detail}</span>
-            <span className="flex flex-none items-center gap-2">
-              <span className="text-[13px] font-semibold" style={{ color: "var(--shed-ok)" }}>ok</span>
-              {r.gate && <span className="text-[12px] text-shed-text-muted">{r.gate}</span>}
-            </span>
-          </div>
-        ))}
-      </div>
+      {activity.length === 0 ? (
+        <EmptyCard>No activity yet.</EmptyCard>
+      ) : (
+        <div className={cn(card, "overflow-hidden")}>
+          {activity.map((e, i) => {
+            const ok = e.result === "ok";
+            return (
+              <div key={`${e.id}-${i}`} className={cn("row-hover flex items-center gap-3.5 px-[18px] py-[13px]", i && "border-t border-shed-border")}>
+                <span className="w-[70px] flex-none font-mono text-[13px] text-shed-text-muted">{shortTime(e.ts)}</span>
+                {e.ns && <span className="flex-none rounded-md px-1.5 py-1 font-mono text-[11px] font-semibold" style={{ background: "var(--shed-agent-pill-bg)", color: "var(--shed-agent-pill-text)" }}>{e.ns}</span>}
+                <span className="min-w-0 flex-1 truncate text-[14px] text-shed-text-secondary">{activityDetail(e)}</span>
+                <span className="flex flex-none items-center gap-2">
+                  <span className="text-[13px] font-semibold" style={{ color: ok ? "var(--shed-ok)" : "var(--shed-danger)" }}>{e.result}</span>
+                  {e.approval && e.approval !== "none" && <span className="text-[12px] text-shed-text-muted">{e.approval}</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
@@ -356,10 +397,19 @@ function SystemPane() {
 }
 
 /* ---- preferences (in-app modal; the tray is Phase C) ---------------------- */
+// How an SSH-key approval is confirmed. On Linux "Authenticate" routes through
+// polkit (B6); "Prompt only" needs no gate — a plain Approve button. (The
+// biometrics-only method is macOS-specific, so it's not offered here.)
+const APPROVAL_METHODS: { id: SshPrefs["method"]; label: string; detail: string }[] = [
+  { id: "biometrics-or-password", label: "Authenticate", detail: "Confirm with your login password." },
+  { id: "prompt", label: "Prompt only", detail: "A plain Approve button — no password." },
+];
+
 function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [presets, setPresets] = useState<TerminalPresetInfo[]>([]);
   const [preset, setPreset] = useState("custom");
   const [template, setTemplate] = useState("");
+  const [method, setMethod] = useState<SshPrefs["method"]>("biometrics-or-password");
 
   useEffect(() => {
     void fetchTerminalPresets().then(setPresets);
@@ -367,6 +417,7 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
       setPreset(p.terminal_preset);
       setTemplate(p.terminal_template);
     });
+    void getSshApproval().then((p) => setMethod(p.method));
   }, []);
 
   useEffect(() => {
@@ -384,6 +435,16 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
   const editTemplate = (t: string) => {
     setTemplate(t);
     if (preset === "custom") void setTerminalPref("custom", t);
+  };
+  const chooseMethod = (id: SshPrefs["method"]) => {
+    setMethod(id); // optimistic
+    // Reconcile from the backend so a rejected/failed write can't leave the radio
+    // misrepresenting the actual gate strength (a security-signal surface).
+    void (async () => {
+      await setSshApproval(id); // method only — policy/TTL unchanged
+      const p = await getSshApproval();
+      setMethod(p.method);
+    })();
   };
 
   return (
@@ -449,6 +510,35 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
             </p>
           </div>
         )}
+
+        <div className="mt-6 mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Credential approvals</div>
+        <p className="mb-3 text-[13px] text-shed-text-muted">How an SSH-key approval is confirmed when the host agent routes one here.</p>
+        <div className="flex flex-col gap-2">
+          {APPROVAL_METHODS.map((m) => {
+            const active = method === m.id;
+            return (
+              <label
+                key={m.id}
+                className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
+                style={{
+                  borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
+                  background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+                }}
+              >
+                <input
+                  type="radio"
+                  name="approval-method"
+                  checked={active}
+                  onChange={() => chooseMethod(m.id)}
+                  style={{ accentColor: "var(--shed-accent)" }}
+                />
+                <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
+                <span className="flex-1" />
+                <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
+              </label>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -656,19 +746,17 @@ function NewShedDialog({ refresh, onClose }: { refresh: () => void; onClose: () 
   );
 }
 
-const STATIC_PANES: Record<Exclude<Pane, "sheds">, () => JSX.Element> = {
-  approvals: ApprovalsPane,
-  agents: AgentsPane,
-  activity: ActivityPane,
-  system: SystemPane,
-};
-
 /* ---- shell ---------------------------------------------------------------- */
 export default function App() {
   const [pane, setPane] = useState<Pane>("sheds");
   const [mode, setMode] = useState<"light" | "dark">("light");
   const [modal, setModal] = useState<Modal>(null);
   const { sheds, refresh } = useUiBridge(pane, setPane, modal);
+  // Live approval queue (drives the badge + the pane) + the delegated namespaces
+  // (a non-empty set = the host agent handshook, so it's connected).
+  const approvals = useCoordinatorData<Approval[]>("approvals-changed", fetchApprovals, []);
+  const gateNs = useCoordinatorData<string[]>("connected-changed", fetchGateNamespaces, []);
+  const connected = gateNs.length > 0;
 
   useEffect(() => {
     document.documentElement.dataset.mode = mode;
@@ -691,7 +779,7 @@ export default function App() {
     };
   }, []);
 
-  const pending = SEED_APPROVALS.length;
+  const pending = approvals.length;
   // Sidebar hosts are the distinct hosts of the live sheds (all reachable — the
   // "N unreachable" rollup rides in with the System pane at A1c).
   const hosts = [...new Set(sheds.map((s) => s.host))];
@@ -750,7 +838,7 @@ export default function App() {
             </button>
           )}
           <span className="inline-flex items-center gap-2 text-[13px] font-medium text-shed-text-secondary">
-            <Dot className="h-2 w-2" style={{ background: "var(--shed-ok)" }} /> host agent · connected
+            <Dot className="h-2 w-2" style={{ background: connected ? "var(--shed-ok)" : "var(--shed-text-muted)" }} /> host agent · {connected ? "connected" : "connecting…"}
           </span>
           <button onClick={() => setModal("prefs")} title="Preferences" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             <Settings size={15} />
@@ -761,9 +849,11 @@ export default function App() {
         </header>
         <main className="flex-1 overflow-auto bg-shed-bg px-[38px] py-7">
           <div className="mx-auto max-w-[880px]" data-pane={pane}>
-            {pane === "sheds"
-              ? <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />
-              : createElement(STATIC_PANES[pane])}
+            {pane === "sheds" && <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />}
+            {pane === "approvals" && <ApprovalsPane approvals={approvals} />}
+            {pane === "agents" && <AgentsPane />}
+            {pane === "activity" && <ActivityPane />}
+            {pane === "system" && <SystemPane />}
           </div>
         </main>
       </div>

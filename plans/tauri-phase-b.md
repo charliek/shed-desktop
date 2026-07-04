@@ -157,6 +157,14 @@ appendix.
   password on Linux, `biometrics`-only is **fail-closed** on Linux until fprintd lands.
 - The GTK approval pane stays deferred (roadmap M6); shed-core/shed-app changes are **additive** so GTK
   keeps building and its e2e stays green.
+- **Defense-in-depth follow-ups (B5 review, not violations under the current threat model — approvals
+  flow *to* the credential-holder and no grant/rule can be injected without a real user Approve):**
+  (a) a disconnect clears `pending` + `gate_namespaces` but keeps `session_grants`/`extra_rules` (matches
+  the mac); clear the gated `ssh-agent` session grants on disconnect too, and land the deferred
+  `SO_PEERCRED` peer-UID check (§1's "New") — these become load-bearing the moment peer-UID auth or
+  on-disk rule persistence ships, so a reconnected/squatting same-UID agent can't inherit a grant.
+  (b) `finish_decide`'s binding check distinguishes a same-id *replacement* but not a byte-identical
+  *replayed* frame across a reconnect; trust-direction-safe today, revisit with (a).
 
 ---
 

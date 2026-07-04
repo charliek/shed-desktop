@@ -8,8 +8,17 @@ use std::sync::Mutex;
 use shed_core::approval::ApprovalRequest;
 
 use crate::traits::{
-    approval_notification_text, AuthGate, AuthOutcome, AuthPrompt, Notifier, PostedNotification,
+    approval_notification_text, AuthGate, AuthOutcome, AuthPrompt, CoordinatorEvent, EventSink,
+    Notifier, PostedNotification,
 };
+
+/// A no-op event sink — the default for tests + GTK (which has no approval UI to
+/// notify). Tauri wires a real one that `app.emit`s.
+pub struct NoopEventSink;
+
+impl EventSink for NoopEventSink {
+    fn emit(&self, _event: CoordinatorEvent) {}
+}
 
 /// Records posted notifications so the harness can assert one was shown and
 /// (via `notification.invoke`) act on it. Withdrawal removes it.

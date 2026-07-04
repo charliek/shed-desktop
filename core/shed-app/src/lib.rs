@@ -18,10 +18,10 @@ pub mod traits;
 pub use audit_store::AuditStore;
 pub use backend::{Backend, HostDiskUsage, Reachability};
 pub use coordinator::{Coordinator, CoordinatorDeps, SshPrefs};
-pub use fakes::{AlwaysApprovedGate, FakeNotifier};
+pub use fakes::{AlwaysApprovedGate, FakeNotifier, NoopEventSink};
 pub use host_agent::{HelloClientInfo, HostAgentClient, HostAgentClientError, HostAgentEvent};
 pub use token_minter::HostAgentTokenMinter;
 pub use traits::{
-    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, Clock, ClockRef, Notifier, NotifierRef,
-    PostedNotification, Responder, ResponderRef, SystemClock,
+    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, Clock, ClockRef, CoordinatorEvent, EventSink,
+    EventSinkRef, Notifier, NotifierRef, PostedNotification, Responder, ResponderRef, SystemClock,
 };
