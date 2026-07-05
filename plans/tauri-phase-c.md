@@ -6,6 +6,12 @@
 > reshaped. Verified in-tree: **`objc2-local-authentication` v0.3.2 exists** (the mac gate is a ready crate,
 > not hand-rolled bindings); **Tauri emits no tray click events on Linux** (`tauri-2.11.5/src/tray/mod.rs`),
 > so the tray is a **platform split**, not one portable design.
+>
+> **B2 re-reviewed (2026-07-05, Codex + Kimi + CodeRabbit).** The seam decision held; the panel caught 8
+> in-tree gotchas now folded into §3.2 (the `-t`-PTY JSON-corruption trap in ssh reuse, private `Backend`
+> ssh-targets, `rc`-non-default hiding tests from `make test`, the concurrent-IPC store race, the
+> `generate_slug` RNG-dep placement, unpinned per-op timeouts, `invalid-param` code parity, and the retag
+> being a file-split not a marker-swap). §3.2 is execution-ready.
 
 ## Status — pick up here (2026-07-04)
 
@@ -26,18 +32,34 @@ gate a real approval end-to-end), so B7 need not be a separate step. **When B2 l
 that: **B1b** (mac popover — the Swift-vs-Tauri decision), **B3** (macOS Touch-ID gate, objc2), **B4**
 (prefs + autostart), **A4** (D-Bus withdraw).
 
-**Outstanding design decisions to settle at the top of the next session (before/while building B2):**
-1. **RC extraction boundary** — pure classify / `normalizeRcPrompt` / argv / DTOs → **`shed-core`**;
-   process / SSH / session management → **`shed-app`** behind an `rc = ["tokio/process"]` feature (so
-   `shed-gtk` doesn't compile SSH-spawning it never uses). Panel-confirmed; lock the exact module layout.
-2. **Test-mode session store** (`rc.inject_test`) — the analog of `AlwaysApprovedGate`/`FakeNotifier`;
-   `test_agents.py` depends on it (a synthesized ready session). Where it lives + its seam.
-3. **SSH shell-out** — RC launch runs `ssh … shed-ext-rc create --wait`; the Tauri backend needs the SSH
-   setup + the `shed-ext-rc` binary. Decide the process-runner seam (test fake vs real).
-4. **No Swift-FFI in Phase C** — the Swift app keeps its own `RemoteControl.swift`; bridging `shed-app::rc`
-   to Swift is a Phase-4 milestone.
-5. **B1b tray** — Tauri webview popover vs a native-Swift mac menu: decide after the B1b spike (the user's
-   Swift interest is the *menu-bar*, not the gate, which is settled as objc2).
+**B2 design — LOCKED (2026-07-05, maintainer-agreed; full spec in §3.2). The five decisions:**
+1. **RC extraction boundary** — pure classify / `normalize_rc_prompt` / argv / DTOs + `RcSession`/`from_dto`
+   → **`shed-core::rc`** (no I/O, no feature flag); the stateful process/SSH/session layer → **`shed-app::rc`**
+   behind an **`rc = ["tokio/process"]`** feature (so `shed-gtk` compiles none of it). Layout locked in §3.2.
+2. **Runner = the portability seam, not just a test seam.** `RcRunner` trait + `TokioProcessRunner` (real)
+   + `FakeRunner` (unit) in `shed-app::rc`. **Driver: mobile (iOS/Android — Tauri OR Flutter) CANNOT spawn
+   subprocesses**, so the desktop `ssh … shed-ext-rc` shell-out won't run there; the trait is exactly where
+   a mobile in-process-ssh/relay runner plugs in. Serves the north-star — ONE Rust base fanning out to
+   Swift-FFI + Tauri desktop + Tauri/Flutter mobile + a future headless Rust `shed`/`shed-host-agent`.
+   (This is why the real runner lives in `shed-app`, NOT the Tauri crate — contrast polkit/osascript, which
+   are per-client platform-native and correctly live client-side.)
+3. **Test-mode session store** — `RcStore` (`Mutex<HashMap<String,RcSession>>`, the mac `rcTable` analog) in
+   `shed-app::rc`. The hermetic harness uses the mac-style `test_mode` synth-into-store path (fast, no
+   fake-plumbing for list/kill consistency); `FakeRunner` covers the real decode/store/error glue in unit
+   tests; `rc.inject_test` writes the store directly (test-mode-only).
+4. **FFI-readiness guardrails** — `RcService` is frontend-agnostic (NO `Backend` coupling; the ipc layer
+   passes resolved running-sheds + ssh-targets into `list()`/`launch()`); the real runner is wired via
+   `RcService::new_default()` so FFI consumers never foreign-implement the async trait; keep ONE `rc`
+   feature now, split `rc`/`rc-process` only when the mobile runner lands.
+5. **No Swift-FFI in Phase C** — the Swift app keeps `RemoteControl.swift`/`ProcessRunner.swift` untouched;
+   `shed-core::rc` is net-new Rust. Bridging `shed-app::rc` to Swift is a Phase-4 export milestone.
+
+**Execution model:** B2 is decomposed into 5 green-per-commit sub-milestones (B2.1 `shed-core::rc` →
+B2.2 `shed-app::rc` + fake → B2.3 Tauri IPC → B2.4 React pane → B2.5 harness retag; table in §3.2), each
+running implement → `/simplify` → adversarial (`/cursor:rescue` or `/codex`) → fold → gates → commit.
+
+**Still open (NOT B2):** **B1b tray** — Tauri webview popover vs a native-Swift mac menu: decide after the
+B1b spike (the maintainer's Swift interest is the *menu-bar*, not the gate, which is settled as objc2).
 
 ## 0. TL;DR
 
@@ -153,30 +175,143 @@ one `main` window). Enable the tray (the `tray-icon` feature + capabilities/wind
   is the `.desktop` launcher + the single-instance `app.activate` handoff (`lib.rs:280-292`) — *relaunch
   raises the running instance*. Document + wire it. Ship the `libayatana-appindicator` runtime dep.
 
-### 3.2 B2 — The Agents / RC pane (a **5-part port**, not a retag)
+### 3.2 B2 — The Agents / RC pane (a **5-part port**, not a retag) — **DESIGN LOCKED 2026-07-05**
 
 **Parity target** — the Swift launcher (`AgentsView.swift` + `AgentLaunchSheet.swift`; ops
-`rc.classify/list/launch/kill` in `IPCHandlerImpl.swift`; runtime in `AppModel.swift:998-1110`; models in
-`ShedKit/RC/RemoteControl.swift`): launch a `claude-rc` (REPL, optional prompt) or `shell` in a shed via
-SSH `shed-ext-rc create --wait`, poll sessions, classify pane output into states, console (tmux attach),
-kill. The Tauri `AgentsPane` is a `SEED_AGENTS` stub. Per guardrail #3 (grounded by the panel):
+`rc.classify/list/launch/kill/inject_test` in `IPCHandlerImpl.swift:112-131`; runtime in
+`AppModel.swift` `rcLaunch`/`rcKill`/`rcList`/`rcInjectTest`/`listReal`/`syntheticURL`; pure logic +
+models in `ShedKit/RC/RemoteControl.swift` + `Models.swift:233` (`RcSession`/`compositeID`);
+process in `ShedKit/RC/ProcessRunner.swift`): launch a `claude-rc` (REPL, optional prompt) or `shell`
+in a shed via SSH `shed-ext-rc create --wait`, list sessions (fan-out SSH probe across running sheds),
+classify pane output into states, console (tmux attach), kill. The Tauri `AgentsPane` is a `SEED_AGENTS`
+stub. Per guardrail #3 (grounded by the panel + the maintainer's multi-frontend north-star).
 
-1. **Pure RC logic → `shed-core`**: the classifier regexes, `normalizeRcPrompt` (2000-byte cap +
-   control-char reject), `createArgv`/`sshArgv`, and the RC-Convention-v2 DTOs — protocol-level, hermetic.
-2. **Process/SSH/session management → `shed-app`** behind a **`rc = ["tokio/process"]` Cargo feature** so
-   `shed-gtk` (which links `shed-app`) doesn't compile SSH-spawning it never uses — **plus a test-mode
-   in-memory session store + `rc.inject_test`** (the analog of `AlwaysApprovedGate`/`FakeNotifier`; the mac
-   app synthesizes a ready session under test mode, `AppModel.swift:1016-1030,1074`, and
-   `test_inject_legacy_session_renders`/`test_launch_list_kill` depend on it).
-3. **Tauri IPC ops** `rc.classify/list/launch/kill/inject_test` (`ipc.rs`) + invoke commands + a live
-   session table / launch form / console+kill buttons in the pane.
-4. **Harness**: a `_RcOps` mixin on `TauriClient` (mirroring `_ApprovalOps`; the `rc_*` methods live on
-   `ShedDesktop` only today, `client.py:269-324`).
-5. **Marker**: `needs_agents = {mac, tauri}` in `_marks.py` (mirroring `needs_approvals`); retag
-   `test_agents.py` from `mac_only` + a target-appropriate client.
+**The seam decision (LOCKED — Option 1, the portability seam).** The `RcRunner` trait is **not just a
+test seam — it is the portability boundary**. The driving fact: **mobile (iOS/Android — whether Tauri
+OR Flutter) cannot spawn subprocesses**, so desktop's `ssh … shed-ext-rc` shell-out will not run there;
+a mobile client will execute RC via in-process SSH (`russh`) or a host-agent/API relay. The runner trait
+is exactly where that alternate execution plugs in, so ONE `RcService` (store + orchestration + DTO
+decode + exit→`RcError`) is owned by the shared base and consumed by every frontend (Swift-FFI, Tauri
+desktop, Tauri/Flutter mobile, a future headless Rust `shed`/`shed-host-agent`). This is why the real
+runner lives in `shed-app`, **not** the Tauri crate (contrast polkit/osascript, which are per-client
+platform-native and correctly live client-side): the RC runner is cross-platform app logic every
+frontend wants identically.
 
-**The Swift-FFI adoption of `shed-app::rc` is a real Phase-4 export milestone, not free — Phase C does NOT
-bridge `rc` to Swift** (the Swift app keeps its `RemoteControl.swift` during the dual-ship window).
+**FFI-readiness guardrails (make the shared base actually reusable):**
+- `RcService` stays **frontend-agnostic** — NO `Backend` coupling. **Shed→ssh-target *resolution* stays
+  in `shed-app` (a public `Backend` method, per guardrail #2 — logic lives down, not in the client);** the
+  ipc layer only *wires* it: it calls `Backend::resolve_rc_target`/`rc_targets` and passes the resolved
+  `RcTarget`s into `RcService::list()`/`launch()`, so `RcService` is a clean (future) UniFFI unit.
+- The real runner is wired **internally** via `RcService::new_default()`, so Swift-FFI/Flutter-FFI
+  consumers call `launch(...)`/`list(...)` and **never foreign-implement the async `RcRunner` trait**
+  (foreign async-trait impls over UniFFI are the painful path; the trait stays a Rust-internal seam for
+  test + mobile).
+- Feature stays a single **`rc = ["tokio/process"]`** now (bundles `TokioProcessRunner`). Split into
+  `rc` (module: trait + service + store) / `rc-process` (the subprocess runner) **only when the mobile
+  runner lands** — no unused feature combo today (unexercised flags bit-rot).
+
+**⚠️ Panel-folded gotchas (2026-07-05, Codex + Kimi + CodeRabbit — all verified in-tree; each would trip
+an implementer mid-build):**
+1. **SSH argv is NOT terminal.rs reuse (H1 — a JSON-corruption trap).** `terminal.rs::ssh_command`
+   (`terminal.rs:26`) is *interactive*: `-t` (PTY), `StrictHostKeyChecking=yes`, `UserKnownHostsFile`,
+   remote appended as raw argv (no `--`); **no `BatchMode`/`ConnectTimeout`, no option builder.** RC's
+   argv (`RemoteControl.swift:327`) is *non-interactive*: **no `-t`**, `BatchMode=yes` + host-key opts +
+   `ConnectTimeout`, remote shell-quoted after `--`. A naive reuse gives `shed-ext-rc create/list` a `-t`
+   PTY → stderr merges into stdout + terminal control bytes → **corrupts the JSON DTO decode.** Do:
+   extract `ssh_host_key_opts(known_hosts)` from `terminal.rs` (+ expose `shell_quote` as `pub(crate)`),
+   share ONLY those; RC builds its own no-`-t` argv.
+2. **`Backend` exposes no ssh-target accessor (C2).** `ssh_targets`/`SshTarget`/`ssh_target_for`/
+   `resolve`/`known_hosts` are all **private** (`backend.rs:28,37,305`); only `host_names()`+`list_sheds()`
+   are public. Add public `Backend::resolve_rc_target(host?, shed) -> RcTarget` +
+   `rc_targets(host?, shed?) -> Vec<(Shed, RcTarget)>` (running-shed-filtered, default-server-resolved),
+   where `RcTarget { server_name, ssh_host, ssh_port, known_hosts }` — `server_name` (= `Shed.host`) is
+   needed for the `--target shed:<shed>@<server>` arg. **`backend.rs` is a B2.2/B2.3 file** (not in §7 yet).
+3. **`generate_slug` lives in `shed-app::rc`, NOT `shed-core` (M2).** `randomElement()` needs `rand`/
+   `fastrand` — `shed-core` is deliberately dep-light, and a random slug can't be asserted in the B2.1
+   argv-shape tests. Mac calls slug-gen from the *stateful* layer (`AppModel.rcLaunch`); mirror that —
+   `shed-app::rc::launch` generates the slug and passes it into the pure `create_argv(slug, …)`.
+4. **Pin per-op timeouts (H2).** `create=30s` (`shed-ext-rc create --wait` blocks ~20s in the shed),
+   `list=15s`, `kill=10s` (`AppModel.swift`). "Timeout watchdog" alone → spurious exit-124 on create.
+5. **`std::sync::Mutex` can't be held across `await` + concurrent-IPC race (F4).** Tauri serves IPC
+   concurrently (`ipc.rs`), so a `list` wholesale store-rebuild races a concurrent `launch`/`kill`. Collect
+   probe results into a local `Vec`, then take the lock for one short critical section; **`list` reconciles
+   only the probed `(host,shed)` keys** (don't global-clobber a just-launched session). Serialize the real
+   ops behind a per-service `tokio::Mutex` if simpler.
+6. **`rc` non-default → `make test` skips the rc tests (F3).** `make test` = `cd core && cargo test`
+   (default features); `shed-gtk` links `shed-app` featureless (so `rc` MUST stay non-default). Add
+   `cargo test -p shed-app --features rc` to `core-test` (Makefile) or the rc unit tests silently never run.
+7. **Error-code parity (F7).** The 3 `test_launch_rejects_*` assert `code == "invalid-param"`; Tauri's
+   `err()` vocab is `bad_request`/… — so rc-validation must emit `err("invalid-param", …)` (the helper
+   takes any code) to match mac.
+8. **The retag is a file SPLIT, not a marker swap (C1).** At `--target tauri`, `test_agents.py` breaks on
+   mac-only shapes: `show_launch()` (`ui.show_launch` — absent on tauri, and the tauri pane is an inline
+   *form*, not a sheet), `host_list()` (`host.list` — absent), `screenshot(surface=…)` (mac-only kwarg →
+   `TypeError` on the surface-less rust-core `screenshot(scale)`), and `refresh()` (mac alias → use
+   `sheds_refresh()`). **Split:** behavioral tests (classify/launch/list/kill/prompt-norm/console-preview/
+   managed-provenance) → `needs_agents` (swap `refresh`→`sheds_refresh`, derive the inject host from
+   `sheds.list` not `host.list`); the screenshot/launch-sheet/legacy-render tail **stays `@mac_only`**; add
+   a *tauri-native* pane screenshot test (`navigate("agents")` + `current_pane()` + `screenshot(scale)`).
+
+**Locked module layout (folds the gotchas above):**
+
+- **`core/shed-core/src/rc.rs`** (pure, hermetic, **no feature flag**) — `RcKind` (`claude-rc`/
+  `claude-broker`/`shell`; `creatable = {claude-rc, shell}`, broker round-trips only), `RcState`,
+  `RcSessionDto`/`RcSessionListDto` (serde, defensive decode), `RcSession` + `composite_id` +
+  `from_dto`, `RcError` + `error_from_exit`, `normalize_rc_prompt` (trim → 2000-UTF-8-byte cap →
+  control-char reject → kind-accepts-input), `create_argv(slug,…)`/`list_argv`/`kill_argv` (slug is a
+  **param**, not generated here), `ssh_argv` (**non-interactive** — no `-t`, BatchMode + `ssh_host_key_opts`
+  + ConnectTimeout + `--` + `shell_quote`d remote), `classify_pane`+`extract_url`. Unit tests: every
+  classifier case in `test_agents.py`, prompt-norm accept/reject, the exact non-interactive argv shape
+  (asserts no `-t`, BatchMode present — the H1 guard), DTO decode, exit→`RcError`. **`ssh_host_key_opts`
+  + `shell_quote` are shared out of `terminal.rs` (`pub(crate)`), not duplicated.**
+- **`core/shed-app/src/rc.rs`** (feature `rc = ["tokio/process"]`) — `RcStore = Mutex<HashMap<String,
+  RcSession>>`; `trait RcRunner { async fn run(&self, argv, stdin: Option<String>, timeout) ->
+  io::Result<RunOutput> }`; `TokioProcessRunner` (real: `/usr/bin/env argv`, stdin + timeout watchdog +
+  concurrent drain, mirroring `ProcessRunner.swift`); `RcService { store, runner: Arc<dyn RcRunner>,
+  clock: ClockRef, test_mode, tool_version }` (`new_default()` wires `TokioProcessRunner`+`SystemClock`).
+  **`generate_slug` here.** **test_mode synth (harness):** `launch` synthesizes a ready `RcSession` (url =
+  `claude.ai/code/session_<slug>` for claude-rc · `?environment=env_<slug>` for broker · none for shell;
+  `created_at` off `clock.now_iso8601()`) into the store; `list` filters; `kill` removes; `inject_test`
+  inserts a **full decoded `RcSession`** directly (guarded — errs outside test mode). **Real path:**
+  `launch` → `runner.run(ssh(create_argv), stdin, 30s)` → `decode_session` → `from_dto` → store; `list` →
+  `futures::join_all` probe (15s) → reconcile probed keys; `kill` → `runner.run(ssh(kill), 10s)` → remove.
+  `#[cfg(test)] FakeRunner` covers real decode→store + exit→error; a `FakeClock` pins `created_at`.
+  `shed-gtk` (featureless `shed-app`) compiles none of it — **verify gtk still builds**.
+- **`core/shed-app/src/backend.rs`** — add the public `resolve_rc_target`/`rc_targets` accessors +
+  `RcTarget` (gotcha #2). Resolution logic stays here (shed-app), not the ipc layer.
+- **`tauri/src-tauri`** — `ipc.rs` gains `rc.{classify,list,launch,kill,inject_test}` → `RcService` in app
+  state (built in `lib.rs::setup`; `test_mode` from the **existing `env.test_mode`** — no new env var);
+  the handler calls `Backend::rc_targets`/`resolve_rc_target` and passes `RcTarget`s in; rc-validation
+  emits `invalid-param` (#7); `inject_test` behind the `!test_mode → not_enabled` guard (like
+  `policy.set`). **Add `agents.dump`** (or `rc_sessions` in `ui_report`) so the pane is drivable by logical
+  content, not screenshot-only. Invoke commands + `bridge.ts`: `rcLaunch`/`rcKill` use a **throwing** invoke
+  (mirror `createStart` — the default `bridge.ts` helper swallows errors → validation/SSH failures vanish);
+  `openTerminal` must **forward `session = rc-<slug>`** (`open_terminal` already accepts it, `lib.rs:184`;
+  `bridge.ts` currently drops it). `App.tsx` replaces `SEED_AGENTS` with a live table + launch form (kind
+  toggle · display-name · workdir · initial-prompt) + per-row console/open-URL/kill; refetch-on-action.
+- **Harness** — a **`_RcOps` mixin** (the rc methods only, `client.py:269-312` — NOT 314-324, which are
+  mac-only `window_*`/`screenshot(surface)`; folding those in would clobber `TauriClient`'s screenshot via
+  MRO) included by both `ShedDesktop` + `TauriClient`; `needs_agents = {mac, tauri}` in `_marks.py`; the
+  file split of #8; the `RcService` test_mode comes from `env.test_mode` (no `SHED_TAURI_*` var); add an
+  **RC-store reset** to the conftest reset fixtures (the app is session-scoped; a leaked session would bleed
+  — mac self-cleans via `finally` today).
+
+**Sub-milestones (each: implement → `/simplify` (apply) → `/cursor:rescue` or `/codex` adversarial →
+fold → gates → commit with trailers; keep every commit green):**
+
+| # | Scope | Gates (must pass) |
+|---|---|---|
+| B2.1 | `shed-core::rc` pure module + `ssh_host_key_opts`/`shell_quote` extraction in `terminal.rs`. **Coverage bar:** classifier parity with every `test_agents` case, prompt-norm accept/reject, non-interactive argv shape (no `-t` + BatchMode — the H1 guard), DTO decode, exit→`RcError` | `make build && make test` |
+| B2.2 | `shed-app::rc` (`rc` feature): store, `RcRunner`+`TokioProcessRunner`, `RcService`(+`generate_slug`, `ClockRef`, pinned timeouts, reconcile-not-clobber), `FakeRunner`/`FakeClock` + tests; **`backend.rs` `RcTarget` accessors**; **gtk builds without `rc`** | `make build && make test` **+ `cargo test -p shed-app --features rc`** + `make tauri-build-linux` + `make tauri-test-linux` + gtk compiles |
+| B2.3 | Tauri IPC dispatch (`invalid-param`, `inject_test` guard, `agents.dump`) + invoke + `lib.rs` wiring (via `Backend::rc_targets`). **Add `#[cfg(test)]` `ipc.rs` dispatch tests** (esp. `rc.classify`) so rc.* isn't shipped un-exercised | `make e2e-tauri` + render gate |
+| B2.4 | React pane: live table + launch form + console(`session=rc-<slug>`)/open-url/kill; throwing `rcLaunch`/`rcKill` in `bridge.ts` | `make e2e-tauri` + render gate |
+| B2.5 | Harness: `_RcOps` mixin (269-312) + `needs_agents` + **split** `test_agents.py` (`refresh`→`sheds_refresh`; mac-only screenshot tail; tauri-native pane screenshot) + conftest RC-store reset | `make e2e-tauri` (`test_agents` at `--target tauri`) + `--target mac` green + `make e2e-gtk` green |
+
+**B2 acceptance:** the behavioral `test_agents.py` subset passes at BOTH `--target mac` AND `--target
+tauri`; the mac-only screenshot tail + a tauri-native pane render both green; `cargo test -p shed-app
+--features rc` green; render gate + gtk green. **The Swift-FFI adoption of `shed-app::rc` is a real
+Phase-4 export milestone, not free — Phase C does NOT bridge `rc` to Swift** (the Swift app keeps its
+`RemoteControl.swift`/`ProcessRunner.swift` during the dual-ship window; `shed-core::rc` is net-new Rust).
 
 ### 3.3 B3 — The macOS Touch-ID `AuthGate` — **DECIDED: `objc2`**
 
@@ -207,15 +342,14 @@ Tauri Preferences today expose terminal + approval-method only; the Swift app ha
 provider** controls — a real parity gap (§4). Add those, plus **launch-at-login** via
 `tauri-plugin-autostart` (macOS `SMAppService`), with a `loginitem` state probe for the harness.
 
-### 3.5 B5 — macOS approval notifier (**new — panel-surfaced parity gap**)
+### 3.5 B5 — macOS approval notifier — **✅ LANDED (`f743b59`)**
 
-`production_seams()` returns `NoopNotifier` on non-Linux, so the Tauri **mac** app posts **no** approval
-banners — vs the Swift `SystemNotificationPresenter` (with approve/deny actions). **DECIDED: add it** — a
-macOS `Notifier` (start with `tauri-plugin-notification`; escalate to `UNUserNotificationCenter` via objc2
-if the plugin can't carry approve/deny action buttons), mirroring the Swift presenter. Posts on a pending
-prompt, withdraws on resolve; a notification action routes back through `notification.invoke` (the same
-path the pane uses). Full mac parity — the maintainer is building toward a possible mac replacement, so the
-banners are in scope.
+**Done** (commit `f743b59`): a macOS `OsaNotifier` (osascript) replaces the non-Linux `NoopNotifier`, so
+the Tauri **mac** app now posts approval banners, mirroring the Swift `SystemNotificationPresenter`. Posts
+on a pending prompt, withdraws on resolve; a notification action routes back through `notification.invoke`
+(the same path the pane uses). (Historical rationale — the parity gap this closed: `production_seams()`
+used to return `NoopNotifier` on non-Linux, so the mac app posted no banners vs the Swift presenter's
+approve/deny actions.)
 
 ## 4. Exit criteria — two bars, each row mapped to a test
 
@@ -284,13 +418,14 @@ Track A ∥ Track B; **flip gate = Track A complete (incl. A5) + Bar 1 + Bar 2 g
 |---|---|---|---|---|---|
 | S1 | **Tray spike** | `lib.rs`, `tauri.conf.json`, capabilities | mac popover positions; Linux menu→window; lifecycle holds | both | **high** (Linux limits) |
 | S2 | **objc2 gate spike** | `approval.rs` | `LAContext` compiles + runs; block→oneshot; canEvaluate=false→Unavailable | macOS | med |
-| A1 | Peer-UID check | `host_agent.rs` | seam tests green; untrusted state surfaced | both | med |
-| A2 | Gate dedup | `coordinator.rs` | one-prompt-per-id; deny still evicts; marker cleared all paths | both | low |
-| A3 | Clear grants on disconnect | `coordinator.rs` | eviction test green | both | low |
+| A1 | Peer-UID check ✅ **LANDED** | `host_agent.rs` | seam tests green; untrusted state surfaced | both | med |
+| A2 | Gate dedup ✅ **LANDED** | `coordinator.rs` | one-prompt-per-id; deny still evicts; marker cleared all paths | both | low |
+| A3 | Clear grants on disconnect ✅ **LANDED** | `coordinator.rs` | eviction test green | both | low |
+| B1a | Tray foundation ✅ **LANDED** | `lib.rs`, `tray.rs`, `ipc.rs` | `tray.dump`; hide-on-close | both | — |
 | B1 | Tray (mac popover / Linux menu) | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | `tray.dump`; own report channel | both | high |
 | B3 | macOS Touch-ID gate | `approval.rs`, `Cargo.toml` | deny-safe unit test; manual smoke | macOS | med |
-| B2 | Agents/RC | `shed-core` rc, `shed-app` rc (feat), `ipc.rs`, `App.tsx`, harness | `test_agents` at `--target tauri` | both | high |
-| B5 | macOS notifier | `approval.rs`, `Cargo.toml` | notifier posted (or documented delta) | macOS | low |
+| B2 | Agents/RC ← **NEXT** | `shed-core/rc.rs`, `terminal.rs`, `shed-app/{rc.rs,backend.rs}` (feat `rc`), `ipc.rs`, `lib.rs`, `App.tsx`, `bridge.ts`, harness | `test_agents` at `--target tauri`; `cargo test -p shed-app --features rc` | both | high |
+| B5 | macOS notifier ✅ **LANDED** | `approval.rs` | osascript `OsaNotifier` posts/withdraws | macOS | low |
 | A4 | D-Bus withdraw | `approval.rs`, `Cargo.toml` | id-captured unit test | Linux | low |
 | B4 | Prefs + autostart | `App.tsx`, `bridge.ts`, `lib.rs` | policy drives; `loginitem` probe | both | low |
 | A5 | Real-agent smoke (B7) | — | §1 pass bar on a signed build | both | med |
@@ -310,6 +445,12 @@ last.
   (B1), not the gate — tracked there.
 - **macOS approval notifier (B5)** — **DECIDED: add it** (§3.5) — full mac parity toward a possible
   replacement.
+- **RC seam / placement (B2)** — **DECIDED: Option 1, the portability seam** (2026-07-05). `RcRunner` trait
+  + real `TokioProcessRunner` + `FakeRunner` in **`shed-app::rc`** (feature `rc`), NOT the Tauri crate.
+  Rationale: mobile can't spawn subprocesses, so the trait is the plug-point for a future in-process-ssh /
+  relay runner — one shared `RcService` serves Swift-FFI + Tauri + mobile + headless. `RcService` stays
+  FFI-ready (no `Backend` coupling; real runner via `new_default()`). Rejected: runner-in-Tauri-crate
+  (strands it in one frontend); inline-no-trait (must retrofit the seam when mobile lands). Full spec §3.2.
 - **macOS tray implementation (B1) — Tauri now; native-Swift menu is a data-driven option for the flip.**
   Linux must be Tauri regardless. The Tauri webview popover is reversible + evaluate-first; the **S1 spike**
   measures the mac popover's native feel. If it's not good enough for the mac replacement, a native
