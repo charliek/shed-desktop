@@ -39,7 +39,8 @@ def test_tray_dump(tauri):
     # menu ids are always reported; the tray *installs* on macOS (a status-bar host
     # is always present), while a headless / no-SNI Linux box may be window-only.
     dump = tauri.call("tray.dump")
-    assert dump["items"] == ["open", "quit"]
+    # B1: the menu opens the dashboard, its Approvals/Preferences panes, or quits.
+    assert dump["items"] == ["open", "approvals", "preferences", "quit"]
     if platform.system() == "Darwin":
         assert dump["present"] is True
 
