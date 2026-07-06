@@ -40,3 +40,12 @@ needs_approvals = pytest.mark.skipif(
     _TARGET not in _APPROVAL_TARGETS,
     reason="target has no approval spine (gtk: deferred)",
 )
+
+# Targets whose UI implements the Agents / remote-control pane (mac + tauri; gtk
+# has none). Tauri gained it in Phase C (B2).
+_AGENTS_TARGETS = {"mac", "tauri"}
+
+needs_agents = pytest.mark.skipif(
+    _TARGET not in _AGENTS_TARGETS,
+    reason="target has no Agents/RC pane (gtk: none)",
+)
