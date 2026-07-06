@@ -8,14 +8,14 @@
 //! struct, so the GTK + Tauri clients share one implementation.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use tokio::runtime::Handle;
 
 use shed_core::config::ShedConfig;
 use shed_core::create::{CreateProgress, CreateStore};
 use shed_core::http::{Client, ShedError};
-use shed_core::models::{CreateShedRequest, Shed, SystemDiskUsage};
+use shed_core::models::{CreateShedRequest, Shed, ShedStatus, SystemDiskUsage};
 use shed_core::terminal::{self, TerminalCommand};
 use shed_core::token::TokenMinter;
 
@@ -37,6 +37,18 @@ pub struct Backend {
 struct SshTarget {
     host: String,
     port: u16,
+}
+
+/// Everything `shed-app::rc` needs to build the RC ssh argv for one shed, resolved
+/// from config here — so `RcService` never couples to `Backend`. `server_name`
+/// (= `Shed.host`, the config server name) backs the `--target shed:<shed>@<server>`
+/// arg; `known_hosts` pins the server's key (`~/.shed/known_hosts`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RcTarget {
+    pub server_name: String,
+    pub ssh_host: String,
+    pub ssh_port: u16,
+    pub known_hosts: String,
 }
 
 impl Backend {
@@ -308,23 +320,66 @@ impl Backend {
         resolve(&self.ssh_targets, self.default_server.as_deref(), host)
             .ok_or_else(|| no_configured_host(host))
     }
+
+    // -- RC targets (B2.2) — resolved here so `shed-app::rc::RcService` never
+    //    couples to `Backend`; the ipc layer passes these into launch()/list(). --
+
+    /// The RC ssh target for a single op (launch/kill) — host-less → default →
+    /// first, the same resolution as `terminal.preview`. Unlike `ssh_target_for`
+    /// this also carries the resolved server *name* (for the `--target
+    /// shed:<shed>@<server>` arg) and the `known_hosts` path.
+    pub fn resolve_rc_target(&self, host: Option<&str>) -> Result<RcTarget, ShedError> {
+        let (name, target) = resolve_entry(&self.ssh_targets, self.default_server.as_deref(), host)
+            .ok_or_else(|| no_configured_host(host))?;
+        Ok(RcTarget {
+            server_name: name.clone(),
+            ssh_host: target.host.clone(),
+            ssh_port: target.port,
+            known_hosts: known_hosts_path(),
+        })
+    }
+
+    /// The RC ssh targets for every RUNNING shed (optionally filtered by
+    /// host/shed) — what `rc.list` fans out over. Pairs each running shed with the
+    /// resolved ssh endpoint of its host, so `RcService::list` can probe them all
+    /// without touching `Backend`. Mirrors the Swift `rcList` target selection.
+    pub async fn rc_targets(&self, host: Option<&str>, shed: Option<&str>) -> Vec<(Shed, RcTarget)> {
+        self.list_sheds()
+            .await
+            .into_iter()
+            .filter(|s| {
+                s.status == ShedStatus::Running
+                    && host.is_none_or(|h| s.host == h)
+                    && shed.is_none_or(|n| s.name == n)
+            })
+            .filter_map(|s| self.resolve_rc_target(Some(&s.host)).ok().map(|t| (s, t)))
+            .collect()
+    }
 }
 
 /// Resolve a `(name, T)` entry by host name: an explicit host matches by name; a
 /// host-less op prefers `default_server`, else the first entry. Shared by
-/// `client_for` (HTTP) and `ssh_target_for` (SSH).
+/// `client_for` (HTTP), `ssh_target_for` (SSH), and `resolve_rc_target` (RC — it
+/// needs the resolved server *name* too, for the `--target` arg).
+fn resolve_entry<'a, T>(
+    items: &'a [(String, T)],
+    default_server: Option<&str>,
+    host: Option<&str>,
+) -> Option<&'a (String, T)> {
+    let by_name = |n: &str| items.iter().find(|(name, _)| name == n);
+    match host {
+        Some(h) => by_name(h),
+        None => default_server.and_then(by_name).or_else(|| items.first()),
+    }
+}
+
+/// As [`resolve_entry`], but yields only the value (the common case).
 fn resolve<'a, T>(
     items: &'a [(String, T)],
     default_server: Option<&str>,
     host: Option<&str>,
 ) -> Option<&'a T> {
-    let by_name = |n: &str| items.iter().find(|(name, _)| name == n).map(|(_, t)| t);
-    match host {
-        Some(h) => by_name(h),
-        None => default_server
-            .and_then(by_name)
-            .or_else(|| items.first().map(|(_, t)| t)),
-    }
+    resolve_entry(items, default_server, host).map(|(_, t)| t)
 }
 
 fn no_configured_host(host: Option<&str>) -> ShedError {
@@ -335,8 +390,13 @@ fn no_configured_host(host: Option<&str>) -> ShedError {
 /// The shed CLI's `known_hosts` file (`~/.shed/known_hosts`, the same file
 /// `shed server add` pins keys into) — `~/.shed` on both macOS and Linux.
 fn known_hosts_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    format!("{home}/.shed/known_hosts")
+    // Cached: HOME is stable for the process, and `rc_targets` resolves this once
+    // per running shed — no need to re-read the env + reformat each time.
+    static PATH: LazyLock<String> = LazyLock::new(|| {
+        let home = std::env::var("HOME").unwrap_or_default();
+        format!("{home}/.shed/known_hosts")
+    });
+    PATH.clone()
 }
 
 /// All hosts' sheds + a rollup of per-host reachability failures (what the Swift

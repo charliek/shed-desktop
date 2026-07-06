@@ -32,5 +32,12 @@ chrono = { version = "0.4", default-features = false, features = ["std"] }
 # run as us). Unix-only; the clients are Unix (Linux + macOS).
 libc = "0.2"
 
+[features]
+# The Remote-Control layer (`rc.rs`): process/SSH spawning via `tokio/process`.
+# NON-default so `shed-gtk` (which links `shed-app` featureless, and has no RC
+# pane) never compiles it; the Tauri client enables it. `make test` must pass
+# `--features rc` or the rc unit tests are cfg'd out.
+rc = ["tokio/process"]
+
 [dev-dependencies]
 httpmock = { workspace = true }

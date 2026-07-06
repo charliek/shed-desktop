@@ -3002,6 +3002,7 @@ version = "0.0.1"
 dependencies = [
  "async-trait",
  "futures-util",
+ "regex",
  "reqwest 0.12.28",
  "rustls",
  "serde",
