@@ -358,6 +358,103 @@ on a pending prompt, withdraws on resolve; a notification action routes back thr
 used to return `NoopNotifier` on non-Linux, so the mac app posted no banners vs the Swift presenter's
 approve/deny actions.)
 
+## 3.6 Batch 2 — B1 tray/menu-bar + B4 prefs/autostart + A4 D-Bus withdraw (planned 2026-07-06)
+
+*The next autonomous batch, headlined by the **menu-bar on mac + Linux** (B1). Grounded in-tree; each item
+is buildable + hermetically gated now, with the real-hardware check deferred to a maintainer hands-on.
+Same flow as B2: implement → `/simplify` → adversarial (`/cursor:review` external + an internal reviewer,
+cross-checked) → fold → gates → commit green.*
+
+**B1 — tray/menu-bar (headline; B1a foundation is in — `tray.rs`, tray built at `lib.rs:524`, hide-on-close
+done).** Remaining, decomposed:
+- **B1-mac — the rich popover.** A second `WebviewWindow` ("popover") anchored at the tray via
+  **`tauri-plugin-positioner`** (TrayCenter), toggled by the macOS **tray-icon left-click**
+  (`on_tray_icon_event`; the menu moves to right-click). Content mirrors the Swift `MenuBarContentView`
+  (`Sources/ShedDesktopUI/MenuBarContentView.swift`): a host-agent status dot, ≤3 pending-approval cards,
+  ≤6 running sheds, footer (Open dashboard · Preferences · Check for Updates · Quit) — reusing the existing
+  React Approvals/Sheds data. `ActivationPolicy` Accessory↔Regular as windows open/close.
+- **B1-linux — expand the native menu** (Open dashboard · Approvals · Preferences · Quit; today just
+  Open/Quit) + the pending/running count on the **tooltip** (Tauri emits no Linux tray click events, so no
+  popover — a hard platform limit). The no-SNI fallback (single-instance `app.activate`) already exists.
+- **B1-drivability — `tray.dump` on its OWN channel.** The popover is a 2nd webview; it must report its rows
+  under a `popover`/window-keyed key so it does NOT clobber the dashboard's `SharedUi` (the `ui_report`
+  merge from B2.4 helps). Plus a **mac popover screenshot** for the Swift-vs-Tauri assessment.
+- **Decision:** Tauri webview popover NOW (reversible, evaluate-first — per §8); a native-Swift `NSStatusItem`
+  menu stays a flip-time option if the screenshot shows the webview falls short. **The maintainer assesses
+  the popover's native feel from the screenshot.**
+
+**B4 — prefs parity + launch-at-login.**
+- **B4-ssh** — expose the SSH approval **policy** (always-allow / per-shed-allow / time-based-allow /
+  always-ask / always-deny) + **TTL** in the React Preferences. The ipc already carries them
+  (`ssh_prefs` returns `{method, policy, ttl}`, `set_ssh_approval` accepts them, F13); today the pane shows
+  only the method. Parity target: `PreferencesView.swift` "SSH approvals" section.
+- **B4-autostart** — launch-at-login via **`tauri-plugin-autostart`** (macOS `SMAppService`; Linux `.desktop`
+  autostart) + a `loginitem` state probe op for the harness (`Toggle("Launch at login")` parity).
+- **Out of scope:** the AWS/Docker **provider** sections (`providerSection`) gate deferred AWS/Docker
+  credential support (`docs/roadmap.md`); not built here.
+
+**A4 — D-Bus notification withdraw.** Replace the Linux `NotifySendNotifier` (`approval.rs`, `withdraw` is a
+documented no-op) with a **`zbus`**-backed notifier: `post` calls the D-Bus `Notify` method and captures the
+returned notification id (keyed by approval id); `withdraw` calls `CloseNotification(id)`. `#[cfg(linux)]`,
+best-effort (a D-Bus failure just means no banner — approvals still work via the pane). **Unit-test the id is
+captured + reused** on withdraw (a full round-trip is hard to assert hermetically), mirroring the plan's A4.
+
+**⚠️ Panel fold (2026-07-06, Codex + Kimi + CodeRabbit — triple-converged; each reviewer read the tree +
+the vendored `tauri-2.11.5` source). B1 is materially bigger than the one-clause sketch above:**
+
+- **B1-mac ui_report clobber (CRITICAL — all 3).** The "B2.4 merge helps" claim above is WRONG: a 2nd
+  `WebviewWindow` loads the same `index.html` → same `App`/`useUiBridge` → writes the SAME keys
+  (`pane`/`sheds`/`refresh_token`), so it corrupts `dashboard.dump`/`current_pane`/the refresh gate. **Fix:
+  window-keyed `ui_report`** — add the `Window` label param, store `snapshot[label]`, `tray.dump` reads the
+  `popover` key — OR a **separate popover Vite entry** that doesn't mount `useUiBridge`. Pick one in the spike.
+- **B1-mac drivability (HIGH — CodeRabbit/Codex).** OS tray clicks aren't drivable hermetically → the popover
+  never mounts in CI → `tray.dump`'s popover key stays empty. Add a **`tray.show`/`tray.toggle` IPC op** that
+  runs the exact same Rust path as the mac tray-icon click (the analogue of `ui.show_preferences`).
+- **B1-mac tray builder (HIGH — all 3, vendored-source-verified).** `show_menu_on_left_click(false)` is
+  MANDATORY (defaults true; else left-click opens both menu + popover). The `Click` event carries
+  `button_state: Up|Down` → toggle on ONE edge or it fires twice/click. Platform-split: mac detaches the menu
+  (right-click → `show_menu`), Linux keeps it attached. **The spike must prove `on_tray_icon_event` even
+  fires with a menu attached.**
+- **B1-mac ActivationPolicy (MED — all 3).** Role-aware: `Regular` when the dashboard opens, `Accessory`
+  when the last normal window hides (today `lib.rs:531` hides uniformly). **Guard every flip on `test_mode`**
+  (the Swift app does — an unguarded flip destabilizes e2e), and BEWARE the launch-visibility↔mount tension:
+  a hidden menu-bar-parity window may never mount → `ui_report` never fires → `wait_until(current_pane, 30s)`
+  times out. So keep `main` shown at launch in test mode.
+- **B1-mac plumbing (MED — Codex/CodeRabbit).** Add `tauri-plugin-positioner` (needs the `tray-icon` feature
+  + forwarding `on_tray_icon_event` into `positioner::on_tray_event`); a `popover` window in
+  `tauri.conf.json` (borderless/transparent/skipTaskbar); its own **capability** (default.json is scoped to
+  `main`); a **new `TrayPopover.tsx` React root** (not the full `App`); dismiss-on-blur (`Focused(false)→hide`).
+- **B1-mac screenshot is MANUAL, not a gate (all 3).** `screencapture` is full-display + TCC-gated on mac
+  → the content AC is **`tray.dump`** (logical rows); the screenshot is a maintainer visual-assessment
+  artifact. Reframe §6 accordingly.
+- **B1-linux (Codex correction).** Tauri 2.11 marks the **tray tooltip UNSUPPORTED on Linux** — put the
+  pending count on a **disabled/status menu item or a mutable menu label**, not the tooltip. A set Linux menu
+  can't be replaced, only mutated → keep mutable `MenuItem` handles. Footer "Check for Updates" → disabled/
+  no-op (no Tauri updater in this batch).
+
+- **B4 corrections (Codex/CodeRabbit).** `tauri-plugin-autostart` is **NOT `SMAppService`** — it's the
+  `auto-launch` crate (macOS LaunchAgent / AppleScript). Fix the wording + probe `app.autolaunch().is_enabled()`.
+  **Test-mode-guard the enable toggle** (mac triggers a real TCC prompt / login-item write — not
+  HOME-scoped). **Persist `ssh_method/policy/ttl` + hydrate the coordinator at startup** (today it starts
+  `SshPrefs::default()`, `lib.rs:490` — the prefs don't survive a restart). Mirror the Swift **conditional
+  visibility** (TTL only for time-based; method only for prompting policies; the SSH section only when ssh is
+  gated). The `loginitem` op = `loginitem.status → {enabled}` (+ a guarded `set`); add the client method + test.
+- **A4 corrections (all 3).** Add a **`NotifyBus` trait seam** (real zbus impl + a fake returning a canned
+  id) so the id-capture test is hermetic (the A1/B2 seam pattern). Handle the **sync-`post`/async-`Notify` +
+  early-`withdraw` race** with a state machine (Pending / Posted(id) / WithdrawnBeforeId → close-on-arrival);
+  reuse ONE `zbus::Connection` with `features=["tokio"]`; D-Bus-absent (CI container) → timeout + no-op (no
+  stuck state). The real motivation: the current banner is `--urgency=critical`, which does NOT auto-expire,
+  so a resolved approval lingers. Test cases: capture→close, withdraw-before-id→close-after, dbus-fail→no-stuck,
+  dup-post→no-leak.
+
+**Revised sequencing (post-fold).** B1 is now clearly a **large, harness-tension-laden surface that needs the
+maintainer's visual call** — NOT a clean autonomous "done." So: land the **clean autonomous wins first — A4,
+B4, and B1-linux (the menu expansion + count-on-a-menu-item)** — each fully gated + testable tonight; then a
+**budgeted B1-mac popover spike** (resolve the 4 spike-critical questions above, build to a `tray.dump`-drivable
++ screenshot-able state) → **screenshot + checkpoint with the maintainer** for the native-feel / Swift-vs-Tauri
+call, rather than autonomously polishing it. Hard budget: if the popover isn't screenshot-able in a few hours,
+pivot to the native-Swift `NSStatusItem` option (§8) with data.
+
 ## 4. Exit criteria — two bars, each row mapped to a test
 
 **Bar 1 — evaluation-complete** (surfaces present + drivable + gate-green on both platforms):
