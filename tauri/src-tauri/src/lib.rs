@@ -25,12 +25,13 @@ use ipc::{Handler, IpcServer};
 use shed_app::traits::{AuthGateRef, NotifierRef};
 use shed_app::{
     AlwaysApprovedGate, AuditStore, Backend, Coordinator, CoordinatorDeps, FakeNotifier,
-    HelloClientInfo, HostAgentClient, HostAgentTokenMinter, SshPrefs,
+    HelloClientInfo, HostAgentClient, HostAgentTokenMinter, RcService, SshPrefs,
 };
 use shed_core::approval::{
     ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, SshApprovalPolicy,
 };
 use shed_core::models::CreateShedRequest;
+use shed_core::rc::RcKind;
 use shed_core::token::TokenMinter;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
@@ -195,6 +196,58 @@ fn open_terminal(
 // -- approvals (the frontend Approvals/Activity panes + approval prefs) --------
 
 /// The pending approval cards (each with gate + scope/TTL defaults). The pane
+/// The Agents pane launches/lists/kills RC sessions over these invoke commands
+/// (the harness drives the same ops over the IPC socket). The shed→ssh target
+/// resolution stays in `Backend`; `RcService` owns the store + process seam.
+#[tauri::command]
+async fn rc_list(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    host: Option<String>,
+    shed: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let targets = backend.rc_targets(host.as_deref(), shed.as_deref()).await;
+    Ok(serde_json::json!({
+        "sessions": rc.list(targets, host.as_deref(), shed.as_deref()).await
+    }))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a flat invoke arg list mirrors the launch form fields
+async fn rc_launch(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    shed: String,
+    kind: RcKind,
+    host: Option<String>,
+    display_name: Option<String>,
+    workdir: Option<String>,
+    initial_prompt: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let target = backend
+        .resolve_rc_target(host.as_deref())
+        .map_err(|e| e.to_string())?;
+    let session = rc
+        .launch(target, &shed, kind, display_name, workdir, initial_prompt)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!(session))
+}
+
+#[tauri::command]
+async fn rc_kill(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    shed: String,
+    slug: String,
+    host: Option<String>,
+) -> Result<(), String> {
+    let target = backend
+        .resolve_rc_target(host.as_deref())
+        .map_err(|e| e.to_string())?;
+    rc.kill(target, &shed, &slug).await.map_err(|e| e.to_string())
+}
+
 /// re-fetches on the `approvals-changed` event (see TauriEventSink).
 #[tauri::command]
 async fn approvals_list(
@@ -319,10 +372,16 @@ pub fn run() {
         minter.as_ref(),
     ));
 
+    // The Agents / Remote-Control service (session store + process seam). Same
+    // test-mode flag as the coordinator fakes — test mode synthesizes sessions;
+    // the real path shells out `shed-ext-rc` over SSH.
+    let rc_service = Arc::new(RcService::new_default(env.test_mode, env!("CARGO_PKG_VERSION")));
+
     tauri::Builder::default()
         .manage(ui.clone())
         .manage(backend.clone())
         .manage(env.clone())
+        .manage(rc_service.clone())
         .invoke_handler(tauri::generate_handler![
             ui_report,
             list_sheds,
@@ -335,6 +394,9 @@ pub fn run() {
             terminal_presets,
             get_prefs,
             set_terminal_pref,
+            rc_list,
+            rc_launch,
+            rc_kill,
             open_terminal,
             approvals_list,
             approval_decide,
@@ -435,6 +497,7 @@ pub fn run() {
                 backend.clone(),
                 terminal,
                 coordinator,
+                rc_service.clone(),
             );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.
