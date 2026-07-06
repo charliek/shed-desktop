@@ -1,12 +1,15 @@
 //! Production impls of the approval seams (test mode uses shed-app's fakes).
 //!
-//! The real native gate is **polkit** (via `pkcheck`) and the notifier is
-//! **libnotify** (`notify-send`) — both `#[cfg(target_os = "linux")]`, because the
-//! Tauri crate also builds on macOS for dev + the e2e harness, where the fail-closed
-//! stubs ([`FailClosedGate`] → `Unavailable`, [`NoopNotifier`]) stand in. The gate
-//! shells out to the polkit-provided tools rather than linking a D-Bus crate: the
-//! user's secret is entered into the OS polkit agent, never this app (TB5), and a
-//! missing tool fails **closed** (`Unavailable`) with no new dependency to audit.
+//! The real native gate is **polkit** (via `pkcheck`); the notifier posts approval
+//! banners over the **freedesktop Notifications** D-Bus interface (zbus). Both are
+//! `#[cfg(target_os = "linux")]`, because the Tauri crate also builds on macOS for
+//! dev + the e2e harness, where the osascript notifier + the fail-closed gate
+//! ([`FailClosedGate`] → `Unavailable`) stand in. The gate deliberately shells out
+//! to the polkit tools rather than linking a D-Bus crate — the user's secret is
+//! entered into the OS polkit agent, never this app (TB5), and a missing tool fails
+//! **closed** (`Unavailable`). The notifier does use zbus, so it can recall (close)
+//! the exact `--urgency=critical` banner when a request resolves, rather than
+//! leaving it up (that banner never auto-expires).
 //!
 //! The button-only ("prompt") method needs no gate and works everywhere; polkit
 //! only *adds* the password-gated method on top (B6). Under the hermetic harness
@@ -21,14 +24,18 @@ use shed_app::traits::{
     AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, CoordinatorEvent, EventSink, NotifierRef,
 };
 
+#[cfg(target_os = "linux")]
+use dbus_notify::DBusNotifier;
+
 /// The production notifier + auth gate for the running platform. Linux: the real
-/// polkit gate + libnotify notifier. macOS: the osascript notifier (B5) + the
+/// polkit gate + the zbus D-Bus notifier. macOS: the osascript notifier (B5) + the
 /// fail-closed gate until the Touch-ID gate lands (B3). Other targets: the
 /// fail-closed stubs. Test mode never calls this — it uses shed-app's fakes.
 pub fn production_seams() -> (NotifierRef, AuthGateRef) {
     #[cfg(target_os = "linux")]
     {
-        (Arc::new(linux::NotifySendNotifier), Arc::new(linux::PolkitGate))
+        let notifier = DBusNotifier::new(Arc::new(linux::ZbusNotifyBus::new()));
+        (Arc::new(notifier), Arc::new(linux::PolkitGate))
     }
     #[cfg(target_os = "macos")]
     {
@@ -96,10 +103,335 @@ impl AuthGate for FailClosedGate {
     }
 }
 
+/// The desktop-notification notifier split from its D-Bus transport, so the
+/// post→id→withdraw *race* is unit-testable without a real bus. An approval banner
+/// is posted `--urgency=critical` so the daemon never auto-expires it; when the
+/// request resolves we must therefore close its *exact* banner — which needs the
+/// daemon's notification id, only known after the async `notify` returns. Compiled
+/// on Linux (the sole real transport, [`linux::ZbusNotifyBus`]) and in any test
+/// build (the `tests::FakeBus` drives the state machine directly — the race logic
+/// is verified with `cargo test` on any host, not just via the Linux render gate).
+#[cfg(any(target_os = "linux", test))]
+mod dbus_notify {
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    use shed_app::traits::{approval_notification_text as text, Notifier, PostedNotification};
+    use shed_core::approval::ApprovalRequest;
+
+    /// A minimal async seam over the freedesktop Notifications bus. `notify` returns
+    /// the daemon's notification id (0 = no daemon / failed — nothing to recall).
+    #[async_trait::async_trait]
+    pub trait NotifyBus: Send + Sync + 'static {
+        async fn notify(&self, title: String, body: String) -> u32;
+        async fn close(&self, notif_id: u32);
+    }
+
+    /// A request's tracked banner across the async gap between posting and the
+    /// daemon returning its id. `title`/`body` are retained so `posted()` (the
+    /// North-Star `notifications.list` view) is truthful on a real desktop, not just
+    /// in tests. `gen` distinguishes a re-post's newer post task from the superseded
+    /// older one — both run concurrently after `post` returns, and the coordinator
+    /// DOES re-post a same-id replacement (coordinator.rs `PolicyAction::Prompt`).
+    struct Entry {
+        gen: u64,
+        title: String,
+        body: String,
+        /// The daemon's id once `notify()` returns; `None` while it's in flight.
+        notif_id: Option<u32>,
+        /// `withdraw` arrived before the id was known — close as soon as it lands.
+        withdrawn: bool,
+    }
+
+    /// Posts + withdraws approval banners over a [`NotifyBus`], closing the exact
+    /// banner when a request resolves. Fire-and-forget (the coordinator actor never
+    /// blocks on the notification daemon); the shared state + `gen` reconcile the
+    /// post→id→withdraw race and same-id re-posts without leaking a banner.
+    pub struct DBusNotifier {
+        bus: Arc<dyn NotifyBus>,
+        state: Arc<Mutex<HashMap<String, Entry>>>,
+        gen: Arc<AtomicU64>,
+    }
+
+    impl DBusNotifier {
+        pub fn new(bus: Arc<dyn NotifyBus>) -> Self {
+            Self {
+                bus,
+                state: Arc::new(Mutex::new(HashMap::new())),
+                gen: Arc::new(AtomicU64::new(0)),
+            }
+        }
+
+        /// Close a banner on a detached task (withdraw/close are fire-and-forget; the
+        /// coordinator never waits on the daemon).
+        fn spawn_close(bus: &Arc<dyn NotifyBus>, notif_id: u32) {
+            let bus = bus.clone();
+            tokio::spawn(async move { bus.close(notif_id).await });
+        }
+    }
+
+    impl Notifier for DBusNotifier {
+        fn post(&self, req: &ApprovalRequest) {
+            let id = req.id.clone();
+            let title = text::title(req);
+            let body = text::body(req);
+            let gen = self.gen.fetch_add(1, Ordering::Relaxed);
+            // Replace any prior banner for this id. If the prior one already has a
+            // daemon id, retract it now; if it's still in flight, its older-gen task
+            // retracts its own banner when it sees a newer gen on reconcile.
+            let close_old = {
+                let mut st = self.state.lock().unwrap();
+                let prev = st.insert(
+                    id.clone(),
+                    Entry {
+                        gen,
+                        title: title.clone(),
+                        body: body.clone(),
+                        notif_id: None,
+                        withdrawn: false,
+                    },
+                );
+                prev.and_then(|e| e.notif_id)
+            };
+            if let Some(old) = close_old {
+                Self::spawn_close(&self.bus, old);
+            }
+            let bus = self.bus.clone();
+            let state = self.state.clone();
+            // In the coordinator actor (a tokio task), so spawn is valid.
+            tokio::spawn(async move {
+                let notif_id = bus.notify(title, body).await;
+                let close_self = {
+                    let mut st = state.lock().unwrap();
+                    // Copy the fields out so the map isn't borrowed across remove/get_mut.
+                    match st.get(&id).map(|e| (e.gen, e.withdrawn)) {
+                        // Still the current post for this id.
+                        Some((g, withdrawn)) if g == gen => {
+                            if notif_id == 0 || withdrawn {
+                                // No daemon, or withdrawn while in flight → drop it,
+                                // closing the banner if one actually went up.
+                                st.remove(&id);
+                                notif_id != 0
+                            } else {
+                                st.get_mut(&id).unwrap().notif_id = Some(notif_id);
+                                false
+                            }
+                        }
+                        // Superseded by a newer post (or gone) → retract our own banner.
+                        _ => notif_id != 0,
+                    }
+                };
+                if close_self {
+                    bus.close(notif_id).await;
+                }
+            });
+        }
+
+        fn withdraw(&self, id: &str) {
+            let close = {
+                let mut st = self.state.lock().unwrap();
+                match st.get(id).and_then(|e| e.notif_id) {
+                    // Posted → drop + close the exact banner.
+                    Some(notif_id) => {
+                        st.remove(id);
+                        Some(notif_id)
+                    }
+                    // In flight (entry present, no id yet) → mark so the post task
+                    // closes it; or absent → nothing to do.
+                    None => {
+                        if let Some(e) = st.get_mut(id) {
+                            e.withdrawn = true;
+                        }
+                        None
+                    }
+                }
+            };
+            if let Some(notif_id) = close {
+                Self::spawn_close(&self.bus, notif_id);
+            }
+        }
+
+        fn posted(&self) -> Vec<PostedNotification> {
+            let mut out: Vec<PostedNotification> = self
+                .state
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, e)| !e.withdrawn)
+                .map(|(id, e)| PostedNotification {
+                    id: id.clone(),
+                    title: e.title.clone(),
+                    body: e.body.clone(),
+                })
+                .collect();
+            // HashMap iteration is unordered; sort by id so `notifications.list` is
+            // deterministic for a real-notifier assertion (the fake yields Vec order).
+            out.sort_by(|a, b| a.id.cmp(&b.id));
+            out
+        }
+    }
+
+    #[cfg(test)]
+    impl DBusNotifier {
+        /// True once `notify()` has returned an id for `id` (state is `Posted`, not
+        /// `Pending`) — lets a test drive `withdraw` deterministically down the
+        /// `withdraw`-finds-`Posted` path rather than racing the post task.
+        fn is_posted(&self, id: &str) -> bool {
+            matches!(self.state.lock().unwrap().get(id), Some(e) if e.notif_id.is_some())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        use std::time::Duration;
+        use tokio::sync::Notify;
+
+        /// A `NotifyBus` that records calls + hands out incrementing ids, optionally
+        /// pausing `notify()` on a gate so a test can drive the withdraw-mid-post race.
+        struct FakeBus {
+            ids: AtomicU32,
+            notified: Mutex<Vec<(String, String)>>,
+            closed: Mutex<Vec<u32>>,
+            return_zero: bool,
+            hold: bool,
+            entered: Notify, // notify() signals it parked
+            release: Notify, // test signals notify() to return
+        }
+
+        impl FakeBus {
+            fn build(hold: bool, return_zero: bool) -> Arc<Self> {
+                Arc::new(Self {
+                    ids: AtomicU32::new(0),
+                    notified: Mutex::new(vec![]),
+                    closed: Mutex::new(vec![]),
+                    return_zero,
+                    hold,
+                    entered: Notify::new(),
+                    release: Notify::new(),
+                })
+            }
+            fn notified_count(&self) -> usize {
+                self.notified.lock().unwrap().len()
+            }
+            fn closed_ids(&self) -> Vec<u32> {
+                self.closed.lock().unwrap().clone()
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl NotifyBus for FakeBus {
+            async fn notify(&self, title: String, body: String) -> u32 {
+                self.notified.lock().unwrap().push((title, body));
+                if self.hold {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                if self.return_zero {
+                    0
+                } else {
+                    self.ids.fetch_add(1, Ordering::SeqCst) + 1
+                }
+            }
+            async fn close(&self, notif_id: u32) {
+                self.closed.lock().unwrap().push(notif_id);
+            }
+        }
+
+        fn req(id: &str) -> ApprovalRequest {
+            ApprovalRequest {
+                id: id.into(),
+                ts: String::new(),
+                server: String::new(),
+                namespace: "ssh-agent".into(),
+                op: "sign".into(),
+                shed: "web".into(),
+                detail: "ed25519".into(),
+                expires_at: String::new(),
+            }
+        }
+
+        /// Poll a condition — the notifier's work is fire-and-forget on spawned
+        /// tasks, so a condition-wait (bounded) is how tests observe it settle.
+        async fn wait_until(mut cond: impl FnMut() -> bool) {
+            for _ in 0..500 {
+                if cond() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            panic!("condition not met within timeout");
+        }
+
+        #[tokio::test]
+        async fn withdraw_closes_the_exact_banner() {
+            let bus = FakeBus::build(false, false);
+            let n = DBusNotifier::new(bus.clone());
+            n.post(&req("r1"));
+            wait_until(|| n.is_posted("r1")).await; // notify() returned id 1 → Posted
+            n.withdraw("r1"); // deterministically the withdraw-finds-Posted path
+            wait_until(|| bus.closed_ids() == vec![1]).await;
+            assert!(n.posted().is_empty()); // the tracked banner is gone
+        }
+
+        #[tokio::test]
+        async fn repost_retracts_the_previous_banner() {
+            // A same-id replacement (coordinator `PolicyAction::Prompt` re-posts an
+            // id with no intervening withdraw) must close the PREVIOUS critical banner,
+            // not orphan it — an orphaned expire_timeout=0 banner lingers forever.
+            let bus = FakeBus::build(false, false);
+            let n = DBusNotifier::new(bus.clone());
+            n.post(&req("r1"));
+            wait_until(|| n.is_posted("r1")).await; // banner 1 up
+            n.post(&req("r1")); // replacement
+            wait_until(|| bus.closed_ids() == vec![1]).await; // banner 1 retracted
+            wait_until(|| n.is_posted("r1")).await; // banner 2 up (newer gen)
+            n.withdraw("r1");
+            // Exactly banners 1 and 2 were closed, once each — nothing leaked.
+            wait_until(|| {
+                let mut c = bus.closed_ids();
+                c.sort();
+                c == vec![1, 2]
+            })
+            .await;
+        }
+
+        #[tokio::test]
+        async fn withdraw_during_pending_still_closes_after_id_arrives() {
+            // The race: withdraw() runs while notify() is in flight (no id yet). The
+            // post task must close the banner once the daemon returns its id.
+            let bus = FakeBus::build(true, false);
+            let n = DBusNotifier::new(bus.clone());
+            n.post(&req("r1"));
+            bus.entered.notified().await; // notify() is parked → state is Pending
+            n.withdraw("r1"); // marks Withdrawn (no id to close yet)
+            assert!(bus.closed_ids().is_empty());
+            bus.release.notify_one(); // notify() returns id 1
+            wait_until(|| bus.closed_ids() == vec![1]).await; // post task closes it
+        }
+
+        #[tokio::test]
+        async fn no_daemon_tracks_and_closes_nothing() {
+            let bus = FakeBus::build(false, true); // notify() returns 0
+            let n = DBusNotifier::new(bus.clone());
+            n.post(&req("r1"));
+            wait_until(|| n.posted().is_empty() && bus.notified_count() == 1).await;
+            n.withdraw("r1"); // nothing tracked → no close
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            assert!(bus.closed_ids().is_empty());
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 mod linux {
-    use shed_app::traits::{AuthGate, AuthOutcome, AuthPrompt, Notifier};
-    use shed_core::approval::ApprovalRequest;
+    use std::collections::HashMap;
+
+    use shed_app::traits::{AuthGate, AuthOutcome, AuthPrompt};
+
+    use super::dbus_notify::NotifyBus;
 
     /// The polkit action a credential approval authenticates against. Must match the
     /// `<action id>` in the shipped `packaging/polkit/*.policy` (installed to
@@ -155,37 +487,111 @@ mod linux {
         }
     }
 
-    /// Posts an approval banner via libnotify (`notify-send`). Best-effort and
-    /// fire-and-forget so the actor never blocks on the notification daemon; a
-    /// missing `notify-send` just means no banner (approvals still work via the
-    /// pane). Withdraw is a no-op — banners auto-expire; precise recall (a Notify
-    /// id + `CloseNotification` over D-Bus) is a follow-up.
-    pub struct NotifySendNotifier;
+    /// The real freedesktop Notifications transport, over a single session-bus
+    /// connection established lazily on first use and reused thereafter (no bus →
+    /// `notify` returns 0 and `close` is a no-op, so approvals still work via the
+    /// pane). Replaces the old `notify-send` subprocess: a direct `Notify` call
+    /// returns the daemon's id, which `CloseNotification` needs to recall the exact
+    /// banner. The post/withdraw race lives in [`super::dbus_notify::DBusNotifier`].
+    pub struct ZbusNotifyBus {
+        // Only a *successful* connection is cached (via `get_or_try_init`). Caching
+        // a first-call failure — `OnceCell<Option<_>>` sealing a `None` — would
+        // silently no-op every banner for the process lifetime even after the bus
+        // came up; instead a failed attempt is retried on the next notify/close.
+        conn: tokio::sync::OnceCell<zbus::Connection>,
+    }
 
-    impl Notifier for NotifySendNotifier {
-        fn post(&self, req: &ApprovalRequest) {
-            use shed_app::traits::approval_notification_text as text;
-            let title = text::title(req);
-            let body = text::body(req);
-            // We're inside the coordinator actor (a tokio task), so spawn is valid.
-            tokio::spawn(async move {
-                // Absolute path (consistency with the gate); `--` terminates option
-                // parsing so an attacker-influenced title/body (e.g. a shed op named
-                // "--icon=…") can't be swallowed as a notify-send flag.
-                let _ = tokio::process::Command::new("/usr/bin/notify-send")
-                    .args([
-                        "--app-name=shed-desktop",
-                        "--icon=ai.stridelabs.shed-desktop",
-                        "--urgency=critical",
-                        "--",
-                        &title,
-                        &body,
-                    ])
-                    .status()
-                    .await;
-            });
+    impl ZbusNotifyBus {
+        pub fn new() -> Self {
+            Self {
+                conn: tokio::sync::OnceCell::new(),
+            }
         }
-        fn withdraw(&self, _id: &str) {}
+
+        /// A proxy over the shared connection (cheap per-call handle; the expensive
+        /// connection is the cached part). `None` when there's no session bus — the
+        /// attempt is not cached, so a later call retries.
+        async fn proxy(&self) -> Option<NotificationsProxy<'_>> {
+            let conn = self
+                .conn
+                .get_or_try_init(|| async { zbus::Connection::session().await })
+                .await
+                .ok()?;
+            NotificationsProxy::new(conn).await.ok()
+        }
+    }
+
+    /// Escape the markup-significant characters in a notification body: a daemon
+    /// advertising "body-markup" renders an HTML-like subset, and op/shed/detail are
+    /// attacker-influenced off the wire, so a raw `<b>`/`<a …>` could spoof this
+    /// credential-approval banner. `&` is escaped first, so the `&` it introduces
+    /// into `&lt;`/`&gt;` isn't itself re-escaped.
+    pub(super) fn escape_body_markup(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    #[async_trait::async_trait]
+    impl NotifyBus for ZbusNotifyBus {
+        async fn notify(&self, title: String, body: String) -> u32 {
+            let Some(proxy) = self.proxy().await else {
+                return 0;
+            };
+            // A daemon advertising "body-markup" renders a small HTML subset in the
+            // BODY; op/shed/detail are attacker-influenced off the wire, so escape
+            // them or a crafted value could spoof this credential-approval banner.
+            // The summary (title) is always plain text per the freedesktop spec.
+            let body = escape_body_markup(&body);
+            // urgency=critical (2): the daemon must NOT auto-expire the banner — we
+            // close it precisely when the request resolves (that's why we track ids).
+            let urgency = zbus::zvariant::Value::from(2u8);
+            let mut hints = HashMap::new();
+            hints.insert("urgency", &urgency);
+            proxy
+                .notify(
+                    "shed-desktop",
+                    0,                            // replaces_id: a fresh banner
+                    "ai.stridelabs.shed-desktop", // app icon
+                    &title,                       // summary (plain text)
+                    &body,
+                    &[],   // no actions
+                    hints, // urgency=critical
+                    0,     // expire_timeout=0: never auto-expire (we recall it)
+                )
+                .await
+                .unwrap_or(0)
+        }
+
+        async fn close(&self, notif_id: u32) {
+            if let Some(proxy) = self.proxy().await {
+                let _ = proxy.close_notification(notif_id).await;
+            }
+        }
+    }
+
+    /// The freedesktop notifications interface (the subset we drive). The
+    /// `#[zbus::proxy]` macro generates `NotificationsProxy` with async methods.
+    #[zbus::proxy(
+        interface = "org.freedesktop.Notifications",
+        default_service = "org.freedesktop.Notifications",
+        default_path = "/org/freedesktop/Notifications"
+    )]
+    #[allow(clippy::too_many_arguments)]
+    trait Notifications {
+        fn notify(
+            &self,
+            app_name: &str,
+            replaces_id: u32,
+            app_icon: &str,
+            summary: &str,
+            body: &str,
+            actions: &[&str],
+            hints: HashMap<&str, &zbus::zvariant::Value<'_>>,
+            expire_timeout: i32,
+        ) -> zbus::Result<u32>;
+
+        fn close_notification(&self, id: u32) -> zbus::Result<()>;
     }
 }
 
@@ -254,8 +660,16 @@ mod macos {
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::linux::PolkitGate;
+    use super::linux::{escape_body_markup, PolkitGate};
     use shed_app::traits::{AuthGate, AuthOutcome, AuthPrompt};
+
+    #[test]
+    fn escape_body_markup_neutralizes_spoofing() {
+        assert_eq!(escape_body_markup("plain"), "plain");
+        assert_eq!(escape_body_markup("<b>x</b>"), "&lt;b&gt;x&lt;/b&gt;");
+        // `&` is escaped first, so `<` → `&lt;` is NOT re-escaped to `&amp;lt;`.
+        assert_eq!(escape_body_markup("a & <c>"), "a &amp; &lt;c&gt;");
+    }
 
     #[tokio::test]
     async fn biometrics_only_is_unavailable() {
