@@ -305,7 +305,8 @@ export type SshPrefs = {
 export async function getSshApproval(): Promise<SshPrefs> {
   return (
     (await invoke<SshPrefs>("ssh_prefs_get")) ??
-    { method: "biometrics-or-password", policy: "time-based-allow", ttl: "8h" }
+    // Dev-only fallback (non-Tauri `invoke` → null); mirror Rust SshPrefs::default().
+    { method: "biometrics-or-password", policy: "time-based-allow", ttl: "2h" }
   );
 }
 

@@ -17,6 +17,16 @@ pub struct Prefs {
     /// Used only when `terminal_preset == Custom` (`{cmd}`/`{shed}` template).
     #[serde(default)]
     pub terminal_template: String,
+    /// The SSH approval prefs, stored as their wire strings (`method`/`policy`/
+    /// `ttl`). Kept as raw strings — not typed enums — so an old file (fields
+    /// absent) or a value a downgraded build can't parse never fails the whole-file
+    /// decode; the parse-with-fallback happens at hydration (see `lib.rs`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_policy: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh_ttl: Option<String>,
 }
 
 /// Owns the prefs file path + the in-memory copy; writes through on every set.
@@ -50,6 +60,18 @@ impl PrefsStore {
             if let Some(template) = template {
                 prefs.terminal_template = template;
             }
+            self.save(&prefs);
+        }
+    }
+
+    /// Persist the SSH approval prefs (method/policy/TTL wire strings), write-through
+    /// like `set_terminal`. The caller sources these from the coordinator's current
+    /// prefs, so the modal's partial updates compose into a complete snapshot.
+    pub fn set_ssh(&self, method: String, policy: String, ttl: String) {
+        if let Ok(mut prefs) = self.inner.lock() {
+            prefs.ssh_method = Some(method);
+            prefs.ssh_policy = Some(policy);
+            prefs.ssh_ttl = Some(ttl);
             self.save(&prefs);
         }
     }

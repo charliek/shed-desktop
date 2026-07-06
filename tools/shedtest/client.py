@@ -178,6 +178,11 @@ class _ApprovalOps:
             params["ttl"] = ttl
         self.call("ui.set_ssh_approval", params)
 
+    def ssh_prefs_get(self) -> dict:
+        """The coordinator's current SSH approval prefs ({method, policy, ttl}) —
+        the read side of set_ssh_approval, so a test can assert what a set applied."""
+        return self.call("ui.ssh_prefs")
+
     def approvals_list(self) -> list[dict]:
         return self.call("approvals.list")["approvals"]
 

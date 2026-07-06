@@ -192,6 +192,31 @@ def test_terminal_pref_persists_and_drives_preview(tauri):
     assert tauri.prefs_get()["terminal_preset"] == "ghostty"
 
 
+def test_ssh_prefs_round_trip_and_partial_update(tauri):
+    # B4: the full {method, policy, ttl} is drivable + observable. ui.set_ssh_approval
+    # applies it; ui.ssh_prefs reads back exactly what the coordinator holds — and a
+    # partial update (one field) composes with the rest, the property the modal relies
+    # on when it sends only the changed control. Restore the prior prefs after (the app
+    # + coordinator are session-scoped, so a left-over policy would leak to later tests).
+    before = tauri.ssh_prefs_get()
+    try:
+        tauri.set_ssh_approval(method="prompt", policy="time-based-allow", ttl="4h")
+        got = tauri.ssh_prefs_get()
+        assert got["method"] == "prompt"
+        assert got["policy"] == "time-based-allow"
+        assert got["ttl"] == "4h"
+        # a policy-only update leaves method + ttl untouched (partial-update compose)
+        tauri.set_ssh_approval(policy="always-allow")
+        got = tauri.ssh_prefs_get()
+        assert got["policy"] == "always-allow"
+        assert got["method"] == "prompt"
+        assert got["ttl"] == "4h"
+    finally:
+        tauri.set_ssh_approval(
+            method=before["method"], policy=before["policy"], ttl=before["ttl"]
+        )
+
+
 def test_preferences_modal_opens(tauri):
     # A1c-2c(2): ui.show_preferences → the frontend opens the in-app Preferences modal
     # and reports modal=="prefs", so the harness verifies it ACTUALLY rendered (round-trip:

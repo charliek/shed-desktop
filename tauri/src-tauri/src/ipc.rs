@@ -33,6 +33,7 @@ use shed_core::models::CreateShedRequest;
 use shed_core::rc::{self, RcError, RcKind, RcSession, RcState};
 
 use crate::env::Env;
+use crate::prefs::SharedPrefs;
 use crate::state::SharedUi;
 use crate::termctl::SharedTerminal;
 
@@ -116,6 +117,9 @@ pub struct Handler {
     /// The Remote-Control service (Agents pane): the session store + the process
     /// seam. Shared with the frontend invoke commands.
     rc_service: Arc<RcService>,
+    /// The persisted prefs store, so `ui.set_ssh_approval` persists the chosen SSH
+    /// prefs through the same path as the frontend command (both survive a restart).
+    prefs: SharedPrefs,
     /// Monotonic token stamped onto each `sheds.refresh` so it can wait for the
     /// frontend to echo it back (a synchronous refresh — see [`Self::sheds_refresh`]).
     refresh_seq: AtomicU64,
@@ -132,6 +136,7 @@ impl Handler {
         terminal: SharedTerminal,
         coordinator: Coordinator,
         rc_service: Arc<RcService>,
+        prefs: SharedPrefs,
     ) -> Self {
         Self {
             env,
@@ -141,6 +146,7 @@ impl Handler {
             terminal,
             coordinator,
             rc_service,
+            prefs,
             refresh_seq: AtomicU64::new(0),
             pid: std::process::id(),
         }
@@ -212,6 +218,7 @@ impl Handler {
             "notification.invoke" => self.notification_invoke(params).await,
             "notification.open" => self.notification_open(),
             "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
+            "ui.ssh_prefs" => self.ssh_prefs().await,
             "tray.dump" => Ok(self.tray_dump()),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
@@ -643,7 +650,18 @@ impl Handler {
         self.coordinator
             .set_ssh_approval(p.method, p.policy, p.ttl)
             .await;
+        // Persist the resulting prefs (same path as the frontend command) so a
+        // harness-driven change also survives a restart.
+        let (m, pol, ttl) = crate::ssh_prefs_wire(&self.coordinator.ssh_prefs().await);
+        self.prefs.set_ssh(m, pol, ttl);
         Ok(json!({}))
+    }
+
+    /// `ui.ssh_prefs` → the coordinator's current SSH approval prefs
+    /// (`{method, policy, ttl}`) — the observe side of `ui.set_ssh_approval`, so the
+    /// harness can assert what a set actually applied (the drivability North Star).
+    async fn ssh_prefs(&self) -> Result<Value, (String, String)> {
+        Ok(json!(self.coordinator.ssh_prefs().await))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),

@@ -530,11 +530,28 @@ const APPROVAL_METHODS: { id: SshPrefs["method"]; label: string; detail: string 
   { id: "prompt", label: "Prompt only", detail: "A plain Approve button — no password." },
 ];
 
+// The SSH approval policies, most → least permissive (mirrors SshApprovalPolicy in
+// shed-core). `prompts` gates the Method picker and `usesDuration` gates the
+// Duration field — the SAME policy→behavior mapping as the Swift app
+// (SSHApprovalPolicy.prompts / .usesDuration): only the two "Always" options
+// decide with no prompt, and only "Time Based Allow" carries a duration.
+const SSH_POLICIES: { id: string; label: string; prompts: boolean; usesDuration: boolean }[] = [
+  { id: "always-allow", label: "Always Allow", prompts: false, usesDuration: false },
+  { id: "per-shed-allow", label: "Per Shed Allow", prompts: true, usesDuration: false },
+  { id: "time-based-allow", label: "Time Based Allow", prompts: true, usesDuration: true },
+  { id: "always-ask", label: "Always Ask", prompts: true, usesDuration: false },
+  { id: "always-deny", label: "Always Deny", prompts: false, usesDuration: false },
+];
+
 function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [presets, setPresets] = useState<TerminalPresetInfo[]>([]);
   const [preset, setPreset] = useState("custom");
   const [template, setTemplate] = useState("");
   const [method, setMethod] = useState<SshPrefs["method"]>("biometrics-or-password");
+  const [policy, setPolicy] = useState("time-based-allow");
+  const [ttl, setTtl] = useState("2h");
+  const sshGen = useRef(0);
+  const ttlAtFocus = useRef(""); // the Duration value when the field gained focus
 
   useEffect(() => {
     void fetchTerminalPresets().then(setPresets);
@@ -542,7 +559,16 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
       setPreset(p.terminal_preset);
       setTemplate(p.terminal_template);
     });
-    void getSshApproval().then((p) => setMethod(p.method));
+    // Guard the initial load with the same generation ref as applySsh: if the user
+    // edits a pref before this slow first read resolves, the stale load must not
+    // clobber their change (its optimistic set already bumped sshGen).
+    const mine = ++sshGen.current;
+    void getSshApproval().then((p) => {
+      if (mine !== sshGen.current) return;
+      setMethod(p.method);
+      setPolicy(p.policy);
+      setTtl(p.ttl);
+    });
   }, []);
 
   useEffect(() => {
@@ -561,16 +587,27 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
     setTemplate(t);
     if (preset === "custom") void setTerminalPref("custom", t);
   };
-  const chooseMethod = (id: SshPrefs["method"]) => {
-    setMethod(id); // optimistic
-    // Reconcile from the backend so a rejected/failed write can't leave the radio
-    // misrepresenting the actual gate strength (a security-signal surface).
+  // Apply one SSH-pref delta: set it optimistically, persist only the changed
+  // field (the coordinator composes partial updates), then reconcile ALL three
+  // from the backend — so a rejected/failed write can't leave the method radio
+  // misrepresenting the actual gate strength (a security-signal surface). A
+  // generation guard drops a superseded reload so fast Duration typing can't be
+  // clobbered by an out-of-order confirm.
+  const applySsh = (delta: { method?: SshPrefs["method"]; policy?: string; ttl?: string }) => {
+    if (delta.method !== undefined) setMethod(delta.method);
+    if (delta.policy !== undefined) setPolicy(delta.policy);
+    if (delta.ttl !== undefined) setTtl(delta.ttl);
+    const mine = ++sshGen.current;
     void (async () => {
-      await setSshApproval(id); // method only — policy/TTL unchanged
+      await setSshApproval(delta.method, delta.policy, delta.ttl);
       const p = await getSshApproval();
+      if (mine !== sshGen.current) return; // superseded by a newer change
       setMethod(p.method);
+      setPolicy(p.policy);
+      setTtl(p.ttl);
     })();
   };
+  const policyMeta = SSH_POLICIES.find((p) => p.id === policy);
 
   return (
     <div
@@ -637,33 +674,81 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="mt-6 mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Credential approvals</div>
-        <p className="mb-3 text-[13px] text-shed-text-muted">How an SSH-key approval is confirmed when the host agent routes one here.</p>
-        <div className="flex flex-col gap-2">
-          {APPROVAL_METHODS.map((m) => {
-            const active = method === m.id;
-            return (
-              <label
-                key={m.id}
-                className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
-                style={{
-                  borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
-                  background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+        <p className="mb-3 text-[13px] text-shed-text-muted">What happens when the host agent routes an SSH-key approval here.</p>
+        <div className="flex flex-col gap-3">
+          <Field label="Approval policy">
+            <select
+              value={policy}
+              onChange={(e) => applySsh({ policy: e.target.value })}
+              className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none"
+              data-ssh-policy
+            >
+              {SSH_POLICIES.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </Field>
+
+          {/* Duration — only the time-based policy carries one (policy.usesDuration). */}
+          {policyMeta?.usesDuration && (
+            <Field label="Duration">
+              <input
+                value={ttl}
+                // Free text → keep each keystroke LOCAL (optimistic) and persist only
+                // on blur/Enter, and only when it changed. `applySsh`→set_ssh_approval
+                // resets live SSH grants + rewrites prefs.json, so a per-keystroke
+                // persist would revoke active grants and churn disk mid-typing.
+                onChange={(e) => setTtl(e.target.value)}
+                onFocus={() => {
+                  ttlAtFocus.current = ttl;
                 }}
-              >
-                <input
-                  type="radio"
-                  name="approval-method"
-                  checked={active}
-                  onChange={() => chooseMethod(m.id)}
-                  style={{ accentColor: "var(--shed-accent)" }}
-                />
-                <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
-                <span className="flex-1" />
-                <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
-              </label>
-            );
-          })}
+                onBlur={() => {
+                  if (ttl !== ttlAtFocus.current) applySsh({ ttl });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                placeholder="2h"
+                className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
+                data-ssh-ttl
+              />
+            </Field>
+          )}
+
+          {/* Method — only the prompting policies confirm an approval (policy.prompts). */}
+          {policyMeta?.prompts && (
+            <div className="flex flex-col gap-2">
+              <span className="text-[12px] font-semibold text-shed-text-secondary">Method</span>
+              {APPROVAL_METHODS.map((m) => {
+                const active = method === m.id;
+                return (
+                  <label
+                    key={m.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
+                    style={{
+                      borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
+                      background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="approval-method"
+                      checked={active}
+                      onChange={() => applySsh({ method: m.id })}
+                      style={{ accentColor: "var(--shed-accent)" }}
+                    />
+                    <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
+                    <span className="flex-1" />
+                    <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
+        <p className="mt-3 text-[12px] text-shed-text-muted">
+          Always Allow / Always Deny decide every SSH sign with no prompt. The others prompt, then remember your approval per the policy. Changing the policy clears live grants. Method is how each approval is confirmed.
+        </p>
       </div>
     </div>
   );
