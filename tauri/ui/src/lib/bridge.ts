@@ -187,10 +187,11 @@ export async function setTerminalPref(preset: string, template?: string): Promis
 }
 
 /** Open a shed in the user's chosen terminal (best-effort; a no-op in a browser
- *  and disabled server-side under test mode). */
-export async function openTerminal(shed: string, host: string): Promise<void> {
+ *  and disabled server-side under test mode). A non-empty `session` attaches that
+ *  tmux session (the Agents console button → `tmux attach -t rc-<slug>`). */
+export async function openTerminal(shed: string, host: string, session?: string): Promise<void> {
   if (!inTauri()) return;
-  await invoke("open_terminal", { shed, host });
+  await invoke("open_terminal", { shed, host, session });
 }
 
 /* ---- create (the New-Shed dialog) ----------------------------------------- */
@@ -357,4 +358,65 @@ export function useNowTick(intervalMs = 1000): number {
     return () => clearInterval(t);
   }, [intervalMs]);
   return now;
+}
+
+/* ---- remote-control agents (B2.4) ----------------------------------------- */
+
+export type RcKind = "claude-rc" | "claude-broker" | "shell";
+export type RcState =
+  | "starting" | "ready" | "reconnecting" | "needs-trust" | "needs-auth" | "dead";
+
+/** A remote-control session, as shed-app serializes it (the pane's fields). The
+ *  table/wire identity is the computed `host/shed/slug`, not encoded. */
+export type RcSession = {
+  host: string;
+  shed: string;
+  slug: string;
+  tmux_session: string;
+  display_name: string;
+  workdir: string;
+  kind: RcKind;
+  state: RcState;
+  url?: string | null;
+  rc_id?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  target_label?: string | null;
+  managed: boolean;
+};
+
+/** The live RC sessions across running sheds (the same data the `rc.list` op
+ *  serves the harness). Best-effort — [] in a browser / on error. */
+export async function fetchRcSessions(host?: string, shed?: string): Promise<RcSession[]> {
+  return (await invoke<{ sessions: RcSession[] }>("rc_list", { host, shed }))?.sessions ?? [];
+}
+
+export type RcLaunchFields = {
+  shed: string;
+  kind: RcKind;
+  host?: string;
+  // camelCase: Tauri looks up the Rust `display_name`/`initial_prompt` params here.
+  displayName?: string;
+  workdir?: string;
+  initialPrompt?: string;
+};
+
+/** Launch an RC session. THROWS on error (the pane surfaces it) — unlike the
+ *  swallowing `invoke`, because a validation / SSH failure must be shown. */
+export async function rcLaunch(fields: RcLaunchFields): Promise<RcSession> {
+  const core = await import("@tauri-apps/api/core");
+  return core.invoke<RcSession>("rc_launch", fields);
+}
+
+/** Kill an RC session. THROWS on error (the pane surfaces it). */
+export async function rcKill(shed: string, slug: string, host?: string): Promise<void> {
+  const core = await import("@tauri-apps/api/core");
+  await core.invoke("rc_kill", { shed, slug, host });
+}
+
+/** Report the rendered RC sessions so the `agents.dump` op can observe them — the
+ *  drivable truth of the Agents pane, like `dashboard.dump` reads the sheds.
+ *  (`ui_report` merges this `agents` key with the shell's snapshot.) */
+export function reportAgents(sessions: RcSession[]): void {
+  void invoke("ui_report", { snapshot: { agents: sessions } });
 }

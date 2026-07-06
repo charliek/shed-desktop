@@ -45,7 +45,15 @@ use tauri::Manager;
 #[tauri::command]
 fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
     if let Ok(mut s) = ui.lock() {
-        s.snapshot = Some(snapshot);
+        // Merge object keys so a partial reporter (the Agents pane publishing only
+        // `agents`) doesn't clobber the shell's snapshot (pane/sheds/…), and vice
+        // versa. The shell re-sends its keys every render, so nothing goes stale.
+        match (s.snapshot.as_mut(), snapshot) {
+            (Some(serde_json::Value::Object(existing)), serde_json::Value::Object(incoming)) => {
+                existing.extend(incoming);
+            }
+            (_, incoming) => s.snapshot = Some(incoming),
+        }
     }
 }
 

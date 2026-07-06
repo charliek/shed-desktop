@@ -513,7 +513,20 @@ impl Handler {
     /// `dashboard.dump` reads the reported sheds) so the pane is drivable by
     /// logical content, not just a screenshot.
     fn agents_dump(&self) -> Value {
-        json!({ "sessions": self.ui_get("agents").unwrap_or_else(|| json!([])) })
+        // UI truth = what's rendered: the Agents pane only reports its sessions
+        // while mounted, so off-pane the `agents` snapshot is stale — report [] unless
+        // the UI is actually on the agents pane (like `dashboard.dump` reflects the
+        // current sheds, not a stale set).
+        let on_agents = self
+            .ui_get("pane")
+            .and_then(|p| p.as_str().map(|s| s == "agents"))
+            .unwrap_or(false);
+        let sessions = if on_agents {
+            self.ui_get("agents").unwrap_or_else(|| json!([]))
+        } else {
+            json!([])
+        };
+        json!({ "sessions": sessions })
     }
 
     // -- approvals (the security spine; the harness drives the full matrix) ----

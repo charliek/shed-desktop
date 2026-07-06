@@ -17,15 +17,13 @@ import {
   createStart, createStatus, createCancel, fetchHosts,
   fetchApprovals, decideApproval, fetchActivity, fetchGateNamespaces,
   getSshApproval, setSshApproval,
+  fetchRcSessions, rcLaunch, rcKill, reportAgents,
   useCoordinatorData, useNowTick,
   type Pane, type Shed, type HostDiskUsage, type TerminalPresetInfo,
   type Modal, type CreateProgress, type Approval, type AuditEntry, type SshPrefs,
+  type RcSession, type RcKind, type RcState,
 } from "@/lib/bridge";
 
-/* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
-const SEED_AGENTS = [
-  { id: "g1", shed: "localmac-dev/ztest", name: "claude-test", kind: "claude-rc", status: "ready", sub: "tmux rc-dqtzeu · /home/shed · made by shed" },
-];
 /** "server/shed" when multi-server, else the shed name. */
 function qualifiedShed(server: string | null | undefined, shed: string | null | undefined): string {
   return server ? `${server}/${shed ?? ""}` : (shed ?? "");
@@ -275,32 +273,159 @@ function ApprovalsPane({ approvals }: { approvals: Approval[] }) {
   );
 }
 
-function AgentsPane() {
+/* ---- Agents / remote-control (B2.4) --------------------------------------- */
+const RC_KINDS: { id: RcKind; label: string }[] = [
+  { id: "claude-rc", label: "Claude" },
+  { id: "shell", label: "Shell" },
+];
+const rcInput =
+  "w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none focus:border-shed-accent";
+
+/** State → badge tone: green ready, red dead, amber for in-progress / needs-action. */
+function rcStateTone(state: RcState): { bg: string; fg: string } {
+  if (state === "ready")
+    return { bg: "color-mix(in oklch, var(--shed-ok) 15%, var(--shed-inset))", fg: "var(--shed-ok)" };
+  if (state === "dead") return { bg: "var(--shed-deny-bg)", fg: "var(--shed-danger)" };
+  return { bg: "color-mix(in oklch, var(--shed-attention) 15%, var(--shed-inset))", fg: "var(--shed-attention)" };
+}
+
+function AgentsPane({ sheds }: { sheds: Shed[] }) {
+  const [sessions, setSessions] = useState<RcSession[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const gen = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const mine = ++gen.current;
+    const rows = await fetchRcSessions();
+    if (mine === gen.current) setSessions(rows); // drop a superseded fetch
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  // Publish the rendered sessions so the `agents.dump` op can observe them.
+  useEffect(() => { reportAgents(sessions); }, [sessions]);
+
   return (
     <div>
       <PageHead
         title="Remote-control agents"
         sub="Drive an agent — a REPL, a shell, or a coding agent — inside a shed from here."
-        right={<HeadAction icon={Plus} label="New session" />}
+        right={<HeadAction icon={Plus} label="New session" onClick={() => { setError(null); setShowForm((v) => !v); }} />}
       />
-      <div className="flex flex-col gap-3">
-        {SEED_AGENTS.map((g) => (
-          <div key={g.id} className={cn(card, "flex items-center gap-3.5 py-3.5 pl-3.5 pr-4")} style={{ animation: "shed-in .25s ease" }}>
-            <span className="inline-flex min-w-[74px] flex-none items-center justify-center rounded-[9px] px-3 py-2.5 text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-ok) 15%, var(--shed-inset))", color: "var(--shed-ok)" }}>{g.status}</span>
-            <div className="min-w-0 flex-1">
-              <div className="mb-1 flex flex-wrap items-center gap-2.5">
-                <span className="text-[16px] font-bold text-shed-text">ztest/{g.name}</span>
-                <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium text-shed-text-secondary">{g.kind}</span>
-              </div>
-              <div className="truncate text-[13px] text-shed-text-muted">{g.sub}</div>
-            </div>
-            <button className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
-              <ExternalLink size={16} /> Open in Claude
-            </button>
-            <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" />
-            <IconBtn icon={Trash2} tone="danger" title="End session" />
+      {showForm && (
+        <LaunchForm sheds={sheds} onLaunched={() => { setShowForm(false); void refresh(); }} onError={setError} />
+      )}
+      {error && (
+        <div className={cn(card, "mb-3 flex items-start gap-2 p-3.5 text-[13px]")} style={{ borderColor: "var(--shed-danger)", color: "var(--shed-danger)" }}>
+          <X size={16} className="mt-px flex-none" /> <span className="min-w-0 break-words">{error}</span>
+        </div>
+      )}
+      {sessions.length === 0 ? (
+        <EmptyCard>No remote-control sessions. Start one with “New session”.</EmptyCard>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {sessions.map((s) => (
+            <SessionCard key={`${s.host}/${s.shed}/${s.slug}`} session={s} onKilled={() => void refresh()} onError={setError} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionCard({ session: s, onKilled, onError }: { session: RcSession; onKilled: () => void; onError: (e: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const tone = rcStateTone(s.state);
+  const sub = [`tmux ${s.tmux_session}`, s.workdir, s.created_by].filter(Boolean).join(" · ");
+  const kill = async () => {
+    setBusy(true);
+    try { await rcKill(s.shed, s.slug, s.host); onKilled(); }
+    catch (e) { onError(String(e)); setBusy(false); }
+  };
+  return (
+    <div className={cn(card, "flex items-center gap-3.5 py-3.5 pl-3.5 pr-4")} style={{ animation: "shed-in .25s ease" }}>
+      <span className="inline-flex min-w-[80px] flex-none items-center justify-center rounded-[9px] px-3 py-2.5 text-[14px] font-semibold" style={{ background: tone.bg, color: tone.fg }}>{s.state}</span>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2.5">
+          <span className="text-[16px] font-bold text-shed-text">{s.display_name}</span>
+          <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium text-shed-text-secondary">{s.kind}</span>
+          {!s.managed && <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[11px] font-semibold text-shed-text-muted">legacy</span>}
+        </div>
+        <div className="truncate text-[13px] text-shed-text-muted">{sub}</div>
+      </div>
+      {s.url && (
+        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+          <ExternalLink size={16} /> Open in Claude
+        </a>
+      )}
+      <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" onClick={() => void openTerminal(s.shed, s.host, s.tmux_session)} />
+      <IconBtn icon={Trash2} tone="danger" title="End session" onClick={() => void kill()} disabled={busy} spin={busy} />
+    </div>
+  );
+}
+
+function LaunchForm({ sheds, onLaunched, onError }: { sheds: Shed[]; onLaunched: () => void; onError: (e: string) => void }) {
+  const running = sheds.filter((s) => s.status === "running");
+  const [target, setTarget] = useState(running[0] ? `${running[0].host}/${running[0].name}` : "");
+  const [kind, setKind] = useState<RcKind>("claude-rc");
+  const [displayName, setDisplayName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const sel = running.find((s) => `${s.host}/${s.name}` === target);
+    if (!sel) { onError("Pick a running shed to launch in."); return; }
+    setBusy(true);
+    onError("");
+    try {
+      await rcLaunch({
+        shed: sel.name,
+        host: sel.host,
+        kind,
+        displayName: displayName.trim() || undefined,
+        initialPrompt: prompt.trim() || undefined,
+      });
+      setDisplayName(""); setPrompt("");
+      onLaunched();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn(card, "mb-3 flex flex-col gap-3 p-4")} style={{ animation: "shed-in .2s ease" }}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Shed">
+          <select value={target} onChange={(e) => setTarget(e.target.value)} className={rcInput}>
+            {running.length === 0 && <option value="">no running sheds</option>}
+            {running.map((s) => (
+              <option key={`${s.host}/${s.name}`} value={`${s.host}/${s.name}`}>{qualifiedShed(s.host, s.name)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kind">
+          <div className="flex gap-2">
+            {RC_KINDS.map((k) => {
+              const on = kind === k.id;
+              return (
+                <button key={k.id} onClick={() => setKind(k.id)} className={cn("hbtn flex-1 rounded-[9px] px-3 py-2 text-[14px] font-semibold", on ? "text-shed-accent" : "text-shed-text-muted")} style={{ background: on ? "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))" : "var(--shed-inset)", border: on ? "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))" : "1px solid var(--shed-border)" }}>{k.label}</button>
+              );
+            })}
           </div>
-        ))}
+        </Field>
+      </div>
+      <Field label="Display name (optional)">
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="defaults to shed/slug" className={rcInput} />
+      </Field>
+      <Field label={kind === "shell" ? "Initial command (optional)" : "Initial prompt (optional)"}>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} placeholder={kind === "shell" ? "npm install && npm test" : "summarize this repo"} className={cn(rcInput, "resize-none")} />
+      </Field>
+      <div className="flex justify-end">
+        <button onClick={() => void submit()} disabled={busy || !target} className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold disabled:opacity-50" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+          <Sparkles size={18} /> {busy ? "Launching…" : "Launch"}
+        </button>
       </div>
     </div>
   );
@@ -851,7 +976,7 @@ export default function App() {
           <div className="mx-auto max-w-[880px]" data-pane={pane}>
             {pane === "sheds" && <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />}
             {pane === "approvals" && <ApprovalsPane approvals={approvals} />}
-            {pane === "agents" && <AgentsPane />}
+            {pane === "agents" && <AgentsPane sheds={sheds} />}
             {pane === "activity" && <ActivityPane />}
             {pane === "system" && <SystemPane />}
           </div>
