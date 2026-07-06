@@ -15,8 +15,15 @@
 
 ## Status — pick up here (2026-07-04)
 
-**Branch `tauri-phase-c`** (off merged `feat/rust-core` = `c10d386`). **5 of ~11 milestones LANDED, all
-gates green** (shed-app 65 · tauri crate tests 10 · e2e-tauri 45 · WebKitGTK render gate 47):
+**Branch `tauri-phase-c`** (off merged `feat/rust-core` = `c10d386`). **6 of ~11 milestones LANDED, all
+gates green** (shed-app 76 `--features rc` · tauri crate 12 · e2e-tauri 58 · e2e-ci mac 74 · e2e-gtk 10 ·
+WebKitGTK render gate green):
+- **B2 — ✅ Agents/RC pane (2026-07-06 autonomous run).** The 5-part port: B2.1 `shed-core::rc` (`dc6cbb8`)
+  → B2.2 `shed-app::rc` + the `RcRunner` portability seam (`1c800fd`) → B2.3 Tauri IPC (`1367fd7`) → B2.4
+  the live React pane (`919c0f7`) → B2.5 harness retag (`ef75dd1`). `test_agents` green at BOTH `--target
+  tauri` (58) AND `--target mac` (74); e2e-gtk additive (10, agents skip). The real-SSH path + hands-on
+  runbook: `docs/tauri-b2-agents-test-plan.md`. Adversarial passes caught + fixed 2 real bugs (a CRITICAL
+  `TokioProcessRunner` timeout-watchdog hang; a stale-session `list` reconcile).
 - **B1a** — system tray + native menu + hide-on-close lifecycle + drivable `tray.dump` (both platforms).
 - **A1** — host-agent socket peer-UID check (fail closed). **A2** — one OS gate prompt per id (dedup).
   **A3** — clear session grants on disconnect. **B5** — macOS approval notifier (osascript).
