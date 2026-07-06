@@ -9,6 +9,7 @@ pub mod config;
 pub mod create;
 pub mod http;
 pub mod models;
+pub mod rc;
 pub mod sse;
 pub mod terminal;
 pub mod tls;

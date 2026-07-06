@@ -2382,6 +2382,7 @@ dependencies = [
  "async-trait",
  "futures-util",
  "httpmock",
+ "regex",
  "reqwest",
  "rustls",
  "serde",
