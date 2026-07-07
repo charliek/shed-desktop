@@ -1,9 +1,16 @@
 # Tauri ↔ Swift design-parity hardening — plan
 
-**Status (pick-up point):** ALL MILESTONES DONE — M1 (tray template + count), M2 (popover
-content-size + icons + accent hover + rounded + native vibrancy frost), M3 (control-button tint),
-M4 (dense rescale of every pane), M5 (dark-theme pass + popover OS-follow fix) — each committed
-green. Next: open the PR onto `feat/rust-core` + `/git-commands:watch-pr`. Branch
+**Status (pick-up point):** M1–M5 DONE + MERGED (PR #31, `0f93dc4`). **Follow-up round**
+(maintainer feedback on the running apps, branch `tauri-parity-followup`): (F1) popover — dropped
+the native vibrancy frost (read gray/environment-tinted) for an OPAQUE `--shed-surface` near-white
+(kept the transparent window for rounded corners + shadow); (F2) Preferences restyled to the macOS grouped
+`Form` look — a recessed `--shed-bg` canvas with white rounded section cards, small-caps headers,
+hairline row dividers, right-aligned controls (was a modal of individually-bordered radio cards).
+All `data-prefs`/`data-launch-at-login`/`data-ssh-*` hooks preserved.
+
+**Original status:** ALL MILESTONES DONE — M1 (tray template + count), M2 (popover
+content-size + icons + accent hover + rounded + native vibrancy frost → F1 flat white), M3 (control-button tint),
+M4 (dense rescale of every pane), M5 (dark-theme pass + popover OS-follow fix). Branch
 `tauri-design-parity` off
 `feat/rust-core` (`4fce382`, PR #30). One PR onto `feat/rust-core`, one green-per-commit
 sub-milestone each — same flow as Batch-2/3 (implement → `/simplify` → adversarial review

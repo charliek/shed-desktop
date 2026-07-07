@@ -747,24 +747,13 @@ pub fn run() {
                 // there are no visible resize handles and the user can't drag it.
                 .inner_size(tray::POPOVER_WIDTH, tray::POPOVER_MAX_HEIGHT)
                 .decorations(false) // borderless
-                // TRANSPARENT + the native macOS `Popover` vibrancy material (radius
-                // 12), so the popover is the real frosted, environment-tinted menu-bar
-                // surface — indistinguishable from the Swift NSPopover (maintainer
-                // decision, 2026-07-07). The webview paints only its text/rows over the
-                // material (its own bg is transparent); the OS draws the window shadow.
+                // TRANSPARENT so the webview can round its own 12px corners + cast a
+                // window shadow; the card itself paints an OPAQUE `--shed-surface` fill
+                // (a clean, consistent near-white — the maintainer preferred that over
+                // the native `Popover` vibrancy material, which tints with the desktop
+                // behind it and reads gray, 2026-07-07).
                 .transparent(true)
                 .shadow(true)
-                .effects(
-                    tauri::window::EffectsBuilder::new()
-                        .effect(tauri::window::Effect::Popover)
-                        // Active (not the default follows-window-state) so the frost
-                        // stays at full strength even though the popover is a
-                        // non-activating utility window — otherwise it renders in the
-                        // washed-out inactive state.
-                        .state(tauri::window::EffectState::Active)
-                        .radius(12.0)
-                        .build(),
-                )
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .resizable(true)
