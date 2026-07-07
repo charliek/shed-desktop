@@ -66,7 +66,7 @@ control character, a value over 2000 UTF-8 bytes, or any prompt for a kind that 
 typed input (`claude-broker`) is rejected with `invalid-param`. (Mirrors shed-remote-agent's
 create-request normalization.)
 
-Each `RcSession` carries the [RC Session Convention v1](rc-sessions.md) metadata:
+Each `RcSession` carries the [RC Session Convention v2](rc-sessions.md) metadata:
 `managed`, and (when managed) `rc_id`, `created_by`, `created_at`, `target_label`.
 A legacy/unmanaged `rc-*` session decodes with `managed: false` and no metadata.
 

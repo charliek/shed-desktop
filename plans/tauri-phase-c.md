@@ -15,7 +15,7 @@
 
 ## Status — pick up here (2026-07-04)
 
-**Branch `tauri-phase-c`** (off merged `feat/rust-core` = `c10d386`). **6 of ~11 milestones LANDED, all
+**Branch `tauri-phase-c`** (off merged `feat/rust-core` = `c10d386`). **9 of ~11 milestones LANDED, all
 gates green** (shed-app 76 `--features rc` · tauri crate 12 · e2e-tauri 58 · e2e-ci mac 74 · e2e-gtk 10 ·
 WebKitGTK render gate green):
 - **B2 — ✅ Agents/RC pane (2026-07-06 autonomous run).** The 5-part port: B2.1 `shed-core::rc` (`dc6cbb8`)
@@ -31,13 +31,19 @@ WebKitGTK render gate green):
   the Linux build (fixed: Linux uses `SO_PEERCRED`). **Run `make tauri-build-linux` (the render gate) for
   ANY shared/Linux change — the mac `e2e-tauri` alone won't catch it.**
 
-**NEXT FOCUS → B2, the Agents/RC pane (§3.2)** — the agent panel is high-value for hands-on testing, so it
-leads. Then **a real build/packaging + run test on both macOS + Linux** (toward the flip, §4–§5) — this
-hands-on run against a live `shed-host-agent` **can also serve as the B7 / A5 real-agent smoke** (mint +
-gate a real approval end-to-end), so B7 need not be a separate step. **When B2 lands, draft a TEST PLAN**
-(the key features done vs remaining, per platform) so the maintainer knows exactly what to exercise. After
-that: **B1b** (mac popover — the Swift-vs-Tauri decision), **B3** (macOS Touch-ID gate, objc2), **B4**
-(prefs + autostart), **A4** (D-Bus withdraw).
+**MAINTAINER DECISION (2026-07-06):** for the macOS menu-bar, build the **rich Tauri popover** (B1b) —
+the maintainer compared the basic tray menu vs. the Swift app and **prefers the fuller mac-app menu**, so
+B1b targets parity with the Swift `MenuBarContentView` (host-agent dot · running sheds · ≤3 pending
+approval cards · footer: Open dashboard / Preferences / Check for Updates / Quit), NOT the native-Swift
+`NSStatusItem` fallback in §8.
+
+**NEXT FOCUS → B1b** (the rich mac popover, decision above), **B3** (macOS Touch-ID gate, objc2),
+**B4 launch-at-login** (the B4 SSH-prefs half landed; Swift Preferences has a "Launch at login" toggle to
+match), and **A5/B7** (the real-agent smoke).
+The A5/B7 smoke rides along with **a real build/packaging + run test on both macOS + Linux** (toward the
+flip, §4–§5): a hands-on run against a live `shed-host-agent` mints + gates a real approval end-to-end, so
+B7 need not be a separate step. Test plans are drafted — `docs/tauri-b2-agents-test-plan.md` (B2) +
+`docs/tauri-batch2-test-plan.md` (B1/A4/B4).
 
 **B2 design — LOCKED (2026-07-05, maintainer-agreed; full spec in §3.2). The five decisions:**
 1. **RC extraction boundary** — pure classify / `normalize_rc_prompt` / argv / DTOs + `RcSession`/`from_dto`
@@ -358,11 +364,13 @@ on a pending prompt, withdraws on resolve; a notification action routes back thr
 used to return `NoopNotifier` on non-Linux, so the mac app posted no banners vs the Swift presenter's
 approve/deny actions.)
 
-## 3.6 Batch 2 — B1 tray/menu-bar + B4 prefs/autostart + A4 D-Bus withdraw (planned 2026-07-06)
+## 3.6 Batch 2 — B1 (expanded tray menu) + B4 (SSH-prefs) + A4 (D-Bus withdraw) — ✅ LANDED CI-green
 
-*The next autonomous batch, headlined by the **menu-bar on mac + Linux** (B1). Grounded in-tree; each item
-is buildable + hermetically gated now, with the real-hardware check deferred to a maintainer hands-on.
-Same flow as B2: implement → `/simplify` → adversarial (`/cursor:review` external + an internal reviewer,
+*Landed CI-green (2026-07-06): **B1** the expanded tray menu (`900780e`), **A4** the D-Bus/`zbus` withdraw
+(`bf48a83`), and **B4** SSH-approval-prefs persistence + full modal controls (`e19f08f`) — hands-on runbook
+`docs/tauri-batch2-test-plan.md`. The mac rich popover (B1-mac → **B1b**) and launch-at-login
+(B4-autostart) are carved out as remaining, and the real-hardware check stays a maintainer hands-on. Same
+flow as B2: implement → `/simplify` → adversarial (`/cursor:review` external + an internal reviewer,
 cross-checked) → fold → gates → commit green.*
 
 **B1 — tray/menu-bar (headline; B1a foundation is in — `tray.rs`, tray built at `lib.rs:524`, hide-on-close
@@ -526,12 +534,13 @@ Track A ∥ Track B; **flip gate = Track A complete (incl. A5) + Bar 1 + Bar 2 g
 | A2 | Gate dedup ✅ **LANDED** | `coordinator.rs` | one-prompt-per-id; deny still evicts; marker cleared all paths | both | low |
 | A3 | Clear grants on disconnect ✅ **LANDED** | `coordinator.rs` | eviction test green | both | low |
 | B1a | Tray foundation ✅ **LANDED** | `lib.rs`, `tray.rs`, `ipc.rs` | `tray.dump`; hide-on-close | both | — |
-| B1 | Tray (mac popover / Linux menu) | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | `tray.dump`; own report channel | both | high |
+| B1 | Tray — Linux menu + drivability ✅ **LANDED** (`900780e`) | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | `tray.dump`; own report channel | both | high |
+| B1b | Tray — macOS rich popover ← **NEXT** | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | popover positions; own report channel; screenshot | macOS | high |
 | B3 | macOS Touch-ID gate | `approval.rs`, `Cargo.toml` | deny-safe unit test; manual smoke | macOS | med |
-| B2 | Agents/RC ← **NEXT** | `shed-core/rc.rs`, `terminal.rs`, `shed-app/{rc.rs,backend.rs}` (feat `rc`), `ipc.rs`, `lib.rs`, `App.tsx`, `bridge.ts`, harness | `test_agents` at `--target tauri`; `cargo test -p shed-app --features rc` | both | high |
+| B2 | Agents/RC ✅ **LANDED** | `shed-core/rc.rs`, `terminal.rs`, `shed-app/{rc.rs,backend.rs}` (feat `rc`), `ipc.rs`, `lib.rs`, `App.tsx`, `bridge.ts`, harness | `test_agents` at `--target tauri`; `cargo test -p shed-app --features rc` | both | high |
 | B5 | macOS notifier ✅ **LANDED** | `approval.rs` | osascript `OsaNotifier` posts/withdraws | macOS | low |
-| A4 | D-Bus withdraw | `approval.rs`, `Cargo.toml` | id-captured unit test | Linux | low |
-| B4 | Prefs + autostart | `App.tsx`, `bridge.ts`, `lib.rs` | policy drives; `loginitem` probe | both | low |
+| A4 | D-Bus withdraw ✅ **LANDED** (`bf48a83`) | `approval.rs`, `Cargo.toml` | id-captured unit test | Linux | low |
+| B4 | Prefs — SSH policy/TTL ✅ **LANDED** (`e19f08f`) · autostart remaining | `App.tsx`, `bridge.ts`, `lib.rs` | policy drives; `loginitem` probe | both | low |
 | A5 | Real-agent smoke (B7) | — | §1 pass bar on a signed build | both | med |
 | — | Release: updater / notarize / `.deb` / polkit | `RELEASING.md`, `release.yml`, `build-deb.sh`, `nfpm.yaml`, `packaging/` | Bar 2 green | both | high |
 

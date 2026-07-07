@@ -52,7 +52,11 @@ so the same logic backs every client instead of being re-implemented per languag
   - **Phase C — menu-bar + Agents/RC + mac-parity + hardening (in progress, branch `tauri-phase-c`).**
     The last parity surfaces (tray/menu-bar, the Agents/RC pane, a macOS Touch-ID gate + notifier) + spine
     hardening, toward evaluating whether Tauri can replace **both** the Swift mac app and the GTK `.deb`.
-    Panel-reviewed; 5 milestones landed (tray, A1–A3 hardening, mac notifier); the Agents pane leads next.
+    Panel-reviewed; landed CI-green on PR #29: the tray foundation + expanded menu (B1a/B1), A1–A3 spine
+    hardening, the macOS (B5) and D-Bus-withdraw (A4) approval notifiers, the **Agents/RC pane (B2)**, and
+    SSH-approval-prefs persistence (B4). Remaining: the macOS rich popover (B1b), the Touch-ID gate (B3),
+    launch-at-login (B4), and the real-agent flip smoke (A5/B7). Hands-on runbooks:
+    `docs/tauri-b2-agents-test-plan.md`, `docs/tauri-batch2-test-plan.md`.
     See `plans/tauri-phase-c.md`.
 
   See `plans/tauri-desktop.md`. (A **Flutter** mobile spike is superseded unless Tauri's mobile target
@@ -105,9 +109,10 @@ independently useful:
   nfpm `.deb` (built per-arch — amd64 + arm64 — on tag, with a headless `shedctl` bundled)
   via `charliek/apt-charliek`, so end users `apt install shed-desktop`. One `git tag vX.Y.Z`
   cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`. The shipped
-  Linux `.deb` will **flip from the GTK client to the Tauri client** once its Phase A ships + a
-  release-candidate pass is green — a gated packaging transition (the `.deb` gains a WebKitGTK runtime
-  dep; `plans/tauri-desktop.md` Phase C).
+  Linux `.deb` will **flip from the GTK client to the Tauri client** once Phase C's *flip-ready* bar
+  is green (updater, notarization, `.deb` repackaging, polkit policy — see `plans/tauri-phase-c.md`) —
+  a gated packaging transition (the `.deb` gains a WebKitGTK runtime dep; `plans/tauri-desktop.md`
+  Phase C).
 
 ## Larger bets
 
