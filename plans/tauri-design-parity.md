@@ -139,17 +139,24 @@ Load-bearing corrections — these SUPERSEDE the milestone sketches below where 
 
 ## Sub-milestones (green per commit)
 
-### M1 — Tray icon (template + count)
-`tray.rs` + a new monochrome template asset. Replace `app.default_window_icon()` with an
-`Image::from_bytes` of an ~18px (36px @2x) **black-on-transparent shippingbox silhouette** +
-`TrayIconBuilder::icon_as_template(true)`, so macOS renders it as a proper menu-bar glyph
-(auto light/dark). Add the running-shed count as `.title(" N")` (Swift parity) — recompute on
-the lifecycle `refresh` (or drop if it complicates the drivable path; the icon is the headline).
-Generate the asset via `packaging/icon/regenerate.sh` (add a `--template` emit from the SF
-glyph, monochrome) → write `tauri/src-tauri/icons/tray-template.png` (+ `@2x`). Linux keeps its
-current icon (its tray is the menu; no template concept). **AC:** `make tauri-run` → the mac
-menu-bar shows a crisp monochrome box (not a colored icon), sized like the Swift one.
-Drivability: no IPC change; `tray.dump` unaffected.
+### M1 — Tray icon (template + running count) — DONE (verified on screen)
+`tray.rs` + a new monochrome template asset. On macOS, replace `app.default_window_icon()` with
+`Image::from_bytes(include_bytes!("../icons/tray-template@2x.png"))` (a 36px **black-on-transparent
+shippingbox silhouette**) + `TrayIconBuilder::icon_as_template(true)` (strictly `#[cfg(macos)]`),
+so the status item auto-tints for the light/dark menu bar and sizes to ~18pt (tray-icon-0.24
+scales the NSImage to 18pt; the @2x source stays crisp on retina). Linux keeps the colored
+window icon (a silhouette renders as a black blob on GTK trays). Asset via
+`packaging/icon/regenerate.sh --template` (skips the rounded body, black glyph on a clear context)
+→ `tauri/src-tauri/icons/tray-template.png` (18px) + `@2x` (36px); embedded via `include_bytes!`
+(no `tauri.conf.json` bundle entry needed). **Running-count title INCLUDED** (maintainer asked —
+a helpful indicator + Swift parity): `tray::update_running_count(app, n)` sets the status item's
+`set_title(" N")` (empty at 0), driven from `ui_report` — the dashboard (`main`) reports its full
+shed list there even while hidden at launch, so the count is live WITHOUT a Rust-side poller.
+macOS-only; a process-global cached count skips the native `set_title` on identical re-renders.
+**AC:** `make tauri-run` → the mac menu-bar shows a crisp monochrome box (not the colored app
+icon) + the running-shed count, matching the Swift status item. Drivability: no IPC-op change;
+the `ui_report` count is a mac-only side-effect computed before the existing merge (spine
+unchanged — the count is a native title, not observable via `tray.dump`, same as the icon).
 
 ### M2 — Popover parity (`TrayPopover.tsx` + `popover.tsx` + `lib.rs` + a resize command)
 - **Footer icons + accent hover.** `FooterRow` gets a leading lucide icon (Open dashboard →

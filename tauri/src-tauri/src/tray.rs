@@ -77,13 +77,51 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
                 }
             });
     }
-    // The app's configured icon; without it a macOS status item is invisible.
+    // Icon. macOS: a monochrome TEMPLATE glyph (a black-on-transparent shippingbox
+    // silhouette) + `icon_as_template(true)`, so the status item auto-tints for the
+    // light/dark menu bar and sizes to ~18pt — Swift `NSStatusItem` parity. The @2x
+    // (36px) asset renders crisp when tray-icon scales it to 18pt on retina. Falls
+    // back to the colored window icon if the embedded template can't decode.
+    // Elsewhere (Linux): the colored window icon — a template silhouette would render
+    // as a black blob on GTK trays (no template concept there).
+    #[cfg(target_os = "macos")]
+    match tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template@2x.png")) {
+        Ok(icon) => builder = builder.icon(icon).icon_as_template(true),
+        Err(e) => {
+            eprintln!("shed-desktop-tauri: tray template icon failed to decode ({e}); using app icon");
+            if let Some(icon) = app.default_window_icon().cloned() {
+                builder = builder.icon(icon);
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
     builder.build(app)?;
     Ok(())
 }
+
+/// Update the menu-bar status-item title to the running-shed count (`" N"`, empty
+/// when zero) — Swift `updateStatusItemTitle` parity (`AppModel.swift`). Driven from
+/// `ui_report` when the dashboard (`main`) reports its shed list, so it tracks live
+/// like the Swift status item. macOS-only (Linux trays carry no title). A
+/// process-global cached count skips the native `set_title` on identical re-renders
+/// (`ui_report` fires every dashboard render — e.g. the Approvals pane's 1s tick).
+#[cfg(target_os = "macos")]
+pub fn update_running_count(app: &AppHandle, running: usize) {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    static LAST: AtomicIsize = AtomicIsize::new(-1);
+    if LAST.swap(running as isize, Ordering::Relaxed) == running as isize {
+        return;
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let title = if running > 0 { format!(" {running}") } else { String::new() };
+        let _ = tray.set_title(Some(title));
+    }
+}
+#[cfg(not(target_os = "macos"))]
+pub fn update_running_count(_app: &AppHandle, _running: usize) {}
 
 /// Show + focus the main dashboard window via the single `present_main_window` path
 /// (which also flips macOS back to `Regular` in production — a visible dashboard

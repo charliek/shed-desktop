@@ -11,6 +11,10 @@ var outPath = "master.png"
 var bgHex = "4F759A"   // slate-blue accent (placeholder brand color)
 var fgHex = "FFFFFF"
 var symbol = "shippingbox.fill"
+// --template renders the mac menu-bar STATUS-ITEM glyph: a black-on-transparent
+// silhouette (no rounded-square body) so AppKit / Tauri `icon_as_template(true)`
+// recolors it for the light/dark menu bar. NOT a recolor of the app-icon master.
+var template = false
 
 var args = Array(CommandLine.arguments.dropFirst())
 var i = 0
@@ -20,6 +24,7 @@ while i < args.count {
     case "--bg": bgHex = args[i + 1]; i += 2
     case "--fg": fgHex = args[i + 1]; i += 2
     case "--symbol": symbol = args[i + 1]; i += 2
+    case "--template": template = true; i += 1
     default: outPath = args[i]; i += 1
     }
 }
@@ -45,15 +50,20 @@ NSGraphicsContext.saveGraphicsState()
 NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
 
 let s = CGFloat(size)
-// Rounded-square body with the standard macOS margin + corner radius.
-let margin = s * 0.0977
-let body = NSRect(x: margin, y: margin, width: s - 2 * margin, height: s - 2 * margin)
-color(bgHex).set()
-NSBezierPath(roundedRect: body, xRadius: body.width * 0.2237, yRadius: body.width * 0.2237).fill()
+if !template {
+    // Rounded-square body with the standard macOS margin + corner radius.
+    let margin = s * 0.0977
+    let body = NSRect(x: margin, y: margin, width: s - 2 * margin, height: s - 2 * margin)
+    color(bgHex).set()
+    NSBezierPath(roundedRect: body, xRadius: body.width * 0.2237, yRadius: body.width * 0.2237).fill()
+}
 
-// Centered glyph, tinted via a palette color.
-let cfg = NSImage.SymbolConfiguration(pointSize: s * 0.42, weight: .regular)
-    .applying(NSImage.SymbolConfiguration(paletteColors: [color(fgHex)]))
+// Centered glyph. In template mode: solid black, filling most of the (bodyless)
+// canvas so it reads at ~18px in the menu bar. Otherwise the palette-tinted glyph
+// sized to sit inside the rounded-square body.
+let glyphColor = template ? NSColor.black : color(fgHex)
+let cfg = NSImage.SymbolConfiguration(pointSize: s * (template ? 0.72 : 0.42), weight: .regular)
+    .applying(NSImage.SymbolConfiguration(paletteColors: [glyphColor]))
 if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(cfg) {
     let g = glyph.size
     glyph.draw(at: NSPoint(x: (s - g.width) / 2, y: (s - g.height) / 2),

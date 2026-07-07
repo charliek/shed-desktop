@@ -68,6 +68,10 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+# image-png (unioned into the base `tauri` features, macOS-only) enables
+# `Image::from_bytes` for the menu-bar template tray icon (tray.rs). Kept off the
+# Linux build — it uses the colored window icon, so it never needs the png decoder.
+tauri = { version = "2", features = ["image-png"] }
 
 [dev-dependencies]
 tempfile = "3"

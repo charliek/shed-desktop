@@ -49,6 +49,24 @@ fn ui_report(
     window: tauri::WebviewWindow,
     snapshot: serde_json::Value,
 ) {
+    // Mirror the running-shed count onto the menu-bar status item (Swift parity).
+    // The dashboard (`main`) reports the full shed list here even while hidden at
+    // launch, so the tray count is live without a Rust-side poller. macOS-only;
+    // computed before the snapshot is moved into `merge`.
+    #[cfg(target_os = "macos")]
+    if window.label() == "main" {
+        let running = snapshot
+            .get("sheds")
+            .and_then(|v| v.as_array())
+            .map(|sheds| {
+                sheds
+                    .iter()
+                    .filter(|s| s.get("status").and_then(|v| v.as_str()) == Some("running"))
+                    .count()
+            })
+            .unwrap_or(0);
+        crate::tray::update_running_count(window.app_handle(), running);
+    }
     if let Ok(mut s) = ui.lock() {
         s.merge(window.label(), snapshot);
     }
