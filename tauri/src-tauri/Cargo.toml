@@ -40,6 +40,11 @@ async-trait = "0.1"
 # Advisory file lock for the single-instance guard (flock, keyed to the socket
 # dir — hermetic, unlike an identifier-scoped plugin). Mirrors shed-gtk.
 fs2 = "0.4"
+# Launch-at-login (B4): the `auto-launch` crate under a Tauri plugin (macOS
+# LaunchAgent / Linux `.desktop` autostart — NOT SMAppService). Cross-platform, so
+# not target-gated. The React toggle drives our own guarded `loginitem_*` commands,
+# NOT the plugin's JS API, so a test-mode write can't slip past the guard.
+tauri-plugin-autostart = "2"
 
 # The Linux notifier posts + withdraws approval banners over the session bus
 # directly (freedesktop Notifications), so a resolved request's --urgency=critical

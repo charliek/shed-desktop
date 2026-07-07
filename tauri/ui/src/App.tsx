@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import {
   useUiBridge, shedAction, fetchSystemDf, openTerminal,
   fetchTerminalPresets, getPrefs, setTerminalPref,
+  getLoginItem, setLoginItem,
   createStart, createStatus, createCancel, fetchHosts,
   fetchApprovals, decideApproval, fetchActivity, fetchGateNamespaces,
   getSshApproval, setSshApproval,
@@ -550,11 +551,14 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [method, setMethod] = useState<SshPrefs["method"]>("biometrics-or-password");
   const [policy, setPolicy] = useState("time-based-allow");
   const [ttl, setTtl] = useState("2h");
+  const [launchAtLogin, setLaunchAtLogin] = useState(false);
+  const [loginBusy, setLoginBusy] = useState(false);
   const sshGen = useRef(0);
   const ttlAtFocus = useRef(""); // the Duration value when the field gained focus
 
   useEffect(() => {
     void fetchTerminalPresets().then(setPresets);
+    void getLoginItem().then(setLaunchAtLogin);
     void getPrefs().then((p) => {
       setPreset(p.terminal_preset);
       setTemplate(p.terminal_template);
@@ -586,6 +590,24 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
   const editTemplate = (t: string) => {
     setTemplate(t);
     if (preset === "custom") void setTerminalPref("custom", t);
+  };
+  // Launch-at-login: set optimistically, persist via the THROWING setter, then
+  // reconcile from loginitem.status — so a failed/guarded write can't leave the
+  // toggle misrepresenting the real state (mirrors applySsh's reconcile). Guarded
+  // by `loginBusy`: the control is disabled while a write is in flight, so a fast
+  // double-toggle can't race enable()/disable() into the wrong final OS state.
+  const toggleLaunchAtLogin = (v: boolean) => {
+    setLaunchAtLogin(v);
+    setLoginBusy(true);
+    void (async () => {
+      try {
+        await setLoginItem(v);
+      } catch {
+        // fall through to reconcile from the backend truth
+      }
+      setLaunchAtLogin(await getLoginItem()); // getLoginItem swallows → never throws
+      setLoginBusy(false);
+    })();
   };
   // Apply one SSH-pref delta: set it optimistically, persist only the changed
   // field (the coordinator composes partial updates), then reconcile ALL three
@@ -628,6 +650,24 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
             <X size={17} />
           </button>
         </div>
+
+        <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">General</div>
+        <label
+          className="mb-6 flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
+          style={{ borderColor: "var(--shed-border)", background: "var(--shed-inset)" }}
+        >
+          <input
+            type="checkbox"
+            checked={launchAtLogin}
+            disabled={loginBusy}
+            onChange={(e) => toggleLaunchAtLogin(e.target.checked)}
+            style={{ accentColor: "var(--shed-accent)" }}
+            data-launch-at-login
+          />
+          <span className="text-[15px] font-semibold text-shed-text">Launch at login</span>
+          <span className="flex-1" />
+          <span className="text-[12px] text-shed-text-muted">Open Shed Desktop when you sign in.</span>
+        </label>
 
         <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Terminal</div>
         <p className="mb-3 text-[13px] text-shed-text-muted">Which terminal opens when you click “Open in Terminal” on a shed.</p>

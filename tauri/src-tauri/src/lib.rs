@@ -371,6 +371,82 @@ async fn ssh_prefs_get(
     Ok(serde_json::json!(coordinator.ssh_prefs().await))
 }
 
+// -- launch-at-login (B4) ------------------------------------------------------
+
+/// The macOS test-mode login-item state. A real login-item write on macOS hits a
+/// LaunchAgent / TCC — NOT hermetic — so under the harness we round-trip through
+/// this in-memory cell instead of the OS. On Linux the harness redirects HOME
+/// (which is what `auto-launch` keys its `$HOME/.config/autostart` write off — it
+/// ignores `XDG_CONFIG_HOME`), so the real `.desktop` write IS contained + hermetic,
+/// and this cell is unused (real enable/disable runs, exercising the shipped path).
+struct LoginItemCell(Mutex<bool>);
+
+/// Whether login-item writes must be faked: macOS under the harness only. Elsewhere
+/// (Linux tests → redirected HOME/XDG; any production build) the real `auto-launch`
+/// path runs.
+fn login_item_faked(env: &Env) -> bool {
+    env.test_mode && cfg!(target_os = "macos")
+}
+
+/// Whether the app is registered to launch at login (best-effort — a query error
+/// reads as `false`, never a crash).
+pub(crate) fn login_item_enabled(app: &tauri::AppHandle, env: &Env) -> bool {
+    if login_item_faked(env) {
+        return *app.state::<LoginItemCell>().0.lock().unwrap();
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Enable/disable launch-at-login. Guarded to the in-memory cell under the macOS
+/// harness (both true AND false suppress the real write); a real, hermetic write on
+/// Linux/production.
+pub(crate) fn login_item_set(
+    app: &tauri::AppHandle,
+    env: &Env,
+    enabled: bool,
+) -> Result<(), String> {
+    if login_item_faked(env) {
+        *app.state::<LoginItemCell>().0.lock().unwrap() = enabled;
+        return Ok(());
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    if enabled {
+        // auto-launch 0.5.0 writes `$HOME/.config/autostart/<app>.desktop` with a
+        // single-level `create_dir` (it hard-codes `$HOME/.config`, ignoring
+        // `XDG_CONFIG_HOME`), so a HOME whose `.config` doesn't exist yet makes
+        // `enable()` fail ENOENT on the missing parent — the render gate's throwaway
+        // HOME hits exactly this, and so would a real user missing `~/.config`.
+        // Ensure the parent exists first (the render gate caught this).
+        #[cfg(target_os = "linux")]
+        if let Some(home) = std::env::var_os("HOME") {
+            let _ = std::fs::create_dir_all(std::path::Path::new(&home).join(".config"));
+        }
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// The launch-at-login state (the Preferences "General" toggle reads this on mount
+/// + reconciles to it after a set).
+#[tauri::command]
+fn loginitem_status(app: tauri::AppHandle, env: tauri::State<'_, Env>) -> serde_json::Value {
+    serde_json::json!({ "enabled": login_item_enabled(&app, &env) })
+}
+
+/// Set launch-at-login (the toggle). Returns an error string on a failed write so
+/// the toggle reconciles from `loginitem_status` rather than silently lying.
+#[tauri::command]
+fn loginitem_set(
+    app: tauri::AppHandle,
+    env: tauri::State<'_, Env>,
+    enabled: bool,
+) -> Result<(), String> {
+    login_item_set(&app, &env, enabled)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -430,10 +506,20 @@ pub fn run() {
     let rc_service = Arc::new(RcService::new_default(env.test_mode, env!("CARGO_PKG_VERSION")));
 
     tauri::Builder::default()
+        // Launch-at-login (B4): register the plugin so `app.autolaunch()` resolves;
+        // it does NOT enable autostart on its own (no startup side effect). The
+        // React toggle drives our guarded `loginitem_*` commands, not the plugin's
+        // JS API — so a test-mode write can't bypass the guard.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .manage(ui.clone())
         .manage(backend.clone())
         .manage(env.clone())
         .manage(rc_service.clone())
+        // The macOS test-mode login-item cell (see [`LoginItemCell`]).
+        .manage(LoginItemCell(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             ui_report,
             list_sheds,
@@ -455,7 +541,9 @@ pub fn run() {
             activity_list,
             gate_namespaces,
             set_ssh_approval,
-            ssh_prefs_get
+            ssh_prefs_get,
+            loginitem_status,
+            loginitem_set
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an

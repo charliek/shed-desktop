@@ -426,3 +426,14 @@ class TauriClient(_ApprovalOps, _RcOps, _RustCoreClient):
         if template is not None:
             params["template"] = template
         self.call("prefs.set_terminal", params)
+
+    # -- launch-at-login (B4) --------------------------------------------
+    def login_item_status(self) -> bool:
+        """Whether launch-at-login is enabled (the Preferences → General toggle)."""
+        return self.call("loginitem.status")["enabled"]
+
+    def login_item_set(self, enabled: bool) -> None:
+        """Set launch-at-login. Guarded to an in-memory cell under the macOS harness
+        (a real LaunchAgent/TCC write isn't hermetic); a real, hermetic `auto-launch`
+        `.desktop` write on Linux (the harness redirects HOME + XDG_CONFIG_HOME)."""
+        self.call("loginitem.set", {"enabled": enabled})

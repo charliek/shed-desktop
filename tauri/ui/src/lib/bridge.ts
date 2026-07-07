@@ -186,6 +186,22 @@ export async function setTerminalPref(preset: string, template?: string): Promis
   await invoke("set_terminal_pref", { preset, template });
 }
 
+/* ---- launch-at-login (B4) -------------------------------------------------- */
+
+/** Whether the app is registered to launch at login (the Preferences → General
+ *  toggle reads this on mount + reconciles to it after a set). */
+export async function getLoginItem(): Promise<boolean> {
+  return (await invoke<{ enabled: boolean }>("loginitem_status"))?.enabled ?? false;
+}
+
+/** Set launch-at-login. THROWS on error (unlike the swallowing `invoke`) so the
+ *  toggle surfaces a failed/guarded write and reconciles from `getLoginItem`
+ *  rather than silently misrepresenting the real state. */
+export async function setLoginItem(enabled: boolean): Promise<void> {
+  const core = await import("@tauri-apps/api/core");
+  await core.invoke("loginitem_set", { enabled });
+}
+
 /** Open a shed in the user's chosen terminal (best-effort; a no-op in a browser
  *  and disabled server-side under test mode). A non-empty `session` attaches that
  *  tmux session (the Agents console button → `tmux attach -t rc-<slug>`). */

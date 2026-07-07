@@ -217,6 +217,25 @@ def test_ssh_prefs_round_trip_and_partial_update(tauri):
         )
 
 
+def test_loginitem_probe(tauri):
+    # B4: launch-at-login is drivable + observable (the Swift PreferencesView
+    # "Launch at login" toggle parity). On Linux (the shipped target) `auto-launch`
+    # writes a .desktop under the throwaway HOME/XDG → a REAL hermetic round-trip;
+    # on macOS a real write hits a LaunchAgent/TCC, so test mode round-trips through
+    # an in-memory cell instead — either way the IPC + status path is exercised.
+    # Restore the initial state after (the app is session-scoped, so a left-over
+    # login item would leak into later tests / the dev's environment).
+    before = tauri.login_item_status()
+    assert before is False  # default off at a hermetic launch
+    try:
+        tauri.login_item_set(True)
+        assert tauri.login_item_status() is True
+        tauri.login_item_set(False)
+        assert tauri.login_item_status() is False
+    finally:
+        tauri.login_item_set(before)
+
+
 def test_preferences_modal_opens(tauri):
     # A1c-2c(2): ui.show_preferences → the frontend opens the in-app Preferences modal
     # and reports modal=="prefs", so the harness verifies it ACTUALLY rendered (round-trip:

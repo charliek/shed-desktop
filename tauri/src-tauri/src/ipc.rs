@@ -219,6 +219,10 @@ impl Handler {
             "notification.open" => self.notification_open(),
             "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
             "ui.ssh_prefs" => self.ssh_prefs().await,
+            "loginitem.status" => {
+                Ok(json!({ "enabled": crate::login_item_enabled(&self.app, &self.env) }))
+            }
+            "loginitem.set" => self.login_item_set(params),
             "tray.dump" => Ok(self.tray_dump()),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
@@ -662,6 +666,18 @@ impl Handler {
     /// harness can assert what a set actually applied (the drivability North Star).
     async fn ssh_prefs(&self) -> Result<Value, (String, String)> {
         Ok(json!(self.coordinator.ssh_prefs().await))
+    }
+
+    /// `loginitem.set {enabled}` → enable/disable launch-at-login (the Preferences
+    /// "General" toggle's driver). Guarded to an in-memory cell under the macOS
+    /// harness; a real hermetic `auto-launch` write on Linux/production.
+    fn login_item_set(&self, params: &Value) -> Result<Value, (String, String)> {
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| err("bad_request", "missing 'enabled' (bool)"))?;
+        crate::login_item_set(&self.app, &self.env, enabled).map_err(|e| err("action_failed", e))?;
+        Ok(json!({}))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),
