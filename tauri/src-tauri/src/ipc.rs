@@ -152,10 +152,12 @@ impl Handler {
         }
     }
 
-    /// Read + clone a key from the frontend's reported snapshot (`pane`, `style`,
-    /// `sheds`, ...), or `None` if it hasn't reported / the key is absent.
+    /// Read + clone a key from the DASHBOARD window's reported snapshot (`pane`,
+    /// `style`, `sheds`, ...), or `None` if it hasn't reported / the key is absent.
+    /// The dashboard shell + Agents pane report under the `main` label; the mac
+    /// popover reports under `popover` (read by `tray.dump`), so the two never mix.
     fn ui_get(&self, key: &str) -> Option<Value> {
-        self.ui.lock().ok().and_then(|s| s.get(key))
+        self.ui.lock().ok().and_then(|s| s.get("main", key))
     }
 
     /// Dispatch one op. `Ok(result)` → an `ok` envelope; `Err((code, message))` →
@@ -272,14 +274,14 @@ impl Handler {
         let token = self.refresh_seq.fetch_add(1, Ordering::SeqCst) + 1;
         // snapshot present ⟹ the frontend attached BOTH listeners then reported
         // (same readiness invariant as navigate), so the `refresh` emit is heard.
-        let has_frontend = self.ui.lock().ok().is_some_and(|s| s.snapshot.is_some());
+        let has_frontend = self.ui.lock().ok().is_some_and(|s| s.has("main"));
         let _ = self.app.emit("refresh", json!({ "token": token }));
         if !has_frontend {
             return Ok(json!({}));
         }
         let deadline = Instant::now() + REFRESH_WAIT;
         loop {
-            let echoed = self.ui.lock().ok().map_or(0, |s| s.refresh_token());
+            let echoed = self.ui.lock().ok().map_or(0, |s| s.refresh_token("main"));
             if echoed >= token || Instant::now() >= deadline {
                 return Ok(json!({}));
             }

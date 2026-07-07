@@ -37,23 +37,20 @@ use single_instance::AcquireError;
 use state::{SharedUi, UiState};
 use tauri::Manager;
 
-/// The React frontend reports its rendered snapshot (`{pane, style, sheds,
+/// A React frontend reports its rendered snapshot (`{pane, style, sheds,
 /// refresh_token}`) here, so the harness reads the real rendered state over IPC
-/// (`ui.current_pane` / `ui.computed_style` / `dashboard.dump`). Invoked from
-/// `useUiBridge` on mount + every render. One JSON blob, not a field per op, so a
-/// new reader is a key projection (see [`state::UiState`]).
+/// (`ui.current_pane` / `ui.computed_style` / `dashboard.dump` / `tray.dump`).
+/// Invoked from `useUiBridge` on mount + every render. Keyed by the calling
+/// WINDOW's label so the mac popover (`popover`) can't clobber the dashboard
+/// (`main`) — see [`state::UiState`]. One JSON blob per window, not a field per op.
 #[tauri::command]
-fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
+fn ui_report(
+    ui: tauri::State<'_, SharedUi>,
+    window: tauri::WebviewWindow,
+    snapshot: serde_json::Value,
+) {
     if let Ok(mut s) = ui.lock() {
-        // Merge object keys so a partial reporter (the Agents pane publishing only
-        // `agents`) doesn't clobber the shell's snapshot (pane/sheds/…), and vice
-        // versa. The shell re-sends its keys every render, so nothing goes stale.
-        match (s.snapshot.as_mut(), snapshot) {
-            (Some(serde_json::Value::Object(existing)), serde_json::Value::Object(incoming)) => {
-                existing.extend(incoming);
-            }
-            (_, incoming) => s.snapshot = Some(incoming),
-        }
+        s.merge(window.label(), snapshot);
     }
 }
 
