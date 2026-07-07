@@ -37,12 +37,14 @@ B1b targets parity with the Swift `MenuBarContentView` (host-agent dot · runnin
 approval cards · footer: Open dashboard / Preferences / Check for Updates / Quit), NOT the native-Swift
 `NSStatusItem` fallback in §8.
 
-**NEXT FOCUS → BATCH 3 (PLANNED 2026-07-06, branch `tauri-phase-c-batch3` off `feat/rust-core`=`37e962b`;
-full design + decomposition in §3.7):** **B4 launch-at-login** → **B3** (macOS Touch-ID gate, objc2) → **B1b**
-(the rich mac popover, decision above) — warm-up-first, headline last. Then **A5/B7** (the real-agent smoke).
-Maintainer decisions this batch: launch **menu-bar-first** (Swift `.accessory` parity, `!test_mode`-guarded),
-"Check for Updates…" a **disabled placeholder** in the popover footer. (The B4 SSH-prefs half already landed;
-this batch adds the "Launch at login" toggle to match Swift Preferences.)
+**BATCH 3 — ✅ LANDED (2026-07-06, branch `tauri-phase-c-batch3` off `feat/rust-core`=`37e962b`; §3.7):**
+all four code items green + committed, warm-up-first: **B4 launch-at-login** (`e7bf650`) → **B3 macOS Touch-ID
+gate** (objc2, `b611e45`) → **B1b rich mac popover** (B1b.1 window-keyed `ui_report` `987e21f` + B1b.2 the
+popover `c0ef3a5`). Gates green throughout (e2e-tauri 61 · render gate 62 · tauri-test-linux 18 · cargo test 19
+· a release-profile build). Maintainer decisions applied: launch **menu-bar-first** (Swift `.accessory` parity,
+`!test_mode`-guarded), "Check for Updates…" a **disabled placeholder** in the popover footer. **Remaining:**
+open the PR onto `feat/rust-core` + watch-pr + merge; the hands-on smokes (B1b native-feel, B3 signed Touch-ID,
+B4 login item, **A5/B7** real-agent) are the maintainer's — runbook `docs/tauri-batch3-test-plan.md`.
 The A5/B7 smoke rides along with **a real build/packaging + run test on both macOS + Linux** (toward the
 flip, §4–§5): a hands-on run against a live `shed-host-agent` mints + gates a real approval end-to-end, so
 B7 need not be a separate step. Test plans are drafted — `docs/tauri-b2-agents-test-plan.md` (B2) +
@@ -764,12 +766,12 @@ Track A ∥ Track B; **flip gate = Track A complete (incl. A5) + Bar 1 + Bar 2 g
 | A3 | Clear grants on disconnect ✅ **LANDED** | `coordinator.rs` | eviction test green | both | low |
 | B1a | Tray foundation ✅ **LANDED** | `lib.rs`, `tray.rs`, `ipc.rs` | `tray.dump`; hide-on-close | both | — |
 | B1 | Tray — Linux menu + drivability ✅ **LANDED** (`900780e`) | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | `tray.dump`; own report channel | both | high |
-| B1b | Tray — macOS rich popover ← **Batch3.3** (§3.7) | `lib.rs`, `tray.rs`, `state.rs`, `ipc.rs`, `tauri.conf.json`, `TrayPopover.tsx`, `vite.config.ts`, `capabilities/` | popover positions; window-keyed report channel; `tray.dump` popover block; manual screenshot | macOS | high |
-| B3 | macOS Touch-ID gate ← **Batch3.2** (§3.7) | `approval.rs`, `Cargo.toml` | deny-safe unit test; manual smoke | macOS | med |
+| B1b | Tray — macOS rich popover ✅ **LANDED** (Batch3, `987e21f`+`c0ef3a5`) | `lib.rs`, `tray.rs`, `state.rs`, `ipc.rs`, `TrayPopover.tsx`, `popover.{html,tsx}`, `vite.config.ts`, `capabilities/popover.json` | `tray.dump` popover block + `tray.show/toggle/hide`; window-keyed report; manual native-feel screenshot | macOS | high |
+| B3 | macOS Touch-ID gate ✅ **LANDED** (Batch3, `b611e45`) | `approval.rs`, `Cargo.toml` | deny-safe unit tests; manual signed smoke | macOS | med |
 | B2 | Agents/RC ✅ **LANDED** | `shed-core/rc.rs`, `terminal.rs`, `shed-app/{rc.rs,backend.rs}` (feat `rc`), `ipc.rs`, `lib.rs`, `App.tsx`, `bridge.ts`, harness | `test_agents` at `--target tauri`; `cargo test -p shed-app --features rc` | both | high |
 | B5 | macOS notifier ✅ **LANDED** | `approval.rs` | osascript `OsaNotifier` posts/withdraws | macOS | low |
 | A4 | D-Bus withdraw ✅ **LANDED** (`bf48a83`) | `approval.rs`, `Cargo.toml` | id-captured unit test | Linux | low |
-| B4 | Prefs — SSH policy/TTL ✅ **LANDED** (`e19f08f`) · launch-at-login ← **Batch3.1** (§3.7) | `App.tsx`, `bridge.ts`, `lib.rs`, `Cargo.toml` | policy drives; `loginitem` probe | both | low |
+| B4 | Prefs — SSH policy/TTL ✅ **LANDED** (`e19f08f`) · launch-at-login ✅ **LANDED** (Batch3, `e7bf650`) | `App.tsx`, `bridge.ts`, `lib.rs`, `ipc.rs`, `Cargo.toml` | policy drives; `loginitem` probe | both | low |
 | A5 | Real-agent smoke (B7) | — | §1 pass bar on a signed build | both | med |
 | — | Release: updater / notarize / `.deb` / polkit | `RELEASING.md`, `release.yml`, `build-deb.sh`, `nfpm.yaml`, `packaging/` | Bar 2 green | both | high |
 
