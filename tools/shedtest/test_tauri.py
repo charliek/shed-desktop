@@ -73,6 +73,17 @@ def test_tray_popover_drivable(tauri):
     tauri.tray_show()
     tauri.wait_until(lambda: tauri.tray_dump()["popover_visible"] is True,
                      timeout=15, what="popover visible after tray.show")
+
+    # M2: the popover CONTENT-SIZES to hug its rows (Swift NSPopover parity, no dead
+    # space). It's built at MAX height (640) and shrunk by the resize_popover protocol;
+    # a silently-ignored set_size (the borderless-window regression this de-risks) would
+    # leave it stuck at 640. popover_height is logical px (display-independent), so a
+    # content-sized popover reads well under 640 for the mock's small fixture.
+    tauri.wait_until(lambda: (tauri.tray_dump().get("popover_height") or 999) < 600,
+                     timeout=15, what="popover content-sized (not stuck at MAX height)")
+    h = tauri.tray_dump()["popover_height"]
+    assert 120 <= h < 600, f"popover_height {h} not content-sized within [120, 600)"
+
     tauri.tray_hide()
     tauri.wait_until(lambda: tauri.tray_dump()["popover_visible"] is False,
                      timeout=15, what="popover hidden after tray.hide")

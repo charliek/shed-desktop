@@ -38,3 +38,14 @@ sips -z 30 30   "${MASTER}" --out "${TAURI}/Square30x30Logo.png" >/dev/null
 sips -z 50 50   "${MASTER}" --out "${TAURI}/StoreLogo.png"       >/dev/null
 iconutil -c icns "${ICONSET}" -o "${TAURI}/icon.icns"
 echo "wrote ${TAURI}/{32x32,128x128,128x128@2x,icon}.png + icon.icns"
+
+# --- mac menu-bar TEMPLATE glyph (black-on-transparent silhouette). Rendered
+# separately from the colored master (--template skips the rounded-square body) so
+# the Tauri tray can `icon_as_template(true)` and get a real menu-bar glyph that
+# adapts to light/dark — matching the Swift NSStatusItem. macOS-only at runtime
+# (Linux keeps the colored icon; a silhouette would render as a black blob there).
+TPL_MASTER="$(mktemp -d)/tray-template-master.png"
+swift "${DIR}/generate-icon.swift" --template --out "${TPL_MASTER}"
+sips -z 18 18 "${TPL_MASTER}" --out "${TAURI}/tray-template.png"    >/dev/null
+sips -z 36 36 "${TPL_MASTER}" --out "${TAURI}/tray-template@2x.png" >/dev/null
+echo "wrote ${TAURI}/tray-template{,@2x}.png"

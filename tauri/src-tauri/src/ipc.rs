@@ -276,16 +276,24 @@ impl Handler {
     /// it hasn't reported yet.
     fn tray_dump(&self) -> Value {
         let popover = self.ui.lock().ok().and_then(|s| s.get("popover", "tray"));
-        let popover_visible = self
-            .app
-            .get_webview_window(crate::tray::POPOVER_ID)
+        let popover_win = self.app.get_webview_window(crate::tray::POPOVER_ID);
+        let popover_visible = popover_win
+            .as_ref()
             .and_then(|w| w.is_visible().ok())
             .unwrap_or(false);
+        // The popover's LOGICAL inner height — the drivable proof that the content-size
+        // protocol worked (`resize_popover` shrank the MAX-height window to hug its
+        // content). Logical (physical / scale) so the assertion is display-independent.
+        let popover_height = popover_win.as_ref().and_then(|w| {
+            let scale = w.scale_factor().unwrap_or(1.0);
+            w.inner_size().ok().map(|s| f64::from(s.height) / scale)
+        });
         json!({
             "present": self.app.tray_by_id(crate::tray::TRAY_ID).is_some(),
             "items": crate::tray::menu_item_ids(),
             "popover": popover,
             "popover_visible": popover_visible,
+            "popover_height": popover_height,
         })
     }
 

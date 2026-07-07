@@ -68,6 +68,14 @@ objc2 = "0.6"
 block2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+# macOS-only tauri features, unioned into the base `tauri` features:
+#  - image-png: `Image::from_bytes` for the menu-bar template tray icon (tray.rs).
+#  - macos-private-api: a TRANSPARENT popover window — needed for both its rounded
+#    corners AND the native `Popover` vibrancy material (Swift NSPopover parity).
+#    Private CoreAnimation API — fine for the DMG/Sparkle distribution (would matter
+#    only for the App Store, not a target).
+# Both kept off the Linux build (it uses the colored icon + a native menu, no popover).
+tauri = { version = "2", features = ["image-png", "macos-private-api"] }
 
 [dev-dependencies]
 tempfile = "3"

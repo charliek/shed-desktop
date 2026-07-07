@@ -4,11 +4,11 @@
    [disabled] · Quit). A SEPARATE webview/entry from the dashboard shell, so it
    fetches its own data and reports its rows under the `popover` window key (never
    the dashboard's `main`, which `dashboard.dump`/`current_pane` read). */
-import { useEffect, useState } from "react";
-import { Fingerprint, Check, X, Shield } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Fingerprint, Check, X, Shield, AppWindow, Settings, ArrowDownCircle, Power } from "lucide-react";
 import {
   inTauri, fetchSheds, fetchApprovals, fetchGateNamespaces, decideApproval,
-  openDashboard, openPreferences, quitApp, reportTray,
+  openDashboard, openPreferences, quitApp, reportTray, resizePopover,
   type Shed, type Approval,
 } from "@/lib/bridge";
 
@@ -16,6 +16,7 @@ export default function TrayPopover() {
   const [sheds, setSheds] = useState<Shed[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [connected, setConnected] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!inTauri()) return;
@@ -61,14 +62,44 @@ export default function TrayPopover() {
     });
   }, [connected, sheds, approvals]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Content-size the window: measure the rendered root height and ask Rust to resize
+  // the popover to hug it (Swift NSPopover parity — no dead space). The root is
+  // content-height (no min-h-screen), so its box height IS the content; a
+  // ResizeObserver re-measures when approvals/sheds change. rAF-debounced + only
+  // invoked when the height actually changed (>1px), so the window resize (which
+  // reflows the root back to the same content height) can't feed a measure→resize loop.
+  useEffect(() => {
+    if (!inTauri()) return;
+    const el = rootRef.current;
+    if (!el) return;
+    let raf = 0;
+    let last = 0;
+    const measure = () => {
+      raf = 0;
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      if (h > 0 && Math.abs(h - last) > 1) {
+        last = h;
+        void resizePopover(h);
+      }
+    };
+    const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
+    const ro = new ResizeObserver(schedule);
+    ro.observe(el);
+    // Initial measure. WebKit throttles rAF for a hidden window, so this lands when
+    // the popover is first shown (the window is built at MAX height so a late resize
+    // still looks right — worst case a brief first-open shrink, never a clip).
+    schedule();
+    return () => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
+  }, []);
+
   const decide = (a: Approval, decision: "approve" | "deny") =>
     void decideApproval(a.id, decision, { scope: a.default_scope, ttl: a.default_ttl });
 
   return (
-    <div className="flex min-h-screen w-full flex-col bg-shed-bg text-shed-text" data-tray-popover>
+    <div ref={rootRef} className="flex w-full flex-col overflow-hidden rounded-[12px] text-shed-text" data-tray-popover>
       {/* header — host-agent status dot */}
       <div className="flex items-center justify-between px-3.5 py-2.5">
-        <span className="text-[13px] font-semibold">shed desktop</span>
+        <span className="text-[13px] font-medium">shed desktop</span>
         <span className="flex items-center gap-1.5 text-[11px]"
               style={{ color: connected ? "var(--shed-ok)" : "var(--shed-text-muted)" }}>
           <span className="h-2 w-2 rounded-full"
@@ -126,28 +157,29 @@ export default function TrayPopover() {
       </div>
       <div className="h-px bg-shed-border" />
 
-      {/* footer */}
+      {/* footer — icon'd rows with the Swift MenuActionRow accent-blue hover */}
       <div className="flex flex-col p-1.5">
-        <FooterRow label="Open dashboard" onClick={() => void openDashboard()} />
-        <FooterRow label="Preferences…" onClick={() => void openPreferences()} />
-        <FooterRow label="Check for Updates…" disabled title="Updates arrive with the Tauri updater" />
-        <FooterRow label="Quit" onClick={() => void quitApp()} />
+        <FooterRow icon={AppWindow} label="Open dashboard" onClick={() => void openDashboard()} />
+        <FooterRow icon={Settings} label="Preferences…" onClick={() => void openPreferences()} />
+        <FooterRow icon={ArrowDownCircle} label="Check for Updates…" disabled title="Updates arrive with the Tauri updater" />
+        <FooterRow icon={Power} label="Quit" onClick={() => void quitApp()} />
       </div>
     </div>
   );
 }
 
 function FooterRow(
-  { label, onClick, disabled, title }:
-  { label: string; onClick?: () => void; disabled?: boolean; title?: string },
+  { icon: Icon, label, onClick, disabled, title }:
+  { icon: typeof Shield; label: string; onClick?: () => void; disabled?: boolean; title?: string },
 ) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
       title={title}
-      className="hlink rounded-md px-2.5 py-1.5 text-left text-[13px] disabled:opacity-40 disabled:hover:bg-transparent"
+      className="menu-row flex items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-40"
     >
+      <span className="flex w-[18px] shrink-0 justify-center"><Icon size={15} /></span>
       {label}
     </button>
   );
