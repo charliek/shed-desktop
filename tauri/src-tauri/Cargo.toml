@@ -55,6 +55,15 @@ tauri-plugin-autostart = "2"
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 
+# The macOS Touch-ID gate (B3): LAContext.evaluatePolicy via objc2 — pure Rust, no
+# Swift toolchain. Target-gated to macOS ONLY so the Linux/WebKitGTK render gate
+# never pulls LocalAuthentication (objc2 0.6.4 is already transitively in the lock).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+
 [dev-dependencies]
 tempfile = "3"
 
