@@ -40,6 +40,16 @@ async-trait = "0.1"
 # Advisory file lock for the single-instance guard (flock, keyed to the socket
 # dir — hermetic, unlike an identifier-scoped plugin). Mirrors shed-gtk.
 fs2 = "0.4"
+# Launch-at-login (B4): the `auto-launch` crate under a Tauri plugin (macOS
+# LaunchAgent / Linux `.desktop` autostart — NOT SMAppService). Cross-platform, so
+# not target-gated. The React toggle drives our own guarded `loginitem_*` commands,
+# NOT the plugin's JS API, so a test-mode write can't slip past the guard.
+tauri-plugin-autostart = "2"
+# Anchors the macOS menu-bar popover window at the tray icon (B1b). The "tray-icon"
+# feature enables the tray-relative `Position::TrayCenter`; it needs a real tray
+# click forwarded to cache the tray rect (the hermetic `tray.show` falls back to a
+# fixed position). Cross-platform crate; the popover itself is macOS-only.
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 
 # The Linux notifier posts + withdraws approval banners over the session bus
 # directly (freedesktop Notifications), so a resolved request's --urgency=critical
@@ -49,6 +59,15 @@ fs2 = "0.4"
 # runtime instead of spinning up a second (async-io) reactor.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+
+# The macOS Touch-ID gate (B3): LAContext.evaluatePolicy via objc2 — pure Rust, no
+# Swift toolchain. Target-gated to macOS ONLY so the Linux/WebKitGTK render gate
+# never pulls LocalAuthentication (objc2 0.6.4 is already transitively in the lock).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+block2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
 
 [dev-dependencies]
 tempfile = "3"

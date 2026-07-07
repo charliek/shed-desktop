@@ -37,23 +37,20 @@ use single_instance::AcquireError;
 use state::{SharedUi, UiState};
 use tauri::Manager;
 
-/// The React frontend reports its rendered snapshot (`{pane, style, sheds,
+/// A React frontend reports its rendered snapshot (`{pane, style, sheds,
 /// refresh_token}`) here, so the harness reads the real rendered state over IPC
-/// (`ui.current_pane` / `ui.computed_style` / `dashboard.dump`). Invoked from
-/// `useUiBridge` on mount + every render. One JSON blob, not a field per op, so a
-/// new reader is a key projection (see [`state::UiState`]).
+/// (`ui.current_pane` / `ui.computed_style` / `dashboard.dump` / `tray.dump`).
+/// Invoked from `useUiBridge` on mount + every render. Keyed by the calling
+/// WINDOW's label so the mac popover (`popover`) can't clobber the dashboard
+/// (`main`) — see [`state::UiState`]. One JSON blob per window, not a field per op.
 #[tauri::command]
-fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
+fn ui_report(
+    ui: tauri::State<'_, SharedUi>,
+    window: tauri::WebviewWindow,
+    snapshot: serde_json::Value,
+) {
     if let Ok(mut s) = ui.lock() {
-        // Merge object keys so a partial reporter (the Agents pane publishing only
-        // `agents`) doesn't clobber the shell's snapshot (pane/sheds/…), and vice
-        // versa. The shell re-sends its keys every render, so nothing goes stale.
-        match (s.snapshot.as_mut(), snapshot) {
-            (Some(serde_json::Value::Object(existing)), serde_json::Value::Object(incoming)) => {
-                existing.extend(incoming);
-            }
-            (_, incoming) => s.snapshot = Some(incoming),
-        }
+        s.merge(window.label(), snapshot);
     }
 }
 
@@ -371,6 +368,104 @@ async fn ssh_prefs_get(
     Ok(serde_json::json!(coordinator.ssh_prefs().await))
 }
 
+// -- launch-at-login (B4) ------------------------------------------------------
+
+/// The macOS test-mode login-item state. A real login-item write on macOS hits a
+/// LaunchAgent / TCC — NOT hermetic — so under the harness we round-trip through
+/// this in-memory cell instead of the OS. On Linux the harness redirects HOME
+/// (which is what `auto-launch` keys its `$HOME/.config/autostart` write off — it
+/// ignores `XDG_CONFIG_HOME`), so the real `.desktop` write IS contained + hermetic,
+/// and this cell is unused (real enable/disable runs, exercising the shipped path).
+struct LoginItemCell(Mutex<bool>);
+
+/// Whether login-item writes must be faked: macOS under the harness only. Elsewhere
+/// (Linux tests → redirected HOME/XDG; any production build) the real `auto-launch`
+/// path runs.
+fn login_item_faked(env: &Env) -> bool {
+    env.test_mode && cfg!(target_os = "macos")
+}
+
+/// Whether the app is registered to launch at login (best-effort — a query error
+/// reads as `false`, never a crash).
+pub(crate) fn login_item_enabled(app: &tauri::AppHandle, env: &Env) -> bool {
+    if login_item_faked(env) {
+        return *app.state::<LoginItemCell>().0.lock().unwrap();
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().unwrap_or(false)
+}
+
+/// Enable/disable launch-at-login. Guarded to the in-memory cell under the macOS
+/// harness (both true AND false suppress the real write); a real, hermetic write on
+/// Linux/production.
+pub(crate) fn login_item_set(
+    app: &tauri::AppHandle,
+    env: &Env,
+    enabled: bool,
+) -> Result<(), String> {
+    if login_item_faked(env) {
+        *app.state::<LoginItemCell>().0.lock().unwrap() = enabled;
+        return Ok(());
+    }
+    use tauri_plugin_autostart::ManagerExt;
+    if enabled {
+        // auto-launch 0.5.0 writes `$HOME/.config/autostart/<app>.desktop` with a
+        // single-level `create_dir` (it hard-codes `$HOME/.config`, ignoring
+        // `XDG_CONFIG_HOME`), so a HOME whose `.config` doesn't exist yet makes
+        // `enable()` fail ENOENT on the missing parent — the render gate's throwaway
+        // HOME hits exactly this, and so would a real user missing `~/.config`.
+        // Ensure the parent exists first (the render gate caught this).
+        #[cfg(target_os = "linux")]
+        if let Some(home) = std::env::var_os("HOME") {
+            let _ = std::fs::create_dir_all(std::path::Path::new(&home).join(".config"));
+        }
+        app.autolaunch().enable()
+    } else {
+        app.autolaunch().disable()
+    }
+    .map_err(|e| e.to_string())
+}
+
+/// The launch-at-login state (the Preferences "General" toggle reads this on mount
+/// + reconciles to it after a set).
+#[tauri::command]
+fn loginitem_status(app: tauri::AppHandle, env: tauri::State<'_, Env>) -> serde_json::Value {
+    serde_json::json!({ "enabled": login_item_enabled(&app, &env) })
+}
+
+/// Set launch-at-login (the toggle). Returns an error string on a failed write so
+/// the toggle reconciles from `loginitem_status` rather than silently lying.
+#[tauri::command]
+fn loginitem_set(
+    app: tauri::AppHandle,
+    env: tauri::State<'_, Env>,
+    enabled: bool,
+) -> Result<(), String> {
+    login_item_set(&app, &env, enabled)
+}
+
+// -- menu-bar popover footer commands (B1b) — a 2nd webview can't call the IPC ops
+//    or emit the main-window events, so the footer invokes these dedicated commands
+//    (test-mode-safe: they only show/emit/exit, never spawn or write). --
+
+/// The popover footer's "Open dashboard" → raise the dashboard on Sheds + dismiss.
+#[tauri::command]
+fn open_dashboard(app: tauri::AppHandle) {
+    tray::open_dashboard(&app);
+}
+
+/// The popover footer's "Preferences…" → raise the dashboard + open Preferences.
+#[tauri::command]
+fn open_preferences(app: tauri::AppHandle) {
+    tray::open_preferences(&app);
+}
+
+/// The popover footer's "Quit".
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -430,10 +525,23 @@ pub fn run() {
     let rc_service = Arc::new(RcService::new_default(env.test_mode, env!("CARGO_PKG_VERSION")));
 
     tauri::Builder::default()
+        // Launch-at-login (B4): register the plugin so `app.autolaunch()` resolves;
+        // it does NOT enable autostart on its own (no startup side effect). The
+        // React toggle drives our guarded `loginitem_*` commands, not the plugin's
+        // JS API — so a test-mode write can't bypass the guard.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        // Anchors the mac menu-bar popover at the tray icon (B1b); needs the tray
+        // event forwarded (see `tray.rs::build`'s `on_tray_icon_event`).
+        .plugin(tauri_plugin_positioner::init())
         .manage(ui.clone())
         .manage(backend.clone())
         .manage(env.clone())
         .manage(rc_service.clone())
+        // The macOS test-mode login-item cell (see [`LoginItemCell`]).
+        .manage(LoginItemCell(Mutex::new(false)))
         .invoke_handler(tauri::generate_handler![
             ui_report,
             list_sheds,
@@ -455,7 +563,12 @@ pub fn run() {
             activity_list,
             gate_namespaces,
             set_ssh_approval,
-            ssh_prefs_get
+            ssh_prefs_get,
+            loginitem_status,
+            loginitem_set,
+            open_dashboard,
+            open_preferences,
+            app_exit
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
@@ -570,11 +683,48 @@ pub fn run() {
                 })?;
             tauri::async_runtime::spawn(async move { server.run().await });
 
-            // The system tray (B1a). Best-effort: a headless / no-SNI host has
-            // nowhere to show it, so a failure logs and the app keeps running (the
-            // window is always reachable). The macOS rich popover lands in B1b.
+            // The system tray. Best-effort: a headless / no-SNI host has nowhere to
+            // show it, so a failure logs and the app keeps running (the window is
+            // always reachable).
             if let Err(e) = tray::build(app.handle()) {
                 eprintln!("shed-desktop-tauri: tray unavailable ({e}); window-only");
+            }
+
+            // The mac menu-bar popover (B1b): a 2nd, opaque webview mirroring the
+            // Swift MenuBarContentView, created HIDDEN + anchored at the tray on a
+            // left-click. macOS-only (Linux emits no tray click events / has no
+            // popover). It fetches its own data + reports under the `popover` window
+            // key, so it never clobbers the dashboard's `main` snapshot.
+            #[cfg(target_os = "macos")]
+            {
+                if let Err(e) = tauri::WebviewWindowBuilder::new(
+                    app.handle(),
+                    tray::POPOVER_ID,
+                    tauri::WebviewUrl::App("popover.html".into()),
+                )
+                .title("shed")
+                .inner_size(320.0, 460.0)
+                .decorations(false) // borderless; opaque (the default) — Swift parity
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .visible(false)
+                .focused(false)
+                .build()
+                {
+                    eprintln!("shed-desktop-tauri: popover window unavailable ({e})");
+                }
+                // Menu-bar-first in PRODUCTION: hide the dashboard at launch + become
+                // an accessory (no Dock icon), matching the Swift app. "Open dashboard"
+                // brings it back (Regular). Guarded so the harness keeps `main` shown +
+                // never flips policy (else the webview may not mount → ui_report never
+                // fires → wait_until(current_pane) times out).
+                if !env.test_mode {
+                    if let Some(main) = app.get_webview_window("main") {
+                        let _ = main.hide();
+                    }
+                    ipc::set_activation_policy_prod(app.handle(), false);
+                }
             }
             Ok(())
         })
@@ -591,7 +741,23 @@ pub fn run() {
                 if let Some(w) = app_handle.get_webview_window(&label) {
                     let _ = w.hide();
                 }
+                // Closing the dashboard → menu-bar-first (Accessory, no Dock icon) in
+                // production; the popover isn't a normal window (no policy effect).
+                if label == "main" {
+                    ipc::set_activation_policy_prod(app_handle, false);
+                }
                 api.prevent_close();
+            }
+            // Dismiss the popover on blur (a click outside it) — gated on the label,
+            // so a Focused(false) on `main` never hides the dashboard.
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(false),
+                ..
+            } if label == tray::POPOVER_ID => {
+                if let Some(w) = app_handle.get_webview_window(&label) {
+                    let _ = w.hide();
+                }
             }
             // An auto-exit (e.g. the last window closed) is prevented so we stay in
             // the tray; a deliberate exit carries a code and is allowed through.

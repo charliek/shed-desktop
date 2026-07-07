@@ -426,3 +426,34 @@ class TauriClient(_ApprovalOps, _RcOps, _RustCoreClient):
         if template is not None:
             params["template"] = template
         self.call("prefs.set_terminal", params)
+
+    # -- launch-at-login (B4) --------------------------------------------
+    def login_item_status(self) -> bool:
+        """Whether launch-at-login is enabled (the Preferences → General toggle)."""
+        return self.call("loginitem.status")["enabled"]
+
+    def login_item_set(self, enabled: bool) -> None:
+        """Set launch-at-login. Guarded to an in-memory cell under the macOS harness
+        (a real LaunchAgent/TCC write isn't hermetic); a real, hermetic `auto-launch`
+        `.desktop` write on Linux (the harness redirects HOME + XDG_CONFIG_HOME)."""
+        self.call("loginitem.set", {"enabled": enabled})
+
+    # -- menu-bar popover (B1b) ------------------------------------------
+    def tray_dump(self) -> dict:
+        """The drivable menu-bar/tray state: `{present, items, popover,
+        popover_visible}`. `popover` (the popover webview's reported rows) is null
+        where there's no popover (Linux) or it hasn't reported yet."""
+        return self.call("tray.dump")
+
+    def tray_show(self) -> None:
+        """Show the mac popover — the hermetic analog of a tray-icon left-click
+        (OS tray clicks aren't drivable, so this runs the same Rust path)."""
+        self.call("tray.show")
+
+    def tray_toggle(self) -> None:
+        """Toggle the mac popover (hide if visible, else show + anchor)."""
+        self.call("tray.toggle")
+
+    def tray_hide(self) -> None:
+        """Hide the mac popover."""
+        self.call("tray.hide")

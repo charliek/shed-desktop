@@ -45,6 +45,39 @@ def test_tray_dump(tauri):
         assert dump["present"] is True
 
 
+def test_tray_popover_drivable(tauri):
+    # B1b: the mac menu-bar popover is drivable + observable over IPC — OS tray
+    # clicks aren't hermetic, so tray.show/tray.dump ARE the drivability AC (a real
+    # screenshot is the maintainer's manual native-feel check). The popover is a 2nd
+    # webview mirroring the Swift MenuBarContentView; it reports its OWN compact rows
+    # under the `popover` window key. macOS-only — Linux emits no tray click events
+    # and creates no popover window.
+    if platform.system() != "Darwin":
+        pytest.skip("the tray popover is macOS-only (Linux tray has no click events)")
+
+    # The popover reports its rows on mount (even hidden), so tray.dump's popover
+    # block carries the host-agent + running-sheds state regardless of visibility.
+    tauri.wait_until(lambda: tauri.tray_dump().get("popover") is not None,
+                     timeout=20, what="popover reported its rows")
+    pop = tauri.tray_dump()["popover"]
+    assert set(pop) >= {"connected", "running_sheds", "pending_approvals"}
+    assert isinstance(pop["running_sheds"], list) and isinstance(pop["pending_approvals"], list)
+
+    # The window-keyed report did NOT clobber the dashboard's `main` snapshot:
+    # current_pane still reflects the shell (B1b.1's per-window keying).
+    tauri.wait_until(lambda: tauri.current_pane() is not None, timeout=15, what="frontend ready")
+    assert tauri.current_pane() in {"sheds", "approvals", "agents", "activity", "system"}
+
+    # Drive the show path (the tray-icon-click analog) → the popover becomes visible;
+    # hide → invisible. This is the hermetic stand-in for the (non-drivable) OS click.
+    tauri.tray_show()
+    tauri.wait_until(lambda: tauri.tray_dump()["popover_visible"] is True,
+                     timeout=15, what="popover visible after tray.show")
+    tauri.tray_hide()
+    tauri.wait_until(lambda: tauri.tray_dump()["popover_visible"] is False,
+                     timeout=15, what="popover hidden after tray.hide")
+
+
 def test_navigate_rejects_unknown_pane(tauri):
     # An unknown pane is a bad_request, not blindly emitted — a bogus pane would
     # otherwise blank the UI (PANES[pane] undefined).
@@ -215,6 +248,25 @@ def test_ssh_prefs_round_trip_and_partial_update(tauri):
         tauri.set_ssh_approval(
             method=before["method"], policy=before["policy"], ttl=before["ttl"]
         )
+
+
+def test_loginitem_probe(tauri):
+    # B4: launch-at-login is drivable + observable (the Swift PreferencesView
+    # "Launch at login" toggle parity). On Linux (the shipped target) `auto-launch`
+    # writes a .desktop under the throwaway HOME/XDG → a REAL hermetic round-trip;
+    # on macOS a real write hits a LaunchAgent/TCC, so test mode round-trips through
+    # an in-memory cell instead — either way the IPC + status path is exercised.
+    # Restore the initial state after (the app is session-scoped, so a left-over
+    # login item would leak into later tests / the dev's environment).
+    before = tauri.login_item_status()
+    assert before is False  # default off at a hermetic launch
+    try:
+        tauri.login_item_set(True)
+        assert tauri.login_item_status() is True
+        tauri.login_item_set(False)
+        assert tauri.login_item_status() is False
+    finally:
+        tauri.login_item_set(before)
 
 
 def test_preferences_modal_opens(tauri):

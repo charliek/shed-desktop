@@ -80,14 +80,37 @@ fn rc_err(e: RcError) -> (String, String) {
 }
 
 /// Raise + focus the main window — the shared body of `ui.show_window`,
-/// `app.activate`, and the single-instance second-launch hand-off.
+/// `app.activate`, the tray/popover "Open dashboard", and the single-instance
+/// second-launch hand-off. Also the single macOS activation-policy path (a visible
+/// dashboard gets a Dock icon), guarded off under the harness.
 pub fn present_main_window<R: tauri::Runtime>(app: &AppHandle<R>) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+    set_activation_policy_prod(app, true);
 }
+
+/// Flip the macOS activation policy in PRODUCTION only (guarded off under the
+/// harness — an unguarded flip can leave `main` unmounted so `ui_report` never fires
+/// and `wait_until(current_pane)` times out). `regular` shows the Dock icon (a
+/// dashboard window is open); otherwise `Accessory` = menu-bar-first (no Dock icon,
+/// the tray/popover is the surface). Mirrors the Swift app's `!testMode`-guarded flips.
+#[cfg(target_os = "macos")]
+pub fn set_activation_policy_prod<R: tauri::Runtime>(app: &AppHandle<R>, regular: bool) {
+    if app.state::<Env>().test_mode {
+        return;
+    }
+    let policy = if regular {
+        tauri::ActivationPolicy::Regular
+    } else {
+        tauri::ActivationPolicy::Accessory
+    };
+    let _ = app.set_activation_policy(policy);
+}
+#[cfg(not(target_os = "macos"))]
+pub fn set_activation_policy_prod<R: tauri::Runtime>(_app: &AppHandle<R>, _regular: bool) {}
 
 /// The `identify` payload. A free fn (not a method) so it's unit-testable without
 /// a running Tauri app / `AppHandle`.
@@ -152,10 +175,12 @@ impl Handler {
         }
     }
 
-    /// Read + clone a key from the frontend's reported snapshot (`pane`, `style`,
-    /// `sheds`, ...), or `None` if it hasn't reported / the key is absent.
+    /// Read + clone a key from the DASHBOARD window's reported snapshot (`pane`,
+    /// `style`, `sheds`, ...), or `None` if it hasn't reported / the key is absent.
+    /// The dashboard shell + Agents pane report under the `main` label; the mac
+    /// popover reports under `popover` (read by `tray.dump`), so the two never mix.
     fn ui_get(&self, key: &str) -> Option<Value> {
-        self.ui.lock().ok().and_then(|s| s.get(key))
+        self.ui.lock().ok().and_then(|s| s.get("main", key))
     }
 
     /// Dispatch one op. `Ok(result)` → an `ok` envelope; `Err((code, message))` →
@@ -219,18 +244,48 @@ impl Handler {
             "notification.open" => self.notification_open(),
             "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
             "ui.ssh_prefs" => self.ssh_prefs().await,
+            "loginitem.status" => {
+                Ok(json!({ "enabled": crate::login_item_enabled(&self.app, &self.env) }))
+            }
+            "loginitem.set" => self.login_item_set(params),
+            // The mac popover's hermetic drive path — OS tray clicks aren't drivable,
+            // so these run the EXACT Rust path the tray-icon left-click runs.
+            "tray.show" => {
+                crate::tray::show_popover(&self.app);
+                Ok(json!({}))
+            }
+            "tray.toggle" => {
+                crate::tray::toggle_popover(&self.app);
+                Ok(json!({}))
+            }
+            "tray.hide" => {
+                crate::tray::hide_popover(&self.app);
+                Ok(json!({}))
+            }
             "tray.dump" => Ok(self.tray_dump()),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
     }
 
-    /// `tray.dump` → the drivable view of the menu-bar/tray (B1a): whether the
-    /// tray installed on this host (a headless / no-SNI Linux box has nowhere to
-    /// show it → `false`, window-only) and its actionable menu-item ids.
+    /// `tray.dump` → the drivable view of the menu-bar/tray: whether the tray
+    /// installed on this host (a headless / no-SNI Linux box has nowhere to show it
+    /// → `false`, window-only), its actionable menu-item ids, and — on macOS — the
+    /// popover's reported rows (`popover`, from the `popover` window's snapshot, so
+    /// it can't clobber the dashboard's `main`) + whether it's currently shown
+    /// (`popover_visible`). `popover` is `null` where there's no popover (Linux) or
+    /// it hasn't reported yet.
     fn tray_dump(&self) -> Value {
+        let popover = self.ui.lock().ok().and_then(|s| s.get("popover", "tray"));
+        let popover_visible = self
+            .app
+            .get_webview_window(crate::tray::POPOVER_ID)
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
         json!({
             "present": self.app.tray_by_id(crate::tray::TRAY_ID).is_some(),
             "items": crate::tray::menu_item_ids(),
+            "popover": popover,
+            "popover_visible": popover_visible,
         })
     }
 
@@ -268,14 +323,14 @@ impl Handler {
         let token = self.refresh_seq.fetch_add(1, Ordering::SeqCst) + 1;
         // snapshot present ⟹ the frontend attached BOTH listeners then reported
         // (same readiness invariant as navigate), so the `refresh` emit is heard.
-        let has_frontend = self.ui.lock().ok().is_some_and(|s| s.snapshot.is_some());
+        let has_frontend = self.ui.lock().ok().is_some_and(|s| s.has("main"));
         let _ = self.app.emit("refresh", json!({ "token": token }));
         if !has_frontend {
             return Ok(json!({}));
         }
         let deadline = Instant::now() + REFRESH_WAIT;
         loop {
-            let echoed = self.ui.lock().ok().map_or(0, |s| s.refresh_token());
+            let echoed = self.ui.lock().ok().map_or(0, |s| s.refresh_token("main"));
             if echoed >= token || Instant::now() >= deadline {
                 return Ok(json!({}));
             }
@@ -662,6 +717,18 @@ impl Handler {
     /// harness can assert what a set actually applied (the drivability North Star).
     async fn ssh_prefs(&self) -> Result<Value, (String, String)> {
         Ok(json!(self.coordinator.ssh_prefs().await))
+    }
+
+    /// `loginitem.set {enabled}` → enable/disable launch-at-login (the Preferences
+    /// "General" toggle's driver). Guarded to an in-memory cell under the macOS
+    /// harness; a real hermetic `auto-launch` write on Linux/production.
+    fn login_item_set(&self, params: &Value) -> Result<Value, (String, String)> {
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| err("bad_request", "missing 'enabled' (bool)"))?;
+        crate::login_item_set(&self.app, &self.env, enabled).map_err(|e| err("action_failed", e))?;
+        Ok(json!({}))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),

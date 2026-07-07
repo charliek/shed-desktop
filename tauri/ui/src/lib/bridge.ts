@@ -24,7 +24,7 @@ export type Shed = {
 };
 
 /** Running inside a Tauri webview (vs a plain browser during `vite dev`)? */
-function inTauri(): boolean {
+export function inTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
@@ -184,6 +184,22 @@ export async function getPrefs(): Promise<TerminalPrefs> {
 
 export async function setTerminalPref(preset: string, template?: string): Promise<void> {
   await invoke("set_terminal_pref", { preset, template });
+}
+
+/* ---- launch-at-login (B4) -------------------------------------------------- */
+
+/** Whether the app is registered to launch at login (the Preferences → General
+ *  toggle reads this on mount + reconciles to it after a set). */
+export async function getLoginItem(): Promise<boolean> {
+  return (await invoke<{ enabled: boolean }>("loginitem_status"))?.enabled ?? false;
+}
+
+/** Set launch-at-login. THROWS on error (unlike the swallowing `invoke`) so the
+ *  toggle surfaces a failed/guarded write and reconciles from `getLoginItem`
+ *  rather than silently misrepresenting the real state. */
+export async function setLoginItem(enabled: boolean): Promise<void> {
+  const core = await import("@tauri-apps/api/core");
+  await core.invoke("loginitem_set", { enabled });
 }
 
 /** Open a shed in the user's chosen terminal (best-effort; a no-op in a browser
@@ -420,4 +436,35 @@ export async function rcKill(shed: string, slug: string, host?: string): Promise
  *  (`ui_report` merges this `agents` key with the shell's snapshot.) */
 export function reportAgents(sessions: RcSession[]): void {
   void invoke("ui_report", { snapshot: { agents: sessions } });
+}
+
+/* ---- menu-bar popover (B1b) ------------------------------------------------ */
+
+/** The live shed list (the same `list_sheds` the dashboard + `sheds.list` use). */
+export async function fetchSheds(): Promise<Shed[]> {
+  return (await invoke<Shed[]>("list_sheds")) ?? [];
+}
+
+/** Footer actions the popover invokes. A 2nd webview can't call the IPC ops or emit
+ *  the main-window events, so these are dedicated Tauri commands (test-mode-safe:
+ *  they only show/emit/exit, never spawn or write). */
+export async function openDashboard(): Promise<void> {
+  await invoke("open_dashboard");
+}
+export async function openPreferences(): Promise<void> {
+  await invoke("open_preferences");
+}
+export async function quitApp(): Promise<void> {
+  await invoke("app_exit");
+}
+
+/** Report the popover's compact rows so `tray.dump` can assert them (the hermetic
+ *  content AC — OS tray clicks aren't drivable). The popover webview invokes this,
+ *  so Rust keys it under the `popover` snapshot, never the dashboard's `main`. */
+export function reportTray(rows: {
+  connected: boolean;
+  running_sheds: { host: string; name: string }[];
+  pending_approvals: { namespace: string; op: string; shed: string }[];
+}): void {
+  void invoke("ui_report", { snapshot: { tray: rows } });
 }

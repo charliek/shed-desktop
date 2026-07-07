@@ -11,5 +11,18 @@ export default defineConfig({
   clearScreen: false,
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: { port: 5173, strictPort: true },
-  build: { outDir: "dist", emptyOutDir: true, target: "safari15" },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    target: "safari15",
+    // Two entries: the dashboard shell (index.html) + the macOS menu-bar popover
+    // (popover.html → TrayPopover). The popover is a SEPARATE webview so it never
+    // mounts the shell's useUiBridge (which would clobber the `main` snapshot).
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        popover: fileURLToPath(new URL("./popover.html", import.meta.url)),
+      },
+    },
+  },
 });

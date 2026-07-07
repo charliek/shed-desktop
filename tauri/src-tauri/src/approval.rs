@@ -2,9 +2,10 @@
 //!
 //! The real native gate is **polkit** (via `pkcheck`); the notifier posts approval
 //! banners over the **freedesktop Notifications** D-Bus interface (zbus). Both are
-//! `#[cfg(target_os = "linux")]`, because the Tauri crate also builds on macOS for
-//! dev + the e2e harness, where the osascript notifier + the fail-closed gate
-//! ([`FailClosedGate`] → `Unavailable`) stand in. The gate deliberately shells out
+//! `#[cfg(target_os = "linux")]`; the Tauri crate also builds on macOS, where the
+//! osascript notifier + the real **Touch-ID gate** (`macos::TouchIdGate` —
+//! `LAContext.evaluatePolicy` via objc2, B3) run instead. Any other target falls
+//! back to the fail-closed `FailClosedGate` (`Unavailable`). The Linux gate shells out
 //! to the polkit tools rather than linking a D-Bus crate — the user's secret is
 //! entered into the OS polkit agent, never this app (TB5), and a missing tool fails
 //! **closed** (`Unavailable`). The notifier does use zbus, so it can recall (close)
@@ -20,17 +21,15 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
 
-use shed_app::traits::{
-    AuthGate, AuthGateRef, AuthOutcome, AuthPrompt, CoordinatorEvent, EventSink, NotifierRef,
-};
+use shed_app::traits::{AuthGateRef, CoordinatorEvent, EventSink, NotifierRef};
 
 #[cfg(target_os = "linux")]
 use dbus_notify::DBusNotifier;
 
 /// The production notifier + auth gate for the running platform. Linux: the real
 /// polkit gate + the zbus D-Bus notifier. macOS: the osascript notifier (B5) + the
-/// fail-closed gate until the Touch-ID gate lands (B3). Other targets: the
-/// fail-closed stubs. Test mode never calls this — it uses shed-app's fakes.
+/// real Touch-ID gate (B3). Other targets: the fail-closed stubs. Test mode never
+/// calls this — it uses shed-app's fakes.
 pub fn production_seams() -> (NotifierRef, AuthGateRef) {
     #[cfg(target_os = "linux")]
     {
@@ -39,9 +38,9 @@ pub fn production_seams() -> (NotifierRef, AuthGateRef) {
     }
     #[cfg(target_os = "macos")]
     {
-        // B5: real approval banners on mac (the Swift app posts them). The gate is
-        // still fail-closed here until B3 wires the objc2 Touch-ID gate.
-        (Arc::new(macos::OsaNotifier), Arc::new(FailClosedGate))
+        // B3 + B5: the real Touch-ID gate (LAContext.evaluatePolicy via objc2) +
+        // real approval banners (osascript) — full mac parity with the Swift app.
+        (Arc::new(macos::OsaNotifier), Arc::new(macos::TouchIdGate::default()))
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
@@ -91,11 +90,18 @@ mod noop_notifier {
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 use noop_notifier::NoopNotifier;
 
-/// The non-Linux auth gate: fail-closed. A biometric/password-gated approve can't
-/// be confirmed, so the request stays pending and expires to deny (F5). The
-/// button-only ("prompt") method needs no gate, so it still works.
+/// The fallback auth gate for targets with no native gate (neither Linux polkit nor
+/// macOS Touch-ID): fail-closed. A biometric/password-gated approve can't be
+/// confirmed, so the request stays pending and expires to deny (F5). The button-only
+/// ("prompt") method needs no gate, so it still works. Only constructed on such
+/// targets, so it's `#[cfg]`d out on Linux + macOS (which have real gates).
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+use shed_app::traits::{AuthGate, AuthOutcome, AuthPrompt};
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub struct FailClosedGate;
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[async_trait::async_trait]
 impl AuthGate for FailClosedGate {
     async fn gate(&self, _prompt: AuthPrompt) -> AuthOutcome {
@@ -635,9 +641,133 @@ mod macos {
         format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
     }
 
+    // -- B3: the Touch-ID gate (LAContext.evaluatePolicy via objc2) -----------
+
+    use block2::RcBlock;
+    use objc2::runtime::Bool;
+    use objc2_foundation::{NSError, NSString};
+    use objc2_local_authentication::{LAContext, LAPolicy};
+    use shed_app::traits::{AuthGate, AuthOutcome, AuthPrompt};
+
+    /// Map a LocalAuthentication failure code (`LAError.*`) to a rich `AuthOutcome`.
+    /// The load-bearing property (asserted in tests): NO error code yields
+    /// `Approved` — only a real `success` does. Cancels / unavailable / auth-failed
+    /// are distinguished so they audit differently (F5).
+    fn map_la_error(code: isize) -> AuthOutcome {
+        match code {
+            -2 | -4 | -9 => AuthOutcome::Cancelled, // user / system / app cancel
+            -1 | -3 => AuthOutcome::Denied,         // auth failed / biometrics declined (fallback)
+            // passcode-not-set / biometry-unavailable / not-enrolled / lockout, and
+            // (newer) biometry-not-paired / -disconnected on Macs with removable
+            // biometric hardware — all "the device can't gate right now" (F5).
+            -8..=-5 | -12 | -13 => AuthOutcome::Unavailable,
+            other => AuthOutcome::Error(format!("LAError {other}")),
+        }
+    }
+
+    fn la_policy(biometrics_only: bool) -> LAPolicy {
+        if biometrics_only {
+            LAPolicy::DeviceOwnerAuthenticationWithBiometrics
+        } else {
+            LAPolicy::DeviceOwnerAuthentication
+        }
+    }
+
+    /// A seam over `LAContext`, so the gate's deny-safe paths are unit-testable
+    /// WITHOUT a real biometric prompt: `canEvaluatePolicy` returns `true` on any
+    /// enrolled Mac, so calling the real gate in a test would fire a live Touch-ID
+    /// prompt (and could auto-approve). Tests inject a fake; prod uses [`RealLocalAuth`].
+    #[async_trait::async_trait]
+    pub(crate) trait LocalAuth: Send + Sync {
+        /// Can the device satisfy the policy right now (biometrics/passcode enrolled)?
+        fn can_evaluate(&self, biometrics_only: bool) -> bool;
+        /// Present the OS prompt + await the user's decision → a rich outcome.
+        async fn evaluate(&self, biometrics_only: bool, reason: String) -> AuthOutcome;
+    }
+
+    pub(crate) struct RealLocalAuth;
+
+    #[async_trait::async_trait]
+    impl LocalAuth for RealLocalAuth {
+        fn can_evaluate(&self, biometrics_only: bool) -> bool {
+            // canEvaluatePolicy is a cheap thread-safe read; `Err` = not enrolled /
+            // no passcode → the gate returns Unavailable without ever prompting.
+            let ctx = unsafe { LAContext::new() };
+            unsafe { ctx.canEvaluatePolicy_error(la_policy(biometrics_only)) }.is_ok()
+        }
+
+        async fn evaluate(&self, biometrics_only: bool, reason: String) -> AuthOutcome {
+            let policy = la_policy(biometrics_only);
+            // The `LAContext` + reply block are `!Send`, and the reply lands on an
+            // arbitrary GCD thread — so confine ALL ObjC to one blocking thread and
+            // hand back only the (Send) `AuthOutcome`. The async fn awaits a Send
+            // `JoinHandle` and never holds an ObjC object across `.await` (the
+            // `#[async_trait]` future must be Send). `ctx` lives on the blocking
+            // thread's stack, kept alive by the `recv()` until the reply fires.
+            tokio::task::spawn_blocking(move || {
+                let (tx, rx) = std::sync::mpsc::channel::<AuthOutcome>();
+                let ctx = unsafe { LAContext::new() };
+                let reason = NSString::from_str(&reason);
+                let reply = RcBlock::new(move |success: Bool, error: *mut NSError| {
+                    let outcome = if success.as_bool() {
+                        AuthOutcome::Approved
+                    } else if let Some(err) = unsafe { error.as_ref() } {
+                        map_la_error(err.code())
+                    } else {
+                        AuthOutcome::Denied
+                    };
+                    let _ = tx.send(outcome);
+                });
+                unsafe { ctx.evaluatePolicy_localizedReason_reply(policy, &reason, &reply) };
+                // Bound the wait: if the reply never fires (an LA edge case, or the
+                // block is dropped un-fired), don't strand this blocking-pool thread
+                // — and the caller's `decide_approval` oneshot — forever. Generous vs
+                // a human Touch-ID interaction (seconds); the request's own TTL
+                // expires it upstream regardless. On timeout, cancel the lingering OS
+                // prompt and fail closed (deny-safe `Error`, never `Approved`).
+                match rx.recv_timeout(std::time::Duration::from_secs(120)) {
+                    Ok(outcome) => outcome,
+                    Err(_) => {
+                        unsafe { ctx.invalidate() };
+                        AuthOutcome::Error("touch-id timed out".into())
+                    }
+                }
+            })
+            .await
+            .unwrap_or_else(|_| AuthOutcome::Error("touch-id task failed".into()))
+        }
+    }
+
+    /// The macOS Touch-ID `AuthGate` (B3) — `LAContext.evaluatePolicy` behind the
+    /// rich `AuthOutcome` (never a bool, F5), mirroring the Swift `TouchID.swift`.
+    /// Generic over the [`LocalAuth`] seam so tests inject a fake; prod is
+    /// `TouchIdGate::default()` = [`RealLocalAuth`].
+    pub(crate) struct TouchIdGate<L: LocalAuth = RealLocalAuth> {
+        la: L,
+    }
+
+    impl Default for TouchIdGate<RealLocalAuth> {
+        fn default() -> Self {
+            Self { la: RealLocalAuth }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl<L: LocalAuth> AuthGate for TouchIdGate<L> {
+        async fn gate(&self, prompt: AuthPrompt) -> AuthOutcome {
+            // Deny-safe: if the device can't satisfy the policy (no biometrics /
+            // passcode enrolled), NEVER prompt — Unavailable (F5), matching
+            // TouchID.swift's `canEvaluatePolicy == false` path.
+            if !self.la.can_evaluate(prompt.biometrics_only) {
+                return AuthOutcome::Unavailable;
+            }
+            self.la.evaluate(prompt.biometrics_only, prompt.reason).await
+        }
+    }
+
     #[cfg(test)]
     mod tests {
-        use super::osa_quote;
+        use super::*;
 
         #[test]
         fn osa_quote_escapes_quotes_and_backslashes() {
@@ -653,6 +783,65 @@ mod macos {
                     i > 0 && interior.as_bytes()[i - 1] == b'\\',
                     "an unescaped quote survived at {i}"
                 );
+            }
+        }
+
+        // -- B3 Touch-ID gate: the deny-safe unit tests (no real biometric prompt).
+
+        /// A fake `LocalAuth` so the gate's decision logic is exercised without
+        /// touching `LAContext` — the only automated coverage of the real gate
+        /// (the live Touch-ID path needs a signed build → the A5 manual smoke).
+        struct FakeAuth {
+            can: bool,
+            outcome: AuthOutcome,
+        }
+
+        #[async_trait::async_trait]
+        impl LocalAuth for FakeAuth {
+            fn can_evaluate(&self, _biometrics_only: bool) -> bool {
+                self.can
+            }
+            async fn evaluate(&self, _biometrics_only: bool, _reason: String) -> AuthOutcome {
+                assert!(self.can, "evaluate() must not run when can_evaluate is false");
+                self.outcome.clone()
+            }
+        }
+
+        fn prompt() -> AuthPrompt {
+            AuthPrompt { reason: "unlock a credential".into(), biometrics_only: false }
+        }
+
+        #[tokio::test]
+        async fn unavailable_when_device_cannot_evaluate() {
+            // Deny-safe: no enrolled biometrics/passcode → Unavailable, and the real
+            // evaluate() (which would prompt) is never reached (asserted in FakeAuth).
+            let gate = TouchIdGate {
+                la: FakeAuth { can: false, outcome: AuthOutcome::Approved },
+            };
+            assert_eq!(gate.gate(prompt()).await, AuthOutcome::Unavailable);
+        }
+
+        #[tokio::test]
+        async fn gate_returns_the_evaluated_outcome() {
+            for outcome in [AuthOutcome::Approved, AuthOutcome::Denied, AuthOutcome::Cancelled] {
+                let gate = TouchIdGate {
+                    la: FakeAuth { can: true, outcome: outcome.clone() },
+                };
+                assert_eq!(gate.gate(prompt()).await, outcome);
+            }
+        }
+
+        #[test]
+        fn no_la_error_maps_to_approved() {
+            // The single most important property of the gate: NO failure code can be
+            // mistaken for approval — only a real `success` bool yields Approved.
+            assert_eq!(map_la_error(-2), AuthOutcome::Cancelled);
+            assert_eq!(map_la_error(-1), AuthOutcome::Denied);
+            assert_eq!(map_la_error(-7), AuthOutcome::Unavailable);
+            assert_eq!(map_la_error(-13), AuthOutcome::Unavailable); // biometry disconnected
+            assert!(matches!(map_la_error(-9999), AuthOutcome::Error(_)));
+            for code in [-1, -2, -3, -4, -5, -6, -7, -8, -9, -10, -12, -13, -1004, 0, -9999] {
+                assert_ne!(map_la_error(code), AuthOutcome::Approved);
             }
         }
     }
