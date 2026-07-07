@@ -215,9 +215,11 @@ the "Open in Claude" link, the "Launch" button, the sidebar active state uses `a
 (fine — leave). Keep `hbtn`, titles, `disabled`, `spin`. **AC:** re-screenshot — the three
 running-shed buttons read clean blue / amber / red (not tan), sized like Swift.
 
-### M4 — Dashboard dense-parity rescale (`App.tsx` + `index.css`)
-Port every pane to the Swift scale (table above). Mechanical but broad — may land as 1–2
-commits (e.g. 4a shell+Sheds, 4b other panes+modals), each green.
+### M4 — Dashboard dense-parity rescale (`App.tsx`) — DONE (verified: Sheds + System on screen)
+Ported every pane to the Swift scale (table above) — a purely presentational rescale (className +
+inline-style values), all `data-*`/drivability hooks intact (mac e2e 61 green). Landed as one
+commit. Modals got a light touch (titles 19→17); Swift's native grouped Form isn't portable, so the
+web modals keep their structure at the tighter type scale.
 - **Shell:** sidebar `w-[232px]→w-[200px]`, nav rows to `13`/icon 16, count pill `11`;
   header `h-[52px]` chrome to `13 medium` + 7px dot + `12`; main content left-aligned
   `px-5`/`py-4`-ish, drop the `max-w-[880px]` centering (Swift fills). Keep `data-pane`.

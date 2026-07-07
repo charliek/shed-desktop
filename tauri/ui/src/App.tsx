@@ -63,7 +63,7 @@ function Tag({ kind }: { kind: string }) {
   const vz = kind === "vz";
   return (
     <span
-      className="rounded-md px-2 py-1 text-[12px] font-semibold leading-none"
+      className="rounded px-1.5 py-0.5 text-[10px] font-semibold leading-none"
       style={{
         background: vz ? "var(--shed-tag-vz-bg)" : "var(--shed-tag-fc-bg)",
         color: vz ? "var(--shed-tag-vz-text)" : "var(--shed-tag-fc-text)",
@@ -76,7 +76,7 @@ function Tag({ kind }: { kind: string }) {
 
 function ImageChip({ children }: { children: React.ReactNode }) {
   return (
-    <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium leading-none text-shed-text-secondary">
+    <span className="rounded bg-shed-inset px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none text-shed-text-secondary">
       {children}
     </span>
   );
@@ -84,24 +84,25 @@ function ImageChip({ children }: { children: React.ReactNode }) {
 
 function PageHead({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }) {
   return (
-    <div className="mb-6 flex items-start gap-4">
+    <div className="mb-4 flex items-start gap-4">
       <div className="flex-1">
-        <h1 className="text-[22px] font-bold leading-tight text-shed-text">{title}</h1>
-        {sub && <p className="mt-1.5 text-[14px] text-shed-text-muted">{sub}</p>}
+        <h1 className="text-[26px] font-bold leading-tight text-shed-text">{title}</h1>
+        {sub && <p className="mt-1 text-[12px] text-shed-text-muted">{sub}</p>}
       </div>
       {right}
     </div>
   );
 }
 
+// A header action — a plain text + SF-style icon accent link (Swift ShedListView's
+// "New shed" Label), not a filled button.
 function HeadAction({ icon: Icon, label, onClick }: { icon: typeof Box; label: string; onClick?: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="hbtn inline-flex items-center gap-2 rounded-[10px] px-3.5 py-2.5 text-[15px] font-semibold text-shed-accent-fg"
-      style={{ background: "var(--shed-accent)" }}
+      className="hlink -mr-1 inline-flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] font-medium text-shed-accent"
     >
-      <Icon size={17} />
+      <Icon size={14} />
       {label}
     </button>
   );
@@ -116,7 +117,7 @@ function IconBtn({ icon: Icon, tone = "neutral", title, onClick, spin, disabled 
       onClick={onClick}
       title={title}
       disabled={disabled}
-      className="hbtn inline-flex h-[34px] w-[42px] flex-none items-center justify-center rounded-lg"
+      className="hbtn inline-flex h-[26px] w-[26px] flex-none items-center justify-center rounded-[7px]"
       style={{
         // A CLEAN intent tint — mixed into the near-white card surface (Swift
         // IntentButton `intent.opacity(0.12)`), not into the beige `--shed-inset`,
@@ -127,7 +128,7 @@ function IconBtn({ icon: Icon, tone = "neutral", title, onClick, spin, disabled 
         opacity: disabled ? 0.45 : 1,
       }}
     >
-      <Icon size={17} className={spin ? "animate-spin" : undefined} />
+      <Icon size={14} className={spin ? "animate-spin" : undefined} />
     </button>
   );
 }
@@ -183,23 +184,23 @@ function ShedsPane({ sheds, refresh, onNew }: { sheds: Shed[]; refresh: () => vo
         <EmptyCard>No sheds on the configured hosts.</EmptyCard>
       ) : (
         groupByHost(sheds).map(([host, rows]) => (
-          <div key={host} className="mb-5 last:mb-0">
-            <div className="mb-2 pl-0.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">{host}</div>
-            <div className="flex flex-col gap-3">
+          <div key={host} className="mb-4 last:mb-0">
+            <div className="mb-2 pl-0.5 text-[11px] font-semibold uppercase tracking-wider text-shed-text-muted">{host}</div>
+            <div className="flex flex-col gap-2">
               {rows.map((s) => {
                 const running = s.status === "running";
                 return (
-                  <div key={`${host}/${s.name}`} className={cn(card, "flex items-center gap-4 px-5 py-[18px]")} style={{ animation: "shed-in .25s ease" }}>
-                    <Dot style={{ background: running ? "var(--shed-ok)" : "var(--shed-text-muted)" }} className="h-[11px] w-[11px]" />
+                  <div key={`${host}/${s.name}`} className={cn(card, "flex items-center gap-3 px-3.5 py-3")} style={{ animation: "shed-in .25s ease" }}>
+                    <Dot style={{ background: running ? "var(--shed-ok)" : "var(--shed-text-muted)" }} className="h-2 w-2" />
                     <div className="min-w-0 flex-1">
-                      <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
-                        <span className="text-[19px] font-bold text-shed-text">{s.name}</span>
+                      <div className="mb-0.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[14px] font-semibold text-shed-text">{s.name}</span>
                         {s.backend && <Tag kind={s.backend} />}
                         {s.image && <ImageChip>{s.image}</ImageChip>}
                       </div>
-                      <div className="text-[14px] text-shed-text-muted">{metaLine(s)}</div>
+                      <div className="text-[12px] text-shed-text-muted">{metaLine(s)}</div>
                     </div>
-                    <div className="flex gap-2.5">
+                    <div className="flex gap-1.5">
                       {running ? (
                         <>
                           <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" onClick={() => void openTerminal(s.name, s.host)} />
@@ -244,27 +245,27 @@ function ApprovalsPane({ approvals }: { approvals: Approval[] }) {
             const secs = Number.isFinite(t) ? Math.max(0, Math.round((t - now) / 1000)) : 0;
             const biometric = a.gate !== "none";
             return (
-              <div key={a.id} className={cn(card, "p-5")} style={{ animation: "shed-in .25s ease" }}>
-                <div className="flex items-start gap-4">
-                  <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl" style={{ background: "var(--shed-tag-vz-bg)" }}>
-                    <Key size={20} style={{ color: "var(--shed-tag-vz-text)" }} />
+              <div key={a.id} className={cn(card, "p-3.5")} style={{ animation: "shed-in .25s ease" }}>
+                <div className="flex items-start gap-2.5">
+                  <div className="flex h-8 w-8 flex-none items-center justify-center rounded-lg" style={{ background: "var(--shed-tag-vz-bg)" }}>
+                    <Key size={16} style={{ color: "var(--shed-tag-vz-text)" }} />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[18px] font-bold text-shed-text">{a.namespace} · {a.op}</div>
-                    <div className="mt-1.5 text-[14px] leading-snug text-shed-text-muted">shed {qualifiedShed(a.server, a.shed)} · {a.detail}</div>
+                    <div className="text-[14px] font-semibold text-shed-text">{a.namespace} · {a.op}</div>
+                    <div className="mt-0.5 text-[12px] leading-snug text-shed-text-secondary">shed {qualifiedShed(a.server, a.shed)} · {a.detail}</div>
                   </div>
-                  <span className="flex-none text-[14px] font-semibold" style={{ color: "var(--shed-attention)" }}>expires in {secs}s</span>
+                  <span className="flex-none text-[12px] font-medium" style={{ color: "var(--shed-attention)" }}>expires in {secs}s</span>
                 </div>
-                <div className="mt-[18px] flex items-center">
-                  <span className="flex-1 text-[13px] text-shed-text-muted">{approveHint(a.default_scope)}</span>
-                  <div className="flex gap-2.5">
-                    <button onClick={() => void decideApproval(a.id, "deny")} className="hbtn rounded-[10px] px-5 py-[11px] text-[15px] font-semibold" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>Deny</button>
+                <div className="mt-2.5 flex items-center">
+                  <span className="flex-1 text-[11px] text-shed-text-muted">{approveHint(a.default_scope)}</span>
+                  <div className="flex gap-2">
+                    <button onClick={() => void decideApproval(a.id, "deny")} className="hbtn rounded-lg px-3.5 py-[7px] text-[13px] font-medium" style={{ background: "var(--shed-deny-bg)", color: "var(--shed-danger)" }}>Deny</button>
                     <button
                       onClick={() => void decideApproval(a.id, "approve", { scope: a.default_scope, ttl: a.default_ttl })}
-                      className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold"
+                      className="hbtn inline-flex items-center gap-1.5 rounded-lg px-3.5 py-[7px] text-[13px] font-medium"
                       style={{ background: "var(--shed-approve)", color: "var(--shed-approve-fg)" }}
                     >
-                      {biometric && <Fingerprint size={18} />} Approve
+                      {biometric && <Fingerprint size={14} />} Approve
                     </button>
                   </div>
                 </div>
@@ -347,19 +348,19 @@ function SessionCard({ session: s, onKilled, onError }: { session: RcSession; on
     catch (e) { onError(String(e)); setBusy(false); }
   };
   return (
-    <div className={cn(card, "flex items-center gap-3.5 py-3.5 pl-3.5 pr-4")} style={{ animation: "shed-in .25s ease" }}>
-      <span className="inline-flex min-w-[80px] flex-none items-center justify-center rounded-[9px] px-3 py-2.5 text-[14px] font-semibold" style={{ background: tone.bg, color: tone.fg }}>{s.state}</span>
+    <div className={cn(card, "flex items-center gap-3 px-3.5 py-3")} style={{ animation: "shed-in .25s ease" }}>
+      <span className="inline-flex w-[84px] flex-none items-center justify-center rounded-md px-2 py-1 text-[11px] font-medium" style={{ background: tone.bg, color: tone.fg }}>{s.state}</span>
       <div className="min-w-0 flex-1">
-        <div className="mb-1 flex flex-wrap items-center gap-2.5">
-          <span className="text-[16px] font-bold text-shed-text">{s.display_name}</span>
-          <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium text-shed-text-secondary">{s.kind}</span>
-          {!s.managed && <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[11px] font-semibold text-shed-text-muted">legacy</span>}
+        <div className="mb-0.5 flex flex-wrap items-center gap-1.5">
+          <span className="text-[14px] font-semibold text-shed-text">{s.display_name}</span>
+          <span className="rounded bg-shed-inset px-1.5 py-0.5 font-mono text-[10px] font-medium text-shed-text-secondary">{s.kind}</span>
+          {!s.managed && <span className="rounded bg-shed-inset px-1.5 py-0.5 font-mono text-[10px] font-semibold text-shed-text-muted">legacy</span>}
         </div>
-        <div className="truncate text-[13px] text-shed-text-muted">{sub}</div>
+        <div className="truncate text-[12px] text-shed-text-muted">{sub}</div>
       </div>
       {s.url && (
-        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in srgb, var(--shed-accent) 14%, var(--shed-surface))", border: "1px solid color-mix(in srgb, var(--shed-accent) 34%, var(--shed-border))", color: "var(--shed-accent)" }}>
-          <ExternalLink size={16} /> Open in Claude
+        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[12px] font-medium" style={{ background: "var(--shed-accent-subtle)", border: "1px solid var(--shed-accent-border)", color: "var(--shed-accent)" }}>
+          <ExternalLink size={14} /> Open in Claude
         </a>
       )}
       <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" onClick={() => void openTerminal(s.shed, s.host, s.tmux_session)} />
@@ -450,13 +451,13 @@ function ActivityPane() {
           {activity.map((e, i) => {
             const ok = e.result === "ok";
             return (
-              <div key={`${e.id}-${i}`} className={cn("row-hover flex items-center gap-3.5 px-[18px] py-[13px]", i && "border-t border-shed-border")}>
-                <span className="w-[70px] flex-none font-mono text-[13px] text-shed-text-muted">{shortTime(e.ts)}</span>
-                {e.ns && <span className="flex-none rounded-md px-1.5 py-1 font-mono text-[11px] font-semibold" style={{ background: "var(--shed-agent-pill-bg)", color: "var(--shed-agent-pill-text)" }}>{e.ns}</span>}
-                <span className="min-w-0 flex-1 truncate text-[14px] text-shed-text-secondary">{activityDetail(e)}</span>
+              <div key={`${e.id}-${i}`} className={cn("row-hover flex items-center gap-2.5 px-3.5 py-2", i && "border-t border-shed-border")}>
+                <span className="w-[66px] flex-none font-mono text-[11px] text-shed-text-muted">{shortTime(e.ts)}</span>
+                {e.ns && <span className="flex-none rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold" style={{ background: "var(--shed-agent-pill-bg)", color: "var(--shed-agent-pill-text)" }}>{e.ns}</span>}
+                <span className="min-w-0 flex-1 truncate text-[12px] text-shed-text-secondary">{activityDetail(e)}</span>
                 <span className="flex flex-none items-center gap-2">
-                  <span className="text-[13px] font-semibold" style={{ color: ok ? "var(--shed-ok)" : "var(--shed-danger)" }}>{e.result}</span>
-                  {e.approval && e.approval !== "none" && <span className="text-[12px] text-shed-text-muted">{e.approval}</span>}
+                  <span className="text-[12px] font-medium" style={{ color: ok ? "var(--shed-ok)" : "var(--shed-danger)" }}>{e.result}</span>
+                  {e.approval && e.approval !== "none" && <span className="text-[11px] text-shed-text-muted">{e.approval}</span>}
                 </span>
               </div>
             );
@@ -486,17 +487,17 @@ function SystemPane() {
         sub="Disk usage per host (images, sheds, snapshots, orphans)."
         right={<HeadAction icon={RefreshCw} label="Refresh" onClick={load} />}
       />
-      <div className="flex flex-col gap-3.5">
+      <div className="flex flex-col gap-2.5">
         {rows.map((h) => {
           const t = h.usage?.totals;
           return (
-            <div key={h.host} className={cn(card, "px-5 py-4")}>
-              <div className={cn("flex items-center gap-3", t ? "mb-4" : "mb-3")}>
-                <HardDrive size={20} className="text-shed-text-muted" />
-                <span className="text-[17px] font-bold text-shed-text">{h.host}</span>
+            <div key={h.host} className={cn(card, "p-3.5")}>
+              <div className={cn("flex items-center gap-2", t ? "mb-2.5" : "mb-2")}>
+                <HardDrive size={16} className="text-shed-text-muted" />
+                <span className="text-[14px] font-semibold text-shed-text">{h.host}</span>
                 {h.usage?.backend && <Tag kind={h.usage.backend} />}
                 <span className="flex-1" />
-                {t && <span className="text-[19px] font-bold text-shed-text">{formatBytes(t.all.physical_bytes)}</span>}
+                {t && <span className="text-[13px] font-semibold text-shed-text">{formatBytes(t.all.physical_bytes)}</span>}
               </div>
               {t ? (
                 <div className="grid grid-cols-4 gap-2.5">
@@ -509,13 +510,13 @@ function SystemPane() {
                     ] as const
                   ).map(([label, size]) => (
                     <div key={label}>
-                      <div className="mb-1.5 text-[12px] text-shed-text-muted">{label}</div>
-                      <div className="font-mono text-[15px] font-medium text-shed-text">{formatBytes(size.physical_bytes)}</div>
+                      <div className="mb-1 text-[10px] text-shed-text-muted">{label}</div>
+                      <div className="font-mono text-[12px] font-medium text-shed-text">{formatBytes(size.physical_bytes)}</div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="break-words font-mono text-[13px] leading-relaxed" style={{ color: "var(--shed-danger)" }}>{h.error}</div>
+                <div className="break-words font-mono text-[11px] leading-relaxed" style={{ color: "var(--shed-danger)" }}>{h.error}</div>
               )}
             </div>
           );
@@ -648,7 +649,7 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
       >
         <div className="mb-5 flex items-center gap-3">
           <Settings size={20} className="text-shed-text-muted" />
-          <h2 className="flex-1 text-[19px] font-bold text-shed-text">Preferences</h2>
+          <h2 className="flex-1 text-[17px] font-semibold text-shed-text">Preferences</h2>
           <button onClick={onClose} title="Close" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             <X size={17} />
           </button>
@@ -908,7 +909,7 @@ function NewShedDialog({ refresh, onClose }: { refresh: () => void; onClose: () 
       <div className={cn(card, "w-full max-w-[540px] p-6")} onClick={(e) => e.stopPropagation()} style={{ animation: "shed-in .18s ease" }}>
         <div className="mb-5 flex items-center gap-3">
           <Plus size={20} className="text-shed-text-muted" />
-          <h2 className="flex-1 text-[19px] font-bold text-shed-text">New shed</h2>
+          <h2 className="flex-1 text-[17px] font-semibold text-shed-text">New shed</h2>
           <button onClick={cancel} title="Close" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             <X size={17} />
           </button>
@@ -1040,7 +1041,7 @@ export default function App() {
   return (
     <div className="flex h-full">
       {/* sidebar */}
-      <aside className="flex w-[232px] flex-none flex-col gap-1 border-r border-shed-border bg-shed-bg-sidebar px-3 py-3.5">
+      <aside className="flex w-[200px] flex-none flex-col gap-[3px] border-r border-shed-border bg-shed-bg-sidebar px-2 pb-2.5 pt-3">
         {NAV.map(([id, label, Icon]) => {
           const active = pane === id;
           const badge = id === "sheds" ? sheds.length || null : id === "approvals" && pending ? pending : null;
@@ -1049,18 +1050,17 @@ export default function App() {
             <button
               key={id}
               onClick={() => setPane(id)}
-              className={cn("nav-item flex w-full items-center gap-3 rounded-[9px] px-[11px] py-[9px] text-left text-[15px] font-semibold", active && "is-active")}
+              className={cn("nav-item flex w-full items-center gap-[9px] rounded-lg px-[9px] py-2 text-left text-[13px]", active ? "font-medium" : "font-normal", active && "is-active")}
               style={{
                 background: active ? "var(--shed-accent-subtle)" : "transparent",
-                boxShadow: active ? "inset 0 0 0 1px var(--shed-accent-border)" : undefined,
               }}
             >
-              <Icon size={18} style={{ color: active ? "var(--shed-accent)" : "var(--shed-text-muted)" }} />
-              <span className="flex-1" style={{ color: active ? "var(--shed-text)" : "var(--shed-text-secondary)" }}>{label}</span>
+              <Icon size={16} className="flex-none" style={{ color: active ? "var(--shed-accent)" : "var(--shed-text-muted)" }} />
+              <span className="flex-1" style={{ color: active ? "var(--shed-accent)" : "var(--shed-text-secondary)" }}>{label}</span>
               {badge != null && (
                 <span
-                  className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-[7px] px-1.5 font-mono text-[12px] font-semibold"
-                  style={{ background: alert ? "var(--shed-deny-bg)" : "var(--shed-inset)", color: alert ? "var(--shed-danger)" : "var(--shed-text-muted)" }}
+                  className="inline-flex items-center justify-center rounded-full px-[7px] py-px text-[11px] font-medium"
+                  style={{ background: alert ? "color-mix(in srgb, var(--shed-danger) 13%, var(--shed-surface))" : "var(--shed-inset)", color: alert ? "var(--shed-danger)" : "var(--shed-text-secondary)" }}
                 >
                   {badge}
                 </span>
@@ -1068,10 +1068,10 @@ export default function App() {
             </button>
           );
         })}
-        <div className="mx-[11px] my-3 h-px bg-shed-border" />
-        <div className="px-[11px] pb-2 pt-0.5 text-[11px] font-semibold tracking-wider text-shed-text-muted">HOSTS</div>
+        <div className="mx-1 my-3 h-px bg-shed-border" />
+        <div className="px-2.5 pb-1 pt-0.5 text-[11px] font-semibold tracking-wider text-shed-text-muted">HOSTS</div>
         {hosts.map((h) => (
-          <div key={h} className="flex items-center gap-3 px-[11px] py-[7px] text-[14px] font-medium text-shed-text-secondary">
+          <div key={h} className="flex items-center gap-2 px-2.5 py-[5px] text-[13px] text-shed-text-secondary">
             <Dot style={{ background: "var(--shed-ok)" }} />
             <span>{h}</span>
           </div>
@@ -1081,17 +1081,17 @@ export default function App() {
 
       {/* main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] flex-none items-center gap-3 border-b border-shed-border bg-shed-bg px-[22px]">
-          <Box size={20} className="text-shed-text-secondary" />
-          <span className="text-[15px] font-semibold text-shed-text">shed desktop</span>
+        <header className="flex h-[44px] flex-none items-center gap-2 border-b border-shed-border bg-shed-bg px-4">
+          <Box size={16} className="text-shed-text-secondary" />
+          <span className="text-[13px] font-medium text-shed-text-secondary">shed desktop</span>
           <div className="flex-1" />
           {pending > 0 && (
-            <button onClick={() => setPane("approvals")} className="hlink inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] font-semibold" style={{ color: "var(--shed-danger)" }}>
-              <Shield size={15} /> {pending} pending
+            <button onClick={() => setPane("approvals")} className="hlink inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[12px] font-medium" style={{ color: "var(--shed-danger)" }}>
+              <Shield size={13} /> {pending} pending
             </button>
           )}
-          <span className="inline-flex items-center gap-2 text-[13px] font-medium text-shed-text-secondary">
-            <Dot className="h-2 w-2" style={{ background: connected ? "var(--shed-ok)" : "var(--shed-text-muted)" }} /> host agent · {connected ? "connected" : "connecting…"}
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-shed-text-secondary">
+            <Dot className="h-[7px] w-[7px]" style={{ background: connected ? "var(--shed-ok)" : "var(--shed-text-muted)" }} /> host agent · {connected ? "connected" : "connecting…"}
           </span>
           <button onClick={() => setModal("prefs")} title="Preferences" className="hlink ml-1 flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
             <Settings size={15} />
@@ -1100,8 +1100,8 @@ export default function App() {
             {mode === "light" ? <Moon size={15} /> : <Sun size={15} />}
           </button>
         </header>
-        <main className="flex-1 overflow-auto bg-shed-bg px-[38px] py-7">
-          <div className="mx-auto max-w-[880px]" data-pane={pane}>
+        <main className="flex-1 overflow-auto bg-shed-bg px-5 pb-4 pt-[18px]">
+          <div data-pane={pane}>
             {pane === "sheds" && <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />}
             {pane === "approvals" && <ApprovalsPane approvals={approvals} />}
             {pane === "agents" && <AgentsPane sheds={sheds} />}
