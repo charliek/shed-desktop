@@ -643,49 +643,49 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
       data-prefs
     >
       <div
-        className={cn(card, "w-full max-w-[520px] p-6")}
+        className={cn(card, "w-full max-w-[460px] overflow-hidden p-0")}
         onClick={(e) => e.stopPropagation()}
-        style={{ animation: "shed-in .18s ease" }}
+        // A macOS grouped-Settings-form look: a recessed `--shed-bg` canvas with
+        // white section cards (matches the Swift `Form { Section }` .formStyle(.grouped)).
+        style={{ animation: "shed-in .18s ease", background: "var(--shed-bg)" }}
       >
-        <div className="mb-5 flex items-center gap-3">
-          <Settings size={20} className="text-shed-text-muted" />
-          <h2 className="flex-1 text-[17px] font-semibold text-shed-text">Preferences</h2>
-          <button onClick={onClose} title="Close" className="hlink flex h-7 w-7 items-center justify-center rounded-md text-shed-text-muted">
-            <X size={17} />
+        <div className="flex items-center gap-3 border-b border-shed-border bg-shed-surface px-5 py-3">
+          <Settings size={16} className="text-shed-text-muted" />
+          <h2 className="flex-1 text-[13px] font-semibold text-shed-text">Preferences</h2>
+          <button onClick={onClose} title="Close" className="hlink flex h-6 w-6 items-center justify-center rounded-md text-shed-text-muted">
+            <X size={15} />
           </button>
         </div>
+        <div className="max-h-[540px] overflow-auto px-5 py-4">
+          {/* SECTIONS */}
 
-        <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">General</div>
-        <label
-          className="mb-6 flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
-          style={{ borderColor: "var(--shed-border)", background: "var(--shed-inset)" }}
-        >
-          <input
-            type="checkbox"
-            checked={launchAtLogin}
-            disabled={loginBusy}
-            onChange={(e) => toggleLaunchAtLogin(e.target.checked)}
-            style={{ accentColor: "var(--shed-accent)" }}
-            data-launch-at-login
-          />
-          <span className="text-[15px] font-semibold text-shed-text">Launch at login</span>
-          <span className="flex-1" />
-          <span className="text-[12px] text-shed-text-muted">Open Shed Desktop when you sign in.</span>
-        </label>
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-shed-text-muted">General</div>
+        <div className="mb-5 overflow-hidden rounded-[10px] border border-shed-border bg-shed-surface">
+          <label className="flex cursor-pointer items-center gap-3 px-3.5 py-2.5">
+            <span className="text-[13px] text-shed-text">Launch at login</span>
+            <span className="flex-1" />
+            <span className="text-[12px] text-shed-text-muted">Open Shed Desktop when you sign in.</span>
+            <input
+              type="checkbox"
+              checked={launchAtLogin}
+              disabled={loginBusy}
+              onChange={(e) => toggleLaunchAtLogin(e.target.checked)}
+              style={{ accentColor: "var(--shed-accent)" }}
+              data-launch-at-login
+            />
+          </label>
+        </div>
 
-        <div className="mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Terminal</div>
-        <p className="mb-3 text-[13px] text-shed-text-muted">Which terminal opens when you click “Open in Terminal” on a shed.</p>
-        <div className="flex flex-col gap-2">
-          {presets.map((p) => {
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-shed-text-muted">Terminal</div>
+        <p className="mb-2 text-[12px] text-shed-text-muted">Which terminal opens when you click “Open in Terminal” on a shed.</p>
+        <div className="mb-5 overflow-hidden rounded-[10px] border border-shed-border bg-shed-surface">
+          {presets.map((p, i) => {
             const active = preset === p.id;
             return (
               <label
                 key={p.id}
-                className={cn("flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5", !p.available && "opacity-50")}
-                style={{
-                  borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
-                  background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
-                }}
+                className={cn("flex cursor-pointer items-center gap-3 px-3.5 py-2.5", i && "border-t border-shed-border", !p.available && "opacity-50")}
+                style={{ background: active ? "var(--shed-accent-subtle)" : undefined }}
               >
                 <input
                   type="radio"
@@ -695,7 +695,7 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
                   onChange={() => choosePreset(p.id)}
                   style={{ accentColor: "var(--shed-accent)" }}
                 />
-                <span className="text-[15px] font-semibold text-shed-text">{p.label}</span>
+                <span className="text-[13px] text-shed-text">{p.label}</span>
                 {!p.available && <span className="text-[12px] text-shed-text-muted">not installed</span>}
                 <span className="flex-1" />
                 {p.detail && <span className="truncate text-[12px] text-shed-text-muted">{p.detail}</span>}
@@ -704,12 +704,12 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
           })}
         </div>
         {preset === "custom" && (
-          <div className="mt-3">
+          <div className="-mt-3 mb-5">
             <input
               value={template}
               onChange={(e) => editTemplate(e.target.value)}
               placeholder="e.g. kitty -e {cmd}"
-              className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
+              className="w-full rounded-[9px] border border-shed-border bg-shed-surface px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
             />
             <p className="mt-1.5 text-[12px] text-shed-text-muted">
               <code className="font-mono">{"{cmd}"}</code> is the ssh command, <code className="font-mono">{"{shed}"}</code> the shed name.
@@ -717,25 +717,29 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
           </div>
         )}
 
-        <div className="mt-6 mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Credential approvals</div>
-        <p className="mb-3 text-[13px] text-shed-text-muted">What happens when the host agent routes an SSH-key approval here.</p>
-        <div className="flex flex-col gap-3">
-          <Field label="Approval policy">
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-shed-text-muted">Credential approvals</div>
+        <p className="mb-2 text-[12px] text-shed-text-muted">What happens when the host agent routes an SSH-key approval here.</p>
+        <div className="mb-2 overflow-hidden rounded-[10px] border border-shed-border bg-shed-surface">
+          <label className="flex items-center gap-3 px-3.5 py-2.5">
+            <span className="text-[13px] text-shed-text">Approval policy</span>
+            <span className="flex-1" />
             <select
               value={policy}
               onChange={(e) => applySsh({ policy: e.target.value })}
-              className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none"
+              className="rounded-md border border-shed-border bg-shed-inset px-2 py-1 text-[13px] text-shed-text outline-none"
               data-ssh-policy
             >
               {SSH_POLICIES.map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
             </select>
-          </Field>
+          </label>
 
           {/* Duration — only the time-based policy carries one (policy.usesDuration). */}
           {policyMeta?.usesDuration && (
-            <Field label="Duration">
+            <label className="flex items-center gap-3 border-t border-shed-border px-3.5 py-2.5">
+              <span className="text-[13px] text-shed-text">Duration</span>
+              <span className="flex-1" />
               <input
                 value={ttl}
                 // Free text → keep each keystroke LOCAL (optimistic) and persist only
@@ -753,26 +757,25 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
                   if (e.key === "Enter") e.currentTarget.blur();
                 }}
                 placeholder="2h"
-                className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
+                className="w-[72px] rounded-md border border-shed-border bg-shed-inset px-2 py-1 text-right font-mono text-[13px] text-shed-text outline-none"
                 data-ssh-ttl
               />
-            </Field>
+            </label>
           )}
+        </div>
 
-          {/* Method — only the prompting policies confirm an approval (policy.prompts). */}
-          {policyMeta?.prompts && (
-            <div className="flex flex-col gap-2">
-              <span className="text-[12px] font-semibold text-shed-text-secondary">Method</span>
-              {APPROVAL_METHODS.map((m) => {
+        {/* Method — only the prompting policies confirm an approval (policy.prompts). */}
+        {policyMeta?.prompts && (
+          <>
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-shed-text-muted">Method</div>
+            <div className="mb-2 overflow-hidden rounded-[10px] border border-shed-border bg-shed-surface">
+              {APPROVAL_METHODS.map((m, i) => {
                 const active = method === m.id;
                 return (
                   <label
                     key={m.id}
-                    className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
-                    style={{
-                      borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
-                      background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
-                    }}
+                    className={cn("flex cursor-pointer items-center gap-3 px-3.5 py-2.5", i && "border-t border-shed-border")}
+                    style={{ background: active ? "var(--shed-accent-subtle)" : undefined }}
                   >
                     <input
                       type="radio"
@@ -781,18 +784,19 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
                       onChange={() => applySsh({ method: m.id })}
                       style={{ accentColor: "var(--shed-accent)" }}
                     />
-                    <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
+                    <span className="text-[13px] text-shed-text">{m.label}</span>
                     <span className="flex-1" />
                     <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
                   </label>
                 );
               })}
             </div>
-          )}
-        </div>
-        <p className="mt-3 text-[12px] text-shed-text-muted">
+          </>
+        )}
+        <p className="text-[12px] leading-relaxed text-shed-text-muted">
           Always Allow / Always Deny decide every SSH sign with no prompt. The others prompt, then remember your approval per the policy. Changing the policy clears live grants. Method is how each approval is confirmed.
         </p>
+        </div>
       </div>
     </div>
   );

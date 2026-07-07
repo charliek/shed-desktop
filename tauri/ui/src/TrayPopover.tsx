@@ -85,18 +85,35 @@ export default function TrayPopover() {
     const schedule = () => { if (!raf) raf = requestAnimationFrame(measure); };
     const ro = new ResizeObserver(schedule);
     ro.observe(el);
-    // Initial measure. WebKit throttles rAF for a hidden window, so this lands when
-    // the popover is first shown (the window is built at MAX height so a late resize
-    // still looks right — worst case a brief first-open shrink, never a clip).
-    schedule();
-    return () => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
+    schedule(); // initial (rAF is throttled while hidden — see below)
+
+    // The window builds at MAX height and WebKit throttles rAF for a HIDDEN window,
+    // so the ResizeObserver's initial measure can stall arbitrarily on the first open
+    // (the popover stays 640 tall until it eventually fires). Re-measure explicitly
+    // whenever the Rust show path fires `popover-refresh` — the window is visible by
+    // then — via TIMERS (not rAF), so a still-throttled rAF can't leave it un-sized.
+    // Two shots cover layout settling after the show + the data re-fetch.
+    const timers: number[] = [];
+    let unlisten = () => {};
+    void (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      unlisten = await listen("popover-refresh", () => {
+        timers.push(window.setTimeout(measure, 0), window.setTimeout(measure, 120));
+      });
+    })();
+    return () => {
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
+      unlisten();
+    };
   }, []);
 
   const decide = (a: Approval, decision: "approve" | "deny") =>
     void decideApproval(a.id, decision, { scope: a.default_scope, ttl: a.default_ttl });
 
   return (
-    <div ref={rootRef} className="flex w-full flex-col overflow-hidden rounded-[12px] text-shed-text" data-tray-popover>
+    <div ref={rootRef} className="flex w-full flex-col overflow-hidden rounded-[12px] bg-shed-surface text-shed-text" data-tray-popover>
       {/* header — host-agent status dot */}
       <div className="flex items-center justify-between px-3.5 py-2.5">
         <span className="text-[13px] font-medium">shed desktop</span>
