@@ -118,8 +118,11 @@ function IconBtn({ icon: Icon, tone = "neutral", title, onClick, spin, disabled 
       disabled={disabled}
       className="hbtn inline-flex h-[34px] w-[42px] flex-none items-center justify-center rounded-lg"
       style={{
-        border: `1px solid ${tinted ? `color-mix(in oklch, ${v} 26%, var(--shed-border))` : "var(--shed-border)"}`,
-        background: tinted ? `color-mix(in oklch, ${v} 13%, var(--shed-inset))` : "var(--shed-inset)",
+        // A CLEAN intent tint — mixed into the near-white card surface (Swift
+        // IntentButton `intent.opacity(0.12)`), not into the beige `--shed-inset`,
+        // which muddied every tone toward tan. `srgb` matches Swift's alpha compositing.
+        border: `1px solid ${tinted ? `color-mix(in srgb, ${v} 34%, var(--shed-border))` : "var(--shed-border)"}`,
+        background: tinted ? `color-mix(in srgb, ${v} 14%, var(--shed-surface))` : "var(--shed-inset)",
         color: tinted ? v : "var(--shed-text-secondary)",
         opacity: disabled ? 0.45 : 1,
       }}
@@ -285,9 +288,9 @@ const rcInput =
 /** State → badge tone: green ready, red dead, amber for in-progress / needs-action. */
 function rcStateTone(state: RcState): { bg: string; fg: string } {
   if (state === "ready")
-    return { bg: "color-mix(in oklch, var(--shed-ok) 15%, var(--shed-inset))", fg: "var(--shed-ok)" };
+    return { bg: "color-mix(in srgb, var(--shed-ok) 18%, var(--shed-surface))", fg: "var(--shed-ok)" };
   if (state === "dead") return { bg: "var(--shed-deny-bg)", fg: "var(--shed-danger)" };
-  return { bg: "color-mix(in oklch, var(--shed-attention) 15%, var(--shed-inset))", fg: "var(--shed-attention)" };
+  return { bg: "color-mix(in srgb, var(--shed-attention) 18%, var(--shed-surface))", fg: "var(--shed-attention)" };
 }
 
 function AgentsPane({ sheds }: { sheds: Shed[] }) {
@@ -355,7 +358,7 @@ function SessionCard({ session: s, onKilled, onError }: { session: RcSession; on
         <div className="truncate text-[13px] text-shed-text-muted">{sub}</div>
       </div>
       {s.url && (
-        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in srgb, var(--shed-accent) 14%, var(--shed-surface))", border: "1px solid color-mix(in srgb, var(--shed-accent) 34%, var(--shed-border))", color: "var(--shed-accent)" }}>
           <ExternalLink size={16} /> Open in Claude
         </a>
       )}
@@ -411,7 +414,7 @@ function LaunchForm({ sheds, onLaunched, onError }: { sheds: Shed[]; onLaunched:
             {RC_KINDS.map((k) => {
               const on = kind === k.id;
               return (
-                <button key={k.id} onClick={() => setKind(k.id)} className={cn("hbtn flex-1 rounded-[9px] px-3 py-2 text-[14px] font-semibold", on ? "text-shed-accent" : "text-shed-text-muted")} style={{ background: on ? "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))" : "var(--shed-inset)", border: on ? "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))" : "1px solid var(--shed-border)" }}>{k.label}</button>
+                <button key={k.id} onClick={() => setKind(k.id)} className={cn("hbtn flex-1 rounded-[9px] px-3 py-2 text-[14px] font-semibold", on ? "text-shed-accent" : "text-shed-text-muted")} style={{ background: on ? "color-mix(in srgb, var(--shed-accent) 14%, var(--shed-surface))" : "var(--shed-inset)", border: on ? "1px solid color-mix(in srgb, var(--shed-accent) 34%, var(--shed-border))" : "1px solid var(--shed-border)" }}>{k.label}</button>
               );
             })}
           </div>
@@ -424,7 +427,7 @@ function LaunchForm({ sheds, onLaunched, onError }: { sheds: Shed[]; onLaunched:
         <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} placeholder={kind === "shell" ? "npm install && npm test" : "summarize this repo"} className={cn(rcInput, "resize-none")} />
       </Field>
       <div className="flex justify-end">
-        <button onClick={() => void submit()} disabled={busy || !target} className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold disabled:opacity-50" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+        <button onClick={() => void submit()} disabled={busy || !target} className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold disabled:opacity-50" style={{ background: "color-mix(in srgb, var(--shed-accent) 14%, var(--shed-surface))", border: "1px solid color-mix(in srgb, var(--shed-accent) 34%, var(--shed-border))", color: "var(--shed-accent)" }}>
           <Sparkles size={18} /> {busy ? "Launching…" : "Launch"}
         </button>
       </div>

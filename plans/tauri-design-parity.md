@@ -200,13 +200,17 @@ Rounded corners + surface bg added mid-milestone (maintainer flagged them as a f
 - **AC:** `tray.show` → the popover hugs its content (no dead space), footer rows show icons +
   fill accent-blue on hover. `tray.dump` popover block unchanged (rows still reported).
 
-### M3 — Dashboard control-button parity (`App.tsx` `IconBtn` + intent-tinted controls)
-The headline pre-existing gap. Rework `IconBtn` to the Swift `IntentButton` recipe:
-`h-[26px] w-[26px]` (or 28 — pick on re-screenshot), r7, glyph `~13`, bg
-`color-mix(in oklch, ${v} 12%, var(--shed-surface))` (over surface, NOT inset → clean tint),
-border `color-mix(in oklch, ${v} 30%, transparent)` 0.5px, glyph = full intent (`neutral` →
-textSecondary over inset, unchanged shape). Sweep the SAME muddy recipe on every intent-tinted
-control that mixes into `--shed-inset`: the RC `rcStateTone` pill, the LaunchForm kind toggle,
+### M3 — Dashboard control-button parity (`App.tsx`) — DONE (tint; sizing deferred to M4)
+The headline "washed-out" gap was the TINT recipe, not the size — so M3 fixes the color and
+M4's coherent rescale handles sizing (a lone 26×26 button in the still-spacious cards would look
+off). Fix: every intent-tinted control mixed `intent 13%` into `--shed-inset` (a warm BEIGE),
+muddying blue/amber/red all toward tan. Rework to `color-mix(in srgb, ${v} 14%, var(--shed-surface))`
+bg + `color-mix(in srgb, ${v} 34%, var(--shed-border))` border (`srgb` matches Swift's
+`opacity()` alpha compositing; over the near-white card surface, NOT the beige inset; mixed into
+`--shed-border` not `transparent` per the fold). Applied to `IconBtn` + the RC `rcStateTone` pill
+(18%, Swift StatePill `0.18`) + the LaunchForm kind toggle + Open-in-Claude + Launch. Verified on
+screen: the running-shed terminal button now reads clean BLUE (was tan), reset amber, stop red.
+(Original sweep list — the RC `rcStateTone` pill, the LaunchForm kind toggle,
 the "Open in Claude" link, the "Launch" button, the sidebar active state uses `accent-subtle`
 (fine — leave). Keep `hbtn`, titles, `disabled`, `spin`. **AC:** re-screenshot — the three
 running-shed buttons read clean blue / amber / red (not tan), sized like Swift.
