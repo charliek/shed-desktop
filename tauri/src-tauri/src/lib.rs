@@ -484,6 +484,24 @@ fn app_exit(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+/// Content-size the menu-bar popover (Swift `NSPopover` parity — no dead space): the
+/// popover webview measures its rendered content height and reports it here; the width
+/// stays fixed and the height is clamped. Targets the `popover` window EXPLICITLY, so
+/// it can only ever resize the popover — a stray call from another window can't resize
+/// the dashboard. macOS-only; a no-op stub keeps the Linux build + the handler list
+/// compiling (the popover window is never created off macOS).
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn resize_popover(app: tauri::AppHandle, height: f64) {
+    if let Some(win) = app.get_webview_window(tray::POPOVER_ID) {
+        let h = height.clamp(tray::POPOVER_MIN_HEIGHT, tray::POPOVER_MAX_HEIGHT);
+        let _ = win.set_size(tauri::LogicalSize::new(tray::POPOVER_WIDTH, h));
+    }
+}
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn resize_popover(_app: tauri::AppHandle, _height: f64) {}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -586,7 +604,8 @@ pub fn run() {
             loginitem_set,
             open_dashboard,
             open_preferences,
-            app_exit
+            app_exit,
+            resize_popover
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
@@ -721,11 +740,34 @@ pub fn run() {
                     tauri::WebviewUrl::App("popover.html".into()),
                 )
                 .title("shed")
-                .inner_size(320.0, 460.0)
-                .decorations(false) // borderless; opaque (the default) — Swift parity
+                // Built at MAX height; the webview content-sizes it down via
+                // `resize_popover` (Swift NSPopover parity). `resizable(true)` is
+                // REQUIRED — a borderless NSWindow without it silently ignores
+                // programmatic `set_size`. It stays borderless + dismiss-on-blur, so
+                // there are no visible resize handles and the user can't drag it.
+                .inner_size(tray::POPOVER_WIDTH, tray::POPOVER_MAX_HEIGHT)
+                .decorations(false) // borderless
+                // TRANSPARENT + the native macOS `Popover` vibrancy material (radius
+                // 12), so the popover is the real frosted, environment-tinted menu-bar
+                // surface — indistinguishable from the Swift NSPopover (maintainer
+                // decision, 2026-07-07). The webview paints only its text/rows over the
+                // material (its own bg is transparent); the OS draws the window shadow.
+                .transparent(true)
+                .shadow(true)
+                .effects(
+                    tauri::window::EffectsBuilder::new()
+                        .effect(tauri::window::Effect::Popover)
+                        // Active (not the default follows-window-state) so the frost
+                        // stays at full strength even though the popover is a
+                        // non-activating utility window — otherwise it renders in the
+                        // washed-out inactive state.
+                        .state(tauri::window::EffectState::Active)
+                        .radius(12.0)
+                        .build(),
+                )
                 .always_on_top(true)
                 .skip_taskbar(true)
-                .resizable(false)
+                .resizable(true)
                 .visible(false)
                 .focused(false)
                 .build()

@@ -91,6 +91,15 @@
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
+  /* The mac menu-bar popover is a TRANSPARENT window so its rounded card can show
+     rounded corners (Swift NSPopover parity). Keep body/#root transparent there so
+     only the popover's own rounded surface paints — the dashboard (no popover marker)
+     keeps its canvas fill. Scoped via :has() (parsed but never matched on Linux, where
+     the popover window is never created). */
+  body:has([data-tray-popover]),
+  body:has([data-tray-popover]) #root {
+    background: transparent;
+  }
 }
 
 /* interaction + animation helpers (from the mockup) */
@@ -117,6 +126,18 @@
 }
 .hlink:hover {
   background: var(--shed-surface-hover);
+}
+/* menu-bar popover footer rows — the vivid accent-blue highlight of the Swift
+   MenuActionRow (controlAccentColor + alternateSelectedControlTextColor), using the
+   brand accent tokens directly so it's identical on mac + the Linux/GTK build (no
+   color-mix → can't regress the WebKitGTK render gate). The icon inherits the row's
+   currentColor, so it flips to the accent foreground on hover too. */
+.menu-row {
+  transition: background 0.1s ease, color 0.1s ease;
+}
+.menu-row:hover:not(:disabled) {
+  background: var(--shed-accent);
+  color: var(--shed-accent-fg);
 }
 .nav-item {
   transition: background 0.1s ease;

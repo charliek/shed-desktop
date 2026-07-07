@@ -23,6 +23,18 @@ pub const TRAY_ID: &str = "shed-tray";
 /// on macOS only). Its snapshot is keyed under this label, read by `tray.dump`.
 pub const POPOVER_ID: &str = "popover";
 
+/// The popover is a fixed WIDTH; its height content-sizes — the webview measures its
+/// rendered content and reports it to `resize_popover` (clamped to these bounds), so
+/// the window hugs its content like the Swift `NSPopover` (no dead space). Built at
+/// MAX height so a silently-ignored `set_size` (a non-resizable-window regression)
+/// leaves the window tall and is caught by `tray.dump`'s reported height.
+#[cfg(target_os = "macos")]
+pub const POPOVER_WIDTH: f64 = 320.0;
+#[cfg(target_os = "macos")]
+pub const POPOVER_MIN_HEIGHT: f64 = 120.0;
+#[cfg(target_os = "macos")]
+pub const POPOVER_MAX_HEIGHT: f64 = 640.0;
+
 /// Menu item ids — kept in sync with [`menu_item_ids`] so `tray.dump` can assert
 /// the menu over IPC without reaching into the native menu.
 const ID_OPEN: &str = "open";

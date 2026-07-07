@@ -457,6 +457,11 @@ export async function openPreferences(): Promise<void> {
 export async function quitApp(): Promise<void> {
   await invoke("app_exit");
 }
+/** Ask Rust to content-size the popover window to the measured height (Swift NSPopover
+ *  parity — no dead space). macOS-only in effect; a no-op on other targets. */
+export async function resizePopover(height: number): Promise<void> {
+  await invoke("resize_popover", { height });
+}
 
 /** Report the popover's compact rows so `tray.dump` can assert them (the hermetic
  *  content AC — OS tray clicks aren't drivable). The popover webview invokes this,

@@ -158,7 +158,26 @@ icon) + the running-shed count, matching the Swift status item. Drivability: no 
 the `ui_report` count is a mac-only side-effect computed before the existing merge (spine
 unchanged — the count is a native title, not observable via `tray.dump`, same as the icon).
 
-### M2 — Popover parity (`TrayPopover.tsx` + `popover.tsx` + `lib.rs` + a resize command)
+### M2 — Popover parity — DONE (verified on screen)
+Rounded corners + surface bg added mid-milestone (maintainer flagged them as a further gap):
+- **Rounded 12px corners + shadow (Swift `NSPopover` parity).** The popover was a borderless
+  OPAQUE rectangle (square corners). Fix: build it `transparent(true)` + `shadow(true)` and let
+  the webview round its own corners (`rounded-[12px] overflow-hidden` on the root). `transparent`
+  on macOS needs the `macos-private-api` tauri feature (unioned mac-only in `Cargo.toml`) — a
+  private CoreAnimation API, fine for the DMG/Sparkle distribution (only App Store would care).
+  The shared `body { background }` is nulled under the popover via `body:has([data-tray-popover])`
+  (parses on WebKitGTK 2.44, never matches on the popover-less dashboard/Linux) so only the
+  rounded card paints. `make tauri-build` uses plain `cargo build` (ignores the config feature
+  list), so the feature is set in `Cargo.toml`, NOT via `macOSPrivateApi` in `tauri.conf.json`.
+- **Native vibrancy material (maintainer decision, 2026-07-07).** After trying a flat
+  `--shed-surface` card, the maintainer chose true native parity: the popover uses the macOS
+  `Popover` vibrancy material (`EffectsBuilder::new().effect(Popover).state(Active).radius(12)`)
+  — the real frosted, environment-tinted menu-bar surface, indistinguishable from the Swift
+  `NSPopover`. `state(Active)` keeps the frost at full strength (the popover is a non-activating
+  window, which otherwise renders the washed-out inactive state). The card paints NO background
+  (transparent) so the material shows through; `radius(12)` rounds the material. mac-only — the
+  Linux/GTK build has no popover. (The webview transparency + `body:has` rule from the rounding
+  work is what lets the material show.)
 - **Footer icons + accent hover.** `FooterRow` gets a leading lucide icon (Open dashboard →
   `AppWindow`/`SquareDashed`… use `AppWindow`; Preferences → `Settings`; Check for Updates →
   `ArrowDownCircle`; Quit → `Power`), glyph `~15`, frame-aligned. Replace `.hlink` with a
