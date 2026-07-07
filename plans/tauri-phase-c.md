@@ -37,9 +37,12 @@ B1b targets parity with the Swift `MenuBarContentView` (host-agent dot · runnin
 approval cards · footer: Open dashboard / Preferences / Check for Updates / Quit), NOT the native-Swift
 `NSStatusItem` fallback in §8.
 
-**NEXT FOCUS → B1b** (the rich mac popover, decision above), **B3** (macOS Touch-ID gate, objc2),
-**B4 launch-at-login** (the B4 SSH-prefs half landed; Swift Preferences has a "Launch at login" toggle to
-match), and **A5/B7** (the real-agent smoke).
+**NEXT FOCUS → BATCH 3 (PLANNED 2026-07-06, branch `tauri-phase-c-batch3` off `feat/rust-core`=`37e962b`;
+full design + decomposition in §3.7):** **B4 launch-at-login** → **B3** (macOS Touch-ID gate, objc2) → **B1b**
+(the rich mac popover, decision above) — warm-up-first, headline last. Then **A5/B7** (the real-agent smoke).
+Maintainer decisions this batch: launch **menu-bar-first** (Swift `.accessory` parity, `!test_mode`-guarded),
+"Check for Updates…" a **disabled placeholder** in the popover footer. (The B4 SSH-prefs half already landed;
+this batch adds the "Launch at login" toggle to match Swift Preferences.)
 The A5/B7 smoke rides along with **a real build/packaging + run test on both macOS + Linux** (toward the
 flip, §4–§5): a hands-on run against a live `shed-host-agent` mints + gates a real approval end-to-end, so
 B7 need not be a separate step. Test plans are drafted — `docs/tauri-b2-agents-test-plan.md` (B2) +
@@ -396,8 +399,9 @@ done).** Remaining, decomposed:
   always-ask / always-deny) + **TTL** in the React Preferences. The ipc already carries them
   (`ssh_prefs` returns `{method, policy, ttl}`, `set_ssh_approval` accepts them, F13); today the pane shows
   only the method. Parity target: `PreferencesView.swift` "SSH approvals" section.
-- **B4-autostart** — launch-at-login via **`tauri-plugin-autostart`** (macOS `SMAppService`; Linux `.desktop`
-  autostart) + a `loginitem` state probe op for the harness (`Toggle("Launch at login")` parity).
+- **B4-autostart** — launch-at-login via **`tauri-plugin-autostart`** (the `auto-launch` crate — macOS
+  LaunchAgent / Linux `.desktop` autostart; **NOT** `SMAppService`, see the B4 correction below + §3.7) + a
+  `loginitem` state probe op for the harness (`Toggle("Launch at login")` parity).
 - **Out of scope:** the AWS/Docker **provider** sections (`providerSection`) gate deferred AWS/Docker
   credential support (`docs/roadmap.md`); not built here.
 
@@ -462,6 +466,231 @@ B4, and B1-linux (the menu expansion + count-on-a-menu-item)** — each fully ga
 + screenshot-able state) → **screenshot + checkpoint with the maintainer** for the native-feel / Swift-vs-Tauri
 call, rather than autonomously polishing it. Hard budget: if the popover isn't screenshot-able in a few hours,
 pivot to the native-Swift `NSStatusItem` option (§8) with data.
+
+## 3.7 Batch 3 — B4 launch-at-login + B3 macOS Touch-ID + B1b mac rich popover — PLANNED (2026-07-06)
+
+*The next batch on a fresh branch `tauri-phase-c-batch3` (off merged `feat/rust-core` = `37e962b`, PR #29).
+Turns the decided/deferred items into implementation. **One PR** onto `feat/rust-core`, **one green-per-commit
+sub-milestone** each, same flow as B2/Batch-2: implement → `/simplify` (apply) → adversarial (external
+`/cursor:review` + an internal general-purpose reviewer, cross-checked per [[review-process]]; a
+`ScheduleWakeup`//loop poll when a background review runs) → fold → full gates → commit green.*
+
+**Maintainer decisions (2026-07-06, this batch):**
+- **Launch = menu-bar-first (Swift parity).** In production the mac app launches `.accessory` (no Dock icon,
+  no window — just the menu-bar item); the dashboard opens on demand from the tray/popover. Mirrors the Swift
+  app (`ShedDesktopApp.swift:26` `.accessory`; `AppModel.swift:750/991/1395` flips `.regular`↔`.accessory`,
+  all `!testMode`-guarded). **Test mode keeps `main` shown + never flips** — else the hidden webview never
+  mounts → `ui_report` never fires → `wait_until(current_pane)` times out.
+- **"Check for Updates…" = a disabled placeholder** in the popover footer (no Tauri updater until the flip;
+  Sparkle is Swift-only) — greyed + a tooltip, for visual parity, *if it renders cleanly*; else omit rather
+  than ship an awkward dead control.
+- **Order = warm-up-first:** B4 → B3 → B1b (headline last, so its screenshot / native-feel checkpoint is the
+  finale — the maintainer eyeballs the popover at the end).
+
+**Order + sub-milestones (green per commit):**
+
+| # | Item | Scope |
+|---|---|---|
+| Batch3.1 | **B4 launch-at-login** | `tauri-plugin-autostart` (the `auto-launch` crate — LaunchAgent/AppleScript, **NOT** `SMAppService`); `loginitem.status`→`{enabled}` (via `app.autolaunch().is_enabled()`) + a **test-mode-guarded** `loginitem.set {enabled}` IPC op + invoke twins; the React "Launch at login" `Toggle` in Preferences→General (Swift `PreferencesView` parity); a harness `loginitem` probe test. Guard the enable so the harness never writes a real login item (mac `auto-launch` writes a real LaunchAgent / may trigger TCC — NOT HOME-scoped). |
+| Batch3.2 | **B3 macOS Touch-ID gate** | `objc2` + `objc2-local-authentication` v0.3.2 (macOS-**target-gated** so Linux never pulls them); `#[cfg(target_os="macos")] TouchIdGate: AuthGate` wrapping `LAContext.evaluatePolicy(policy, localizedReason:)` — `biometrics_only` → `…WithBiometrics`, else `…DeviceOwnerAuthentication` (password fallback); **retain the `LAContext` until the reply block fires**; the block lands on an arbitrary thread → bridge to a `oneshot`; `canEvaluatePolicy==false` → `Unavailable` (deny-safe, matching `TouchID.swift:22-24`); preserve the rich `AuthOutcome` (approved/denied/cancelled/unavailable/error), never a bool. Replace `FailClosedGate` in `production_seams()`'s macOS arm. **Deny-safe Rust unit test** mirroring `gate_never_approves_without_real_auth`. Real Touch-ID needs a signed build → **maintainer hands-on** (coupled to notarization + A5). |
+| Batch3.3 | **B1b mac rich popover** (headline) | See the design below. `tray.dump` popover-channel = the hermetic content AC; screenshot = a MANUAL maintainer visual-assessment artifact → checkpoint. |
+| Batch3.4 | **A5/B7 real build + smoke** | Confirm the **default/release build compiles+runs with the new deps** on mac (render gate covers Linux); refresh the hands-on runbook. The real agent/Touch-ID/login-item smokes stay the maintainer's. |
+
+*Gates for every code sub-milestone (**full set**): `make e2e-tauri` (mac) · `make tauri-test` · `make
+core-test` (runs `--features rc`) · `make tauri-test-linux` + `make tauri-build-linux` (the WebKitGTK render
+gate — each sub-milestone touches shared files: `lib.rs`/`Cargo.toml`/`tauri.conf.json`/`vite`, so Linux MUST
+be gated; the mac e2e alone misses Linux breaks). A new dep needs the tauri `Cargo.lock` refreshed for the
+render gate. Always `cd /abs/path` before `make` (cwd-drift no-ops a bare make from a subdir).*
+
+**B1b design (folds the §3.6 panel gotchas — the decided build):**
+
+Parity target: the Swift `MenuBarContentView` — a header (host-agent status dot), a red pending-approval
+block (≤3 cards: namespace/op + qualified-shed, approve(`touchid`|`check`)/deny), a running-sheds list (≤6,
+`host/name`), a footer (Open dashboard · Preferences… · Check for Updates… · Quit). Width ~300.
+
+- **Separate React entry, NOT the full `App`.** A 2nd `WebviewWindow` loading `index.html` mounts
+  `App`/`useUiBridge` → writes the SAME snapshot keys (`pane`/`sheds`/`refresh_token`) → corrupts
+  `dashboard.dump`/`current_pane`/the refresh gate (the `ui_report` key-merge does NOT save us — same keys,
+  one window-less blob). Fix = **both**: (a) a new Vite entry `popover.html` + `src/popover.tsx` →
+  `TrayPopover.tsx` (a compact tree, its own data hooks, **no** `useUiBridge`); (b) **window-label-keyed
+  `ui_report`** — add a `window: tauri::Window` param, store `snapshot_by_label[window.label()]`; the
+  dashboard readers (`ui.current_pane`/`ui.computed_style`/`ui.modal`/`dashboard.dump`/`agents.dump`/the
+  `sheds.refresh` echo) read the `main` label; `tray.dump` reads the `popover` label. Keeps the *within*-window
+  key-merge (the Agents pane's `agents` key) intact.
+- **Drivability (OS clicks aren't hermetic).** A `tray.show`/`tray.toggle`/`tray.hide` IPC op runs the EXACT
+  Rust path the mac tray-icon left-click runs (the analogue of `ui.show_preferences`), so CI can mount +
+  assert the popover; `tray.dump` gains a `popover` block (`{connected, running_sheds, pending_approvals}`
+  from the popover's window-keyed snapshot) = the content AC. The **screenshot is manual** (`screencapture`
+  is full-display + TCC-gated on mac).
+- **Tray builder (macOS).** `show_menu_on_left_click(false)` (MANDATORY — defaults true; else left-click opens
+  both menu + popover); `on_tray_icon_event` toggles the popover on ONE click edge (`button_state`
+  `Up`|`Down` fires twice/click → dedup on one edge); anchor via `tauri-plugin-positioner` (TrayCenter;
+  forward `on_tray_icon_event` into `positioner::on_tray_event`). The native menu stays for **right-click** as
+  a fallback (the landed B1 menu) **IF** `on_tray_icon_event` fires with a menu attached; if it doesn't, mac
+  goes popover-only (the popover footer already carries those actions) — Linux keeps its attached menu
+  regardless. Dismiss-on-blur: popover `WindowEvent::Focused(false)` → `hide`.
+- **`tauri.conf.json`:** add a `popover` window — `visible:false`, `decorations:false`, `transparent:true`,
+  `skipTaskbar:true`, `alwaysOnTop:true`, `resizable:false`, sized ~320×dynamic, `url:"popover.html"`. Its own
+  **capability** (`capabilities/popover.json`, scoped to the `popover` label — `default.json` is `main`-only).
+- **ActivationPolicy (role-aware, `!test_mode`-guarded).** `Regular` when `main` shows, `Accessory` when the
+  last normal window hides; production launches `.accessory`. Guard EVERY flip on `test_mode` + keep `main`
+  shown in test mode.
+- **Content:** `TrayPopover.tsx` mirrors `MenuBarContentView` via the existing hooks — `connected =
+  gateNs.length>0` (`connected-changed`), `list_sheds` (running, ≤6), `approvals_list` (≤3, approve/deny via
+  `approval.decide`). Footer reuses the existing emit paths (`ui.show_window`/`navigate`, `show-preferences`);
+  "Check for Updates…" is a **disabled** row. Refetch on the coordinator events + on show; report rows via the
+  window-keyed `ui_report` for `tray.dump`.
+- **Linux unchanged** — the landed native menu (Tauri emits no Linux tray click events / no popover).
+  macOS-only surface.
+
+**⚠️ Panel fold (Batch 3, 2026-07-06 — Codex + Kimi + CodeRabbit, all three converged). Load-bearing
+corrections that CHANGE the shape of the code above — folded before any B3/B4/B1b code:**
+
+*B1b — the design sketch above is corrected by these:*
+- **[BLOCKING · CR + Kimi] Create the `popover` window PROGRAMMATICALLY, mac-only — NOT a static
+  `tauri.conf.json` entry.** A window in `app.windows` is created on EVERY platform at startup, so a shared
+  transparent/`alwaysOnTop` 2nd webview loading `popover.html` under headless Xvfb + a multi-page Vite build
+  would risk breaking the WHOLE `tauri-linux` render gate (every `--target tauri` test), not just a popover
+  test — and Tauri v2 `WindowConfig` may not even honor a `url` field. → Build it in `#[cfg(target_os =
+  "macos")]` setup near `tray::build` (`lib.rs:576`) via `WebviewWindowBuilder::new(app, "popover",
+  WebviewUrl::App("popover.html".into()))` (borderless/transparent/skipTaskbar/`alwaysOnTop`/hidden). Linux
+  blast radius = 0, mirroring how `approval.rs` keeps the native gate `#[cfg(target_os=…)]`.
+- **[BLOCKING · Kimi] The popover footer needs NEW invoke commands — it can't "reuse the emit paths."**
+  `TrayPopover` is a DIFFERENT webview: it can't call IPC ops (harness-only) nor emit the Rust→main events the
+  dashboard listens for. Add small Tauri commands `open_dashboard` (present main + `emit("navigate",
+  {pane:"sheds"})`), `open_preferences` (present main + `emit("show-preferences")`), `app_exit`
+  (`app.exit(0)`); the footer `invoke`s them; expose them to the popover capability.
+- **[BLOCKING · Kimi + CR] The `ui_report` window-keying is ONE atomic refactor of ALL readers.** `UiState` →
+  `snapshots: HashMap<String,Value>`, the key-merge applying WITHIN a label; in the SAME commit migrate every
+  reader to the `main` label — `ui.current_pane`/`ui.computed_style`/`ui.modal` (`ipc.rs:167-170`),
+  `dashboard.dump` (`:188-190`), `agents.dump` (`:522-537`: `pane`+`agents`), the `sheds.refresh` echo
+  (`state.rs:32-34` read at `ipc.rs:271,278`), plus `Handler::ui_get` (`ipc.rs:157`) + `ui_report`
+  (`lib.rs:46`) taking a `window: tauri::Window`. Keep the within-`main` merge (shell + Agents both report to
+  `main`). Regression gate = `test_tauri`/`test_dashboard`/`test_shared` green at BOTH targets.
+- **[HIGH · Kimi + CR] `tray.show`/`tray.toggle` must SHOW *and position*** (`move_window(TrayCenter)` via
+  positioner), sharing ONE `#[cfg(macos)]` helper with `on_tray_icon_event`. But TrayCenter needs a tray-rect
+  cached from a REAL `on_tray_icon_event`; a hermetic `tray.show` with no prior OS click positions at a default
+  origin — fine for the `tray.dump` content AC, but **the manual screenshot needs a real tray click first**
+  (runbook note).
+- **[HIGH · Kimi] Dismiss-on-blur must gate on `label=="popover"`** in the `RunEvent::WindowEvent` handler
+  (add a labeled `Focused(false)` arm beside the existing `CloseRequested`, `lib.rs:586-595`) — else a
+  `Focused(false)` on `main` hides the dashboard.
+- **[HIGH · Kimi] Spike `on_tray_icon_event`-fires-with-menu-attached FIRST (mac).** Log the event while
+  keeping the menu; if left-click doesn't fire → mac goes popover-only (footer carries the actions); if it
+  fires → keep the menu for right-click + `show_menu_on_left_click(false)`. Linux keeps its menu regardless.
+- **[MED · Kimi] The `popover` window won't auto-resize to content** (Tauri ≠ SwiftUI's content-sized frame).
+  First pass: a generous fixed height (~600) + scrollable content; a Rust↔JS resize protocol is a follow-up.
+- **[MED · Kimi] `TrayPopover` fetches `list_sheds` itself** on mount/show (no `useUiBridge` → no `refresh`
+  event; `connected-changed`/`approvals-changed` don't imply a shed-list change).
+- **[MED · Kimi + CR] `capabilities/popover.json`** (scoped `["popover"]`, NOT added to `default.json`) needs
+  `core:default` + **`core:event:default`** (else no coordinator events) + the new footer commands. Define the
+  `tray.dump` shape: `{present, items, popover:{connected, running_sheds, pending_approvals}}`; the popover
+  reports its rows under a `tray` key via the window-keyed `ui_report`.
+- **[NTH · CR + Kimi] Multi-page Vite:** `build.rollupOptions.input = { main:"index.html",
+  popover:"popover.html" }` (keep `emptyOutDir`); verify `dist/popover.html` emits, and that the disabled
+  Check-for-Updates row COMPILES in the Linux popover bundle (rides the render gate) even though Linux never
+  shows it.
+
+*B3 — the design sketch above is corrected by these:*
+- **[BLOCKING · CR] The `!Send` `LAContext` can't be held across the `await`.** `AuthGate::gate` is
+  `#[async_trait]` → the future is boxed `+Send`, but `Retained<LAContext>` is `!Send`. Move the `LAContext`
+  INTO the completion block and `await` only the `oneshot::Receiver` (which IS `Send`); never hold it across
+  the await. (Amends "retain until the reply block fires" — retain by *moving into* the block, not across the
+  async boundary.)
+- **[BLOCKING · CR + Kimi] The deny-safe unit test must NOT fire a real biometric prompt.**
+  `canEvaluatePolicy` returns TRUE on any Touch-ID Mac (incl. a signed runner), so calling the real `.gate()`
+  would trigger a live prompt/hang. Factor a **test seam** (inject the can-evaluate decision and/or the
+  evaluate closure — the A1 `read_peer_uid`/`peer_trusted` pattern) so the deny-safe assertion covers
+  `can_evaluate==false → Unavailable` + the error branches WITHOUT touching real biometrics. `Approved`/
+  `Denied` need the signed A5 smoke.
+- **[SHOULD · CR + Kimi] objc2 deps go in `[target.'cfg(target_os="macos")'.dependencies]`** (mirror the
+  `zbus` Linux block, `Cargo.toml:50-51`) — NEVER global `[dependencies]`. Concretely: `objc2-local-
+  authentication` `features=["LAContext","LAError"]`, `objc2-foundation` `["NSString"]` (0.3.2 already
+  locked), `block2` (the completion block; 0.6.2 present). Policy values are **constants**
+  (`kLAPolicyDeviceOwnerAuthenticationWithBiometrics` / `…DeviceOwnerAuthentication`) via `LAPublicDefines`,
+  not enum variants. **Version compat verified:** `objc2-local-authentication` 0.3.2 wants `objc2
+  >=0.6.2,<0.8` and the lock has `objc2 0.6.4` → no duplicate `objc2`.
+
+*B4 — refinements:*
+- **[SHOULD · CR + Kimi] Consider guarding `loginitem.set` on macOS ONLY.** On the shipped Linux target
+  `auto-launch` writes a `.desktop` under the throwaway `$XDG_CONFIG_HOME/autostart` (fully hermetic — the
+  harness redirects XDG), so `set` can be driven + round-tripped (enable→status→disable) there, exercising the
+  op on the platform that SHIPS it; only macOS's real-LaunchAgent/TCC write needs the guard. `loginitem.status`
+  must catch `auto-launch` errors → `{enabled:false}` (never crash). *Confirm auto-launch honors
+  `$XDG_CONFIG_HOME` on Linux before relying on the round-trip.*
+- **[MED · Kimi] Naming + placement:** IPC ops `loginitem.status`/`loginitem.set`; invoke twins
+  `loginitem_status`/`loginitem_set` (like `ssh_prefs_get`/`set_ssh_approval`). Add a **"General" section at
+  the TOP** of the React Preferences (before Terminal) with the always-visible "Launch at login" `Toggle`
+  (Swift `PreferencesView.swift:24-27` parity).
+- **[note · Kimi] Plugin vs raw crate:** keep `tauri-plugin-autostart` (correct exe/`.app`-path resolution via
+  `app.autolaunch()`) over raw `auto-launch` (hand-built app-path); verify `tauri-build-linux` after adding.
+
+*Cross-cutting:*
+- **[BLOCKING · Kimi] Guard EVERY ActivationPolicy flip + the login-item write on `!test_mode`.** An unguarded
+  `.accessory` at launch can leave `main` unmounted → `ui_report` never fires → `wait_until(current_pane)`
+  times out across e2e. Keep `main` shown in test mode; add a `lib.rs` unit test that `setup` doesn't flip the
+  policy under `test_mode`.
+- **[SHOULD · Kimi] Spike each new dep against the render gate** (`make tauri-build-linux`) BEFORE layering
+  code — positioner/autostart are cross-platform official plugins (should compile on Linux) but the gate is
+  the only proof.
+- **[NTH · CR] Plan line-refs are approximate** (point-in-time vs `37e962b`) — grep the symbol, don't trust
+  the number.
+
+**Codex confirmed all the above + added these (all three reviewers now folded):**
+- **[BLOCKING · Codex] The B4 test-mode guard must cover `disable()` too, not just `enable()`** — both mutate
+  host state. **⚠️ Contradiction (Codex vs CR/Kimi), RESOLVED by platform-split:** Codex says *never* touch the
+  autostart backend in test mode; CR/Kimi say *do* the Linux round-trip (it's hermetic). Reconcile by platform
+  — **macOS test mode: guard BOTH `set(true)`/`set(false)`** (an in-memory cell; never the real LaunchAgent/TCC);
+  **Linux test mode: DO the real `auto-launch` round-trip** (the harness redirects HOME + XDG for the subprocess
+  targets, so the `.desktop` write is contained → hermetic AND exercises the shipped platform). *Verify the
+  harness's HOME/XDG redirect actually contains auto-launch's write path before relying on the Linux round-trip;
+  if not, fall back to the in-memory cell on Linux too.* (Maintainer: a coverage refinement, not a direction
+  change — I default to the platform-split.)
+- **[BLOCKING · Codex] The React "Launch at login" toggle must use a THROWING invoke (or reconcile from
+  `loginitem.status`).** `bridge.ts`'s default `invoke` swallows errors (`bridge.ts:45`) → a failed/guarded
+  `set` would vanish and leave the toggle lying about the real state. Mirror `applySsh` (`App.tsx:596`):
+  optimistic-set → persist → re-read `loginitem.status` → reconcile.
+- **[SHOULD · Codex] ActivationPolicy needs ONE Rust path.** Two "show main" helpers exist —
+  `present_main_window` (`ipc.rs:84`) + `tray::show_main` (`tray.rs:65`); if only one flips macOS to `Regular`
+  the tray + IPC paths diverge. Consolidate show-main-and-flip into one helper both call; the `Accessory`
+  revert keys off the last NORMAL window — the `popover` is NOT a normal window (exclude it). Guard every flip
+  on `!test_mode`.
+- **[SHOULD · Codex] objc2 features:** include `LABase` alongside `LAContext`/`LAError`/`block2`;
+  `objc2-local-authentication` 0.3.2 has `block2` as an OPTIONAL feature → enable it explicitly.
+- **[NTH · Codex] `TrayPopover` filters running sheds explicitly** — `list_sheds` returns ALL statuses; Swift
+  shows only `.running`, capped at 6 (`MenuBarContentView.swift:70`). Filter before rendering + before the
+  `tray.dump` report.
+- **[NTH · Codex] Stale §3.6 wording fixed** — "B4-autostart … macOS `SMAppService`" corrected to `auto-launch`
+  (Batch-3 already states it; the §3.6 line could mislead an implementer).
+
+**Codex (2nd, deeper pass) added these B1b/B3 refinements:**
+- **[BLOCKING · Codex] `tray.show`/`tray.toggle` needs a test-mode fallback POSITION.** `tauri-plugin-
+  positioner` learns the tray rect ONLY from a real `on_tray_event`; an IPC-driven `tray.show` (no prior OS
+  tray event) makes `TrayCenter` FAIL ("Tray position not set"), not just mis-place. For the hermetic drive
+  path, fall back to a deterministic position (a fixed origin / `TopRight`) when no tray rect is cached; a real
+  tray click still uses `TrayCenter`.
+- **[BLOCKING · Codex] Menu-bar-first launch — concrete strategy (avoid the render-gate hang).** Tauri
+  auto-creates config windows BEFORE setup; a config `main.visible=false` makes the harness's
+  `wait_until(current_pane)` HANG (`conftest.py:107`) — a never-shown WebKitGTK window may not report. So KEEP
+  `main` visible in `tauri.conf.json`; in PRODUCTION only (`!test_mode`) hide `main` + set `.accessory` in Rust
+  right after tray build (menu-bar-first; the WKWebView keeps running while hidden, so the popover's data still
+  flows). Test mode: `main` stays shown, no flip.
+- **[SHOULD · Codex] The popover window is OPAQUE, not transparent.** Swift paints an opaque
+  `windowBackgroundColor` panel (`MenuBarContentView.swift:96`); Tauri `transparent:true` on macOS needs
+  `macOSPrivateApi` + has caveats. Use opaque borderless (`decorations:false`, `transparent:false`; a solid
+  rounded surface via CSS) — matches Swift + keeps the render gate simple.
+- **[SHOULD · Codex] objc2 calls are selector-style, not Swift-shaped.** Don't expect
+  `evaluatePolicy(policy, localizedReason:)`; the generated names are selector-derived + take `block2` blocks,
+  and `NSError**` surfaces as `Result<_, Retained<NSError>>` (not `&mut NSError`). Direct macOS-target deps:
+  `objc2` + `objc2-foundation` + `block2` + `objc2-local-authentication` (mirror the `zbus` Linux block).
+  Confirm exact names via `cargo doc` at impl time.
+- **[NTH · Codex] Map LocalAuthentication errors into the rich `AuthOutcome`** (`traits.rs:49` preserves
+  non-approved outcomes): not-enrolled / passcode-missing / unavailable → `Unavailable`; user/system/app cancel
+  → `Cancelled`; auth-failed → `Denied`; unknown NSError → `Error`.
+- **[NTH · Codex] `tray.dump` popover block includes `visible` + logical row counts** so "shown-but-not-yet-
+  reported" is distinguishable from "hidden" in the hermetic test.
+- **✓ Confirmed:** the harness redirects `HOME` + `XDG_CONFIG_HOME` to the throwaway dir (`ui.py:280-284`), so
+  the B4 Linux `auto-launch` round-trip IS contained → hermetic (the platform-split's Linux half is safe).
 
 ## 4. Exit criteria — two bars, each row mapped to a test
 
@@ -535,12 +764,12 @@ Track A ∥ Track B; **flip gate = Track A complete (incl. A5) + Bar 1 + Bar 2 g
 | A3 | Clear grants on disconnect ✅ **LANDED** | `coordinator.rs` | eviction test green | both | low |
 | B1a | Tray foundation ✅ **LANDED** | `lib.rs`, `tray.rs`, `ipc.rs` | `tray.dump`; hide-on-close | both | — |
 | B1 | Tray — Linux menu + drivability ✅ **LANDED** (`900780e`) | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | `tray.dump`; own report channel | both | high |
-| B1b | Tray — macOS rich popover ← **NEXT** | `lib.rs`, `App.tsx`, `bridge.ts`, `ipc.rs` | popover positions; own report channel; screenshot | macOS | high |
-| B3 | macOS Touch-ID gate | `approval.rs`, `Cargo.toml` | deny-safe unit test; manual smoke | macOS | med |
+| B1b | Tray — macOS rich popover ← **Batch3.3** (§3.7) | `lib.rs`, `tray.rs`, `state.rs`, `ipc.rs`, `tauri.conf.json`, `TrayPopover.tsx`, `vite.config.ts`, `capabilities/` | popover positions; window-keyed report channel; `tray.dump` popover block; manual screenshot | macOS | high |
+| B3 | macOS Touch-ID gate ← **Batch3.2** (§3.7) | `approval.rs`, `Cargo.toml` | deny-safe unit test; manual smoke | macOS | med |
 | B2 | Agents/RC ✅ **LANDED** | `shed-core/rc.rs`, `terminal.rs`, `shed-app/{rc.rs,backend.rs}` (feat `rc`), `ipc.rs`, `lib.rs`, `App.tsx`, `bridge.ts`, harness | `test_agents` at `--target tauri`; `cargo test -p shed-app --features rc` | both | high |
 | B5 | macOS notifier ✅ **LANDED** | `approval.rs` | osascript `OsaNotifier` posts/withdraws | macOS | low |
 | A4 | D-Bus withdraw ✅ **LANDED** (`bf48a83`) | `approval.rs`, `Cargo.toml` | id-captured unit test | Linux | low |
-| B4 | Prefs — SSH policy/TTL ✅ **LANDED** (`e19f08f`) · autostart remaining | `App.tsx`, `bridge.ts`, `lib.rs` | policy drives; `loginitem` probe | both | low |
+| B4 | Prefs — SSH policy/TTL ✅ **LANDED** (`e19f08f`) · launch-at-login ← **Batch3.1** (§3.7) | `App.tsx`, `bridge.ts`, `lib.rs`, `Cargo.toml` | policy drives; `loginitem` probe | both | low |
 | A5 | Real-agent smoke (B7) | — | §1 pass bar on a signed build | both | med |
 | — | Release: updater / notarize / `.deb` / polkit | `RELEASING.md`, `release.yml`, `build-deb.sh`, `nfpm.yaml`, `packaging/` | Bar 2 green | both | high |
 
