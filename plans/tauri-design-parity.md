@@ -1,8 +1,10 @@
 # Tauri ↔ Swift design-parity hardening — plan
 
-**Status (pick-up point):** PLAN written, decisions locked, computer-use discovery DONE,
-`/planning:ask-panel` DONE + folded (Kimi + CodeRabbit converged; Codex rate-limited — see the
-Panel-fold section). Next: build M1. Branch `tauri-design-parity` off
+**Status (pick-up point):** ALL MILESTONES DONE — M1 (tray template + count), M2 (popover
+content-size + icons + accent hover + rounded + native vibrancy frost), M3 (control-button tint),
+M4 (dense rescale of every pane), M5 (dark-theme pass + popover OS-follow fix) — each committed
+green. Next: open the PR onto `feat/rust-core` + `/git-commands:watch-pr`. Branch
+`tauri-design-parity` off
 `feat/rust-core` (`4fce382`, PR #30). One PR onto `feat/rust-core`, one green-per-commit
 sub-milestone each — same flow as Batch-2/3 (implement → `/simplify` → adversarial review
 [external `/cursor:review`/codex + internal general-purpose, cross-checked per
@@ -241,14 +243,17 @@ web modals keep their structure at the tighter type scale.
   Activity · System · Preferences · Create each match its Swift counterpart's type/spacing scale;
   all `data-*` hooks intact + `computed_style()` returns non-transparent `bg` + non-empty `accent`.
 
-### M5 — Dark-theme + cross-surface verification
-Re-screenshot every touched surface in dark mode (MANUAL — click the header moon toggle via
-computer-use, then screenshot; no harness dark-toggle op per the fold). Verify tints/borders/hover
-read correctly in dark — specifically the IntentButton border must stay VISIBLE against the dark
-surface (the fold's `srgb`-mix-into-`--shed-border` recipe; promote to per-mode `--shed-<intent>-tint`
-tokens if it washes out). Run the **full render gate** (`tauri-test-linux` + `tauri-build-linux`) —
-any oklch/color-mix change MUST pass it — plus `make core-test` ONCE (belt-and-suspenders). Final
-side-by-side screenshot set (Swift vs Tauri, per pane + tray + popover, light + dark).
+### M5 — Dark-theme + cross-surface verification — DONE
+Verified in dark (computer-use): the dashboard (header moon toggle) rescale holds, and the
+IntentButton tints/borders read cleanly on the dark cards — the `srgb`-into-`--shed-surface`
+recipe works in BOTH modes, so NO per-mode tint tokens were needed (the fold's washout concern
+didn't materialize). **Popover dark fix (found in M5):** the popover's native vibrancy material
+follows the OS appearance, but the popover webview only rendered light-mode tokens → dark text on
+a dark-frosted material on a dark-mode Mac. Fix: `popover.tsx` follows `prefers-color-scheme`
+(sets `data-mode`) so its tokens track the material. Verified by switching macOS to dark: the
+popover renders white text on the dark frost. (The dashboard keeps its manual toggle — existing
+behavior — but the popover is a menu-bar surface, so OS-following is correct + native.) Full gate
+set incl. `make core-test`.
 
 ## Drivability guardrails (must stay green every commit)
 - `data-pane` / `data-prefs` / `data-create` / `data-launch-at-login` / `data-ssh-policy` /
