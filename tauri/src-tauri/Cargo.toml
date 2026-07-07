@@ -45,6 +45,11 @@ fs2 = "0.4"
 # not target-gated. The React toggle drives our own guarded `loginitem_*` commands,
 # NOT the plugin's JS API, so a test-mode write can't slip past the guard.
 tauri-plugin-autostart = "2"
+# Anchors the macOS menu-bar popover window at the tray icon (B1b). The "tray-icon"
+# feature enables the tray-relative `Position::TrayCenter`; it needs a real tray
+# click forwarded to cache the tray rect (the hermetic `tray.show` falls back to a
+# fixed position). Cross-platform crate; the popover itself is macOS-only.
+tauri-plugin-positioner = { version = "2", features = ["tray-icon"] }
 
 # The Linux notifier posts + withdraws approval banners over the session bus
 # directly (freedesktop Notifications), so a resolved request's --urgency=critical

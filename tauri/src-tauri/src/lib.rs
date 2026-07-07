@@ -444,6 +444,28 @@ fn loginitem_set(
     login_item_set(&app, &env, enabled)
 }
 
+// -- menu-bar popover footer commands (B1b) — a 2nd webview can't call the IPC ops
+//    or emit the main-window events, so the footer invokes these dedicated commands
+//    (test-mode-safe: they only show/emit/exit, never spawn or write). --
+
+/// The popover footer's "Open dashboard" → raise the dashboard on Sheds + dismiss.
+#[tauri::command]
+fn open_dashboard(app: tauri::AppHandle) {
+    tray::open_dashboard(&app);
+}
+
+/// The popover footer's "Preferences…" → raise the dashboard + open Preferences.
+#[tauri::command]
+fn open_preferences(app: tauri::AppHandle) {
+    tray::open_preferences(&app);
+}
+
+/// The popover footer's "Quit".
+#[tauri::command]
+fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let env = Env::from_process();
@@ -511,6 +533,9 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        // Anchors the mac menu-bar popover at the tray icon (B1b); needs the tray
+        // event forwarded (see `tray.rs::build`'s `on_tray_icon_event`).
+        .plugin(tauri_plugin_positioner::init())
         .manage(ui.clone())
         .manage(backend.clone())
         .manage(env.clone())
@@ -540,7 +565,10 @@ pub fn run() {
             set_ssh_approval,
             ssh_prefs_get,
             loginitem_status,
-            loginitem_set
+            loginitem_set,
+            open_dashboard,
+            open_preferences,
+            app_exit
         ])
         .setup(move |app| {
             // The bundled terminal openers live in <resources>/bin; None in an
@@ -655,11 +683,48 @@ pub fn run() {
                 })?;
             tauri::async_runtime::spawn(async move { server.run().await });
 
-            // The system tray (B1a). Best-effort: a headless / no-SNI host has
-            // nowhere to show it, so a failure logs and the app keeps running (the
-            // window is always reachable). The macOS rich popover lands in B1b.
+            // The system tray. Best-effort: a headless / no-SNI host has nowhere to
+            // show it, so a failure logs and the app keeps running (the window is
+            // always reachable).
             if let Err(e) = tray::build(app.handle()) {
                 eprintln!("shed-desktop-tauri: tray unavailable ({e}); window-only");
+            }
+
+            // The mac menu-bar popover (B1b): a 2nd, opaque webview mirroring the
+            // Swift MenuBarContentView, created HIDDEN + anchored at the tray on a
+            // left-click. macOS-only (Linux emits no tray click events / has no
+            // popover). It fetches its own data + reports under the `popover` window
+            // key, so it never clobbers the dashboard's `main` snapshot.
+            #[cfg(target_os = "macos")]
+            {
+                if let Err(e) = tauri::WebviewWindowBuilder::new(
+                    app.handle(),
+                    tray::POPOVER_ID,
+                    tauri::WebviewUrl::App("popover.html".into()),
+                )
+                .title("shed")
+                .inner_size(320.0, 460.0)
+                .decorations(false) // borderless; opaque (the default) — Swift parity
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .visible(false)
+                .focused(false)
+                .build()
+                {
+                    eprintln!("shed-desktop-tauri: popover window unavailable ({e})");
+                }
+                // Menu-bar-first in PRODUCTION: hide the dashboard at launch + become
+                // an accessory (no Dock icon), matching the Swift app. "Open dashboard"
+                // brings it back (Regular). Guarded so the harness keeps `main` shown +
+                // never flips policy (else the webview may not mount → ui_report never
+                // fires → wait_until(current_pane) times out).
+                if !env.test_mode {
+                    if let Some(main) = app.get_webview_window("main") {
+                        let _ = main.hide();
+                    }
+                    ipc::set_activation_policy_prod(app.handle(), false);
+                }
             }
             Ok(())
         })
@@ -676,7 +741,23 @@ pub fn run() {
                 if let Some(w) = app_handle.get_webview_window(&label) {
                     let _ = w.hide();
                 }
+                // Closing the dashboard → menu-bar-first (Accessory, no Dock icon) in
+                // production; the popover isn't a normal window (no policy effect).
+                if label == "main" {
+                    ipc::set_activation_policy_prod(app_handle, false);
+                }
                 api.prevent_close();
+            }
+            // Dismiss the popover on blur (a click outside it) — gated on the label,
+            // so a Focused(false) on `main` never hides the dashboard.
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::Focused(false),
+                ..
+            } if label == tray::POPOVER_ID => {
+                if let Some(w) = app_handle.get_webview_window(&label) {
+                    let _ = w.hide();
+                }
             }
             // An auto-exit (e.g. the last window closed) is prevented so we stay in
             // the tray; a deliberate exit carries a code and is allowed through.
