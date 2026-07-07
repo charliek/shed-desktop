@@ -32,7 +32,7 @@ so the same logic backs every client instead of being re-implemented per languag
   `tools/shedtest --target mac|gtk` harness; GTK gained single-instance handoff (an
   `app.activate` IPC op) and parallel multi-host fetches; and an adversarial coverage pass
   hardened all three surfaces. See `plans/phase-3-enhancements.md`.
-- **A real cross-platform client (Tauri) — Phase A shipped; B/C next.** A Tauri desktop client on the
+- **A real cross-platform client (Tauri) — Phases A + B merged; C in progress.** A Tauri desktop client on the
   same core, built to **full Mac↔Linux feature parity** (except egress). Tauri's backend *is* Rust, so
   `shed-core` is a direct dependency and one web frontend covers desktop now (mobile later); it runs on
   macOS (WKWebView, a UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target). The
@@ -44,9 +44,20 @@ so the same logic backs every client instead of being re-implemented per languag
     (df), **Terminal** (Ghostty/Roost/Custom preview+open, cross-platform, + in-app Preferences), and the
     **New-Shed** dialog. Verified by the tauri e2e (`--target tauri`) + the WebKitGTK gate; GTK stayed
     green throughout. Real sheds created on a local host + a mini. See `plans/tauri-phase-a.md`.
-  - **Phase B — the approval spine on Rust (next; security-critical).** Its own plan + threat model +
-    panel before any code. See `plans/tauri-phase-b.md`.
-  - **Phase C — Agents/RC + prefs/tray + release.** After B.
+  - **Phase B — the approval spine on Rust (merged, PR #28 → `feat/rust-core`).** The credential-approval
+    subsystem in the shared core — host-agent client, the two-phase coordinator, audit, control-token
+    minting, the Linux polkit gate + libnotify notifier — panel-reviewed threat model, adversarial pass per
+    milestone, a tauri CI leg. Only the B7 real-agent smoke is a deferred manual step. See
+    `plans/tauri-phase-b.md`.
+  - **Phase C — menu-bar + Agents/RC + mac-parity + hardening (in progress, branch `tauri-phase-c`).**
+    The last parity surfaces (tray/menu-bar, the Agents/RC pane, a macOS Touch-ID gate + notifier) + spine
+    hardening, toward evaluating whether Tauri can replace **both** the Swift mac app and the GTK `.deb`.
+    Panel-reviewed; landed CI-green on PR #29: the tray foundation + expanded menu (B1a/B1), A1–A3 spine
+    hardening, the macOS (B5) and D-Bus-withdraw (A4) approval notifiers, the **Agents/RC pane (B2)**, and
+    SSH-approval-prefs persistence (B4). Remaining: the macOS rich popover (B1b), the Touch-ID gate (B3),
+    launch-at-login (B4), and the real-agent flip smoke (A5/B7). Hands-on runbooks:
+    `docs/tauri-b2-agents-test-plan.md`, `docs/tauri-batch2-test-plan.md`.
+    See `plans/tauri-phase-c.md`.
 
   See `plans/tauri-desktop.md`. (A **Flutter** mobile spike is superseded unless Tauri's mobile target
   disappoints.)
@@ -75,13 +86,10 @@ of key-holding Go, needs a Rust `shed/sdk` that doesn't exist yet, and would rev
   agent side — gated behind a clean policy story so frequent STS refreshes don't become
   prompt fatigue. See [Credential approvals](reference/approvals.md).
 - **Auto-approve with constraints** — e.g. docker limited to a registry allowlist.
-- **Approvals on the Linux client.** The Mac approval spine (PolicyEngine, AuditStore, the host-agent
-  protocol codec, the domain models) is ~70% pure, key-free logic; porting it into the shared Rust core
-  (`shed-app`) lets the **Tauri** Linux client show approvals too — with a backend-mediated native/PAM
-  gate on Linux (biometrics stay macOS-only). This is **Phase B** of the Tauri client and gets its own
-  security-reviewed plan; the host-agent client + control-token minting land with it. (Control-token
-  minting is C2 — Phase A used the static config token and 401s on a stale one, which minting fixes.)
-  See `plans/tauri-phase-b.md`.
+- **Approvals on the Linux client — DONE (Tauri Phase B, merged).** The Mac approval spine was ported into
+  the shared Rust core (`shed-core`/`shed-app`), so the **Tauri** client shows + gates SSH approvals on
+  Linux (polkit) and macOS, with control-token minting. The **GTK** approval pane (roadmap M6) is still
+  deferred — the key-free spine is shared, so GTK just needs its pane. See `plans/tauri-phase-b.md`.
 
 ## Broader control surface
 
@@ -101,9 +109,10 @@ independently useful:
   nfpm `.deb` (built per-arch — amd64 + arm64 — on tag, with a headless `shedctl` bundled)
   via `charliek/apt-charliek`, so end users `apt install shed-desktop`. One `git tag vX.Y.Z`
   cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`. The shipped
-  Linux `.deb` will **flip from the GTK client to the Tauri client** once its Phase A ships + a
-  release-candidate pass is green — a gated packaging transition (the `.deb` gains a WebKitGTK runtime
-  dep; `plans/tauri-desktop.md` Phase C).
+  Linux `.deb` will **flip from the GTK client to the Tauri client** once Phase C's *flip-ready* bar
+  is green (updater, notarization, `.deb` repackaging, polkit policy — see `plans/tauri-phase-c.md`) —
+  a gated packaging transition (the `.deb` gains a WebKitGTK runtime dep; `plans/tauri-desktop.md`
+  Phase C).
 
 ## Larger bets
 

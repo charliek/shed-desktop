@@ -15,6 +15,7 @@ mod screenshot;
 mod single_instance;
 mod state;
 mod termctl;
+mod tray;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -24,12 +25,13 @@ use ipc::{Handler, IpcServer};
 use shed_app::traits::{AuthGateRef, NotifierRef};
 use shed_app::{
     AlwaysApprovedGate, AuditStore, Backend, Coordinator, CoordinatorDeps, FakeNotifier,
-    HelloClientInfo, HostAgentClient, HostAgentTokenMinter, SshPrefs,
+    HelloClientInfo, HostAgentClient, HostAgentTokenMinter, RcService, SshPrefs,
 };
 use shed_core::approval::{
     ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, SshApprovalPolicy,
 };
 use shed_core::models::CreateShedRequest;
+use shed_core::rc::RcKind;
 use shed_core::token::TokenMinter;
 use single_instance::AcquireError;
 use state::{SharedUi, UiState};
@@ -43,7 +45,15 @@ use tauri::Manager;
 #[tauri::command]
 fn ui_report(ui: tauri::State<'_, SharedUi>, snapshot: serde_json::Value) {
     if let Ok(mut s) = ui.lock() {
-        s.snapshot = Some(snapshot);
+        // Merge object keys so a partial reporter (the Agents pane publishing only
+        // `agents`) doesn't clobber the shell's snapshot (pane/sheds/…), and vice
+        // versa. The shell re-sends its keys every render, so nothing goes stale.
+        match (s.snapshot.as_mut(), snapshot) {
+            (Some(serde_json::Value::Object(existing)), serde_json::Value::Object(incoming)) => {
+                existing.extend(incoming);
+            }
+            (_, incoming) => s.snapshot = Some(incoming),
+        }
     }
 }
 
@@ -194,6 +204,58 @@ fn open_terminal(
 // -- approvals (the frontend Approvals/Activity panes + approval prefs) --------
 
 /// The pending approval cards (each with gate + scope/TTL defaults). The pane
+/// The Agents pane launches/lists/kills RC sessions over these invoke commands
+/// (the harness drives the same ops over the IPC socket). The shed→ssh target
+/// resolution stays in `Backend`; `RcService` owns the store + process seam.
+#[tauri::command]
+async fn rc_list(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    host: Option<String>,
+    shed: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let targets = backend.rc_targets(host.as_deref(), shed.as_deref()).await;
+    Ok(serde_json::json!({
+        "sessions": rc.list(targets, host.as_deref(), shed.as_deref()).await
+    }))
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)] // a flat invoke arg list mirrors the launch form fields
+async fn rc_launch(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    shed: String,
+    kind: RcKind,
+    host: Option<String>,
+    display_name: Option<String>,
+    workdir: Option<String>,
+    initial_prompt: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let target = backend
+        .resolve_rc_target(host.as_deref())
+        .map_err(|e| e.to_string())?;
+    let session = rc
+        .launch(target, &shed, kind, display_name, workdir, initial_prompt)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!(session))
+}
+
+#[tauri::command]
+async fn rc_kill(
+    backend: tauri::State<'_, Arc<Backend>>,
+    rc: tauri::State<'_, Arc<RcService>>,
+    shed: String,
+    slug: String,
+    host: Option<String>,
+) -> Result<(), String> {
+    let target = backend
+        .resolve_rc_target(host.as_deref())
+        .map_err(|e| e.to_string())?;
+    rc.kill(target, &shed, &slug).await.map_err(|e| e.to_string())
+}
+
 /// re-fetches on the `approvals-changed` event (see TauriEventSink).
 #[tauri::command]
 async fn approvals_list(
@@ -243,16 +305,60 @@ async fn gate_namespaces(coordinator: tauri::State<'_, Coordinator>) -> Result<V
     Ok(coordinator.gate_namespaces().await)
 }
 
-/// Apply SSH approval prefs (method/policy/TTL) + re-evaluate the pending queue.
-/// Tauri deserializes the enum args from their wire strings via serde.
+/// Serialize the coordinator's typed SSH prefs to their wire strings (the same
+/// `{method, policy, ttl}` shape the UI reads back), so persistence round-trips
+/// through serde rather than a hand-maintained enum→string match.
+pub(crate) fn ssh_prefs_wire(p: &SshPrefs) -> (String, String, String) {
+    let v = serde_json::to_value(p).unwrap_or_default();
+    let field = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    (field("method"), field("policy"), field("ttl"))
+}
+
+/// Rebuild `SshPrefs` from the persisted wire strings, parsing each enum via serde
+/// and falling back to the default for any absent/unparseable field — so an old or
+/// corrupt prefs.json never panics and never blocks startup.
+fn ssh_prefs_from_store(store: &prefs::PrefsStore) -> SshPrefs {
+    let stored = store.get();
+    let mut ssh = SshPrefs::default();
+    if let Some(m) = stored.ssh_method.as_deref().and_then(parse_wire::<ApprovalMethod>) {
+        ssh.method = m;
+    }
+    if let Some(p) = stored
+        .ssh_policy
+        .as_deref()
+        .and_then(parse_wire::<SshApprovalPolicy>)
+    {
+        ssh.policy = p;
+    }
+    if let Some(t) = stored.ssh_ttl.filter(|t| !t.is_empty()) {
+        ssh.ttl = t;
+    }
+    ssh
+}
+
+/// Parse a serde enum from its wire string (`"time-based-allow"` → the variant),
+/// `None` on any value the current build doesn't recognize.
+fn parse_wire<T: serde::de::DeserializeOwned>(s: &str) -> Option<T> {
+    serde_json::from_value(serde_json::Value::String(s.to_string())).ok()
+}
+
+/// Apply SSH approval prefs (method/policy/TTL) + re-evaluate the pending queue,
+/// then persist so the choice survives a restart. Tauri deserializes the enum args
+/// from their wire strings via serde.
 #[tauri::command]
 async fn set_ssh_approval(
     coordinator: tauri::State<'_, Coordinator>,
+    prefs: tauri::State<'_, prefs::SharedPrefs>,
     method: Option<ApprovalMethod>,
     policy: Option<SshApprovalPolicy>,
     ttl: Option<String>,
 ) -> Result<(), String> {
     coordinator.set_ssh_approval(method, policy, ttl).await;
+    // Persist the coordinator's RESULTING prefs (reading them back composes this
+    // command's partial update with the existing method/policy/TTL) so a restart
+    // rehydrates exactly what the running coordinator holds.
+    let (m, p, t) = ssh_prefs_wire(&coordinator.ssh_prefs().await);
+    prefs.set_ssh(m, p, t);
     Ok(())
 }
 
@@ -318,10 +424,16 @@ pub fn run() {
         minter.as_ref(),
     ));
 
+    // The Agents / Remote-Control service (session store + process seam). Same
+    // test-mode flag as the coordinator fakes — test mode synthesizes sessions;
+    // the real path shells out `shed-ext-rc` over SSH.
+    let rc_service = Arc::new(RcService::new_default(env.test_mode, env!("CARGO_PKG_VERSION")));
+
     tauri::Builder::default()
         .manage(ui.clone())
         .manage(backend.clone())
         .manage(env.clone())
+        .manage(rc_service.clone())
         .invoke_handler(tauri::generate_handler![
             ui_report,
             list_sheds,
@@ -334,6 +446,9 @@ pub fn run() {
             terminal_presets,
             get_prefs,
             set_terminal_pref,
+            rc_list,
+            rc_launch,
+            rc_kill,
             open_terminal,
             approvals_list,
             approval_decide,
@@ -362,11 +477,14 @@ pub fn run() {
                 .unwrap_or_else(|_| std::path::PathBuf::from("."))
                 .join("prefs.json");
             let prefs: prefs::SharedPrefs = Arc::new(prefs::PrefsStore::load(prefs_path));
+            // Managed so `set_ssh_approval` (and its IPC twin) can write the chosen
+            // SSH prefs through the same store.
+            app.manage(prefs.clone());
             // The terminal ops (preset resolution, launch, detection, the pref),
             // shared by the IPC handler + the frontend invoke commands.
             let terminal: termctl::SharedTerminal = Arc::new(termctl::TerminalCtl::new(
                 backend.clone(),
-                prefs,
+                prefs.clone(),
                 scripts_dir,
             ));
             app.manage(terminal.clone());
@@ -386,7 +504,7 @@ pub fn run() {
             let (notifier, gate): (NotifierRef, AuthGateRef) = if env.test_mode {
                 (Arc::new(FakeNotifier::new()), Arc::new(AlwaysApprovedGate))
             } else {
-                // Linux: real polkit gate + libnotify notifier; other targets: the
+                // Linux: real polkit gate + zbus D-Bus notifier; other targets: the
                 // fail-closed stubs (the Tauri client's native gate is Linux-only).
                 approval::production_seams()
             };
@@ -397,6 +515,10 @@ pub fn run() {
                     .join("audit.jsonl"),
             );
             let coord_clock = clock.clone();
+            // Hydrate the SSH approval prefs from the persisted store (falling back
+            // to the default on an absent/corrupt file), so the user's choice
+            // survives a restart rather than resetting to the coordinator default.
+            let ssh_prefs = ssh_prefs_from_store(&prefs);
             // Pushes coordinator changes to the webview (app.emit) so the
             // Approvals/Activity panes re-fetch reactively.
             let coord_sink: shed_app::traits::EventSinkRef =
@@ -416,7 +538,7 @@ pub fn run() {
                         clock: coord_clock,
                         sink: coord_sink,
                         audit,
-                        ssh: SshPrefs::default(),
+                        ssh: ssh_prefs,
                         extra_rules: Vec::new(),
                         provider_modes: HashMap::new(),
                     },
@@ -434,6 +556,8 @@ pub fn run() {
                 backend.clone(),
                 terminal,
                 coordinator,
+                rc_service.clone(),
+                prefs,
             );
             // block_on enters Tauri's tokio runtime so tokio's UnixListener can
             // register with the reactor; then serve on the same runtime.
@@ -445,8 +569,35 @@ pub fn run() {
                     )
                 })?;
             tauri::async_runtime::spawn(async move { server.run().await });
+
+            // The system tray (B1a). Best-effort: a headless / no-SNI host has
+            // nowhere to show it, so a failure logs and the app keeps running (the
+            // window is always reachable). The macOS rich popover lands in B1b.
+            if let Err(e) = tray::build(app.handle()) {
+                eprintln!("shed-desktop-tauri: tray unavailable ({e}); window-only");
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("run shed-desktop tauri app");
+        .build(tauri::generate_context!())
+        .expect("build shed-desktop tauri app")
+        .run(|app_handle, event| match event {
+            // Menu-bar/tray behavior: closing the window HIDES it (the app lives in
+            // the tray); a deliberate Quit (tray → app.exit(0)) still exits.
+            tauri::RunEvent::WindowEvent {
+                label,
+                event: tauri::WindowEvent::CloseRequested { api, .. },
+                ..
+            } => {
+                if let Some(w) = app_handle.get_webview_window(&label) {
+                    let _ = w.hide();
+                }
+                api.prevent_close();
+            }
+            // An auto-exit (e.g. the last window closed) is prevented so we stay in
+            // the tray; a deliberate exit carries a code and is allowed through.
+            tauri::RunEvent::ExitRequested { code, api, .. } if code.is_none() => {
+                api.prevent_exit();
+            }
+            _ => {}
+        });
 }

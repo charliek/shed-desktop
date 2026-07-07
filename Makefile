@@ -40,11 +40,16 @@ run: bundle  ## Build the bundle and launch it
 core:  ## Build the Rust core + generate Swift UniFFI bindings (xcframework)
 	./scripts/build-core.sh debug
 
-core-test:  ## cargo test the Rust core workspace
+core-test:  ## cargo test the Rust core workspace (+ the non-default `rc` feature)
 	cd core && cargo test
+	# `rc` (B2 Agents/RC) is non-default, so a bare `cargo test` skips its tests
+	# (the RcRunner timeout watchdog, the filter-aware list reconcile, slug/argv).
+	cd core && cargo test -p shed-app --features rc
 
-core-lint:  ## cargo clippy the Rust core (deny warnings; excludes GTK)
+core-lint:  ## cargo clippy the Rust core (deny warnings; excludes GTK; + the `rc` feature)
 	cd core && cargo clippy --workspace --exclude shed-gtk --all-targets -- -D warnings
+	# The default clippy above never compiles the `rc` module (non-default feature).
+	cd core && cargo clippy -p shed-app --features rc --all-targets -- -D warnings
 
 core-fmt:  ## cargo fmt the Rust core
 	cd core && cargo fmt --all
@@ -94,7 +99,7 @@ deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 
 
 # ---- tauri (Phase A: a real Linux client toward Mac parity) -----------
 
-.PHONY: tauri-build tauri-run tauri-lint tauri-ui-build tauri-build-linux tauri-test-linux
+.PHONY: tauri-build tauri-run tauri-lint tauri-test tauri-ui-build tauri-build-linux tauri-test-linux
 tauri-ui-build:  ## Build the Vite/React frontend bundle (tauri/ui/dist)
 	cd tauri/ui && npm run build
 
@@ -108,6 +113,9 @@ tauri-lint: tauri-ui-build  ## clippy the Tauri client (its own standalone works
 	# Needs the frontend bundle: compiling the crate runs tauri's generate_context!,
 	# which fails closed if tauri.conf.json's frontendDist (../ui/dist) is absent.
 	cd tauri/src-tauri && cargo clippy --all-targets -- -D warnings
+
+tauri-test: tauri-ui-build  ## cargo test the Tauri client locally (its standalone workspace; the cross-platform dbus_notify race tests etc. — Linux-only approval-seam tests run under tauri-test-linux)
+	cd tauri/src-tauri && cargo test
 
 # The render gate: build the Tauri Rust app + run the --target tauri e2e on
 # ubuntu:24.04 / WebKitGTK 2.44 under Xvfb, so the oklch linen theme + the

@@ -11,12 +11,16 @@ pub mod backend;
 pub mod coordinator;
 pub mod fakes;
 pub mod host_agent;
+#[cfg(feature = "rc")]
+pub mod rc;
 pub mod timefmt;
 pub mod token_minter;
 pub mod traits;
 
 pub use audit_store::AuditStore;
-pub use backend::{Backend, HostDiskUsage, Reachability};
+pub use backend::{Backend, HostDiskUsage, RcTarget, Reachability};
+#[cfg(feature = "rc")]
+pub use rc::{RcRunner, RcRunnerRef, RcService, RunOutput, TokioProcessRunner};
 pub use coordinator::{Coordinator, CoordinatorDeps, SshPrefs};
 pub use fakes::{AlwaysApprovedGate, FakeNotifier, NoopEventSink};
 pub use host_agent::{HelloClientInfo, HostAgentClient, HostAgentClientError, HostAgentEvent};

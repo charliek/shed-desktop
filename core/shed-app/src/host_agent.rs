@@ -55,6 +55,9 @@ pub struct HelloClientInfo {
 pub enum HostAgentEvent {
     Connected(HelloAck),
     Disconnected,
+    /// The socket peer failed the A1 peer-UID check (server not running as us) —
+    /// a distinct, audited state so the UI isn't left silently loop-with-gate-down.
+    Untrusted,
     Frame(Box<HostAgentInbound>),
 }
 
@@ -271,6 +274,18 @@ async fn run_loop(
             backoff = (backoff * 2).min(MAX_BACKOFF);
             continue;
         };
+        // A1: the host agent must run as us. Reject + back off BEFORE trusting the
+        // stream (before `into_split` / setting the writer), so we never send a
+        // frame to a wrong-UID peer. A same-UID squatter still passes — that
+        // residual is covered by the `$XDG_RUNTIME_DIR` 0700 dir + the F11 check;
+        // this closes the weak-perms cases (the `/tmp` fallback, a mis-permissioned
+        // dir, and macOS where the socket resolves under `~/.local/share`).
+        if !peer_trusted(peer_uid(&stream), our_uid()) {
+            let _ = event_tx.send(HostAgentEvent::Untrusted);
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(MAX_BACKOFF);
+            continue;
+        }
         backoff = INITIAL_BACKOFF;
         let (read_half, write_half) = stream.into_split();
         let (writer_tx, writer_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -387,12 +402,60 @@ fn strip_trailing_newline(line: &[u8]) -> &[u8] {
 /// F11: reject a symlink or non-socket at the well-known path before connecting
 /// (defends against socket-squatting in a shared runtime dir). `symlink_metadata`
 /// does NOT follow the link, so a squatter's symlink reports as a symlink, not a
-/// socket. Peer-UID validation (`SO_PEERCRED`/`getpeereid`) is a deferred follow-up.
+/// socket. Peer-UID validation (A1) then checks who's on the other end.
 fn socket_is_trustworthy(path: &std::path::Path) -> bool {
     use std::os::unix::fs::FileTypeExt;
     std::fs::symlink_metadata(path)
         .map(|m| m.file_type().is_socket())
         .unwrap_or(false)
+}
+
+/// Our own effective UID — the identity the host agent must share.
+fn our_uid() -> u32 {
+    // SAFETY: getuid is always safe (no args, no failure mode).
+    unsafe { libc::getuid() }
+}
+
+/// The peer (server) UID on a connected Unix socket. `None` on error → treated as
+/// untrusted (fail closed). Linux uses `SO_PEERCRED` (glibc has no `getpeereid`);
+/// macOS/BSD use `getpeereid`.
+fn peer_uid(stream: &UnixStream) -> Option<u32> {
+    use std::os::fd::AsRawFd;
+    let fd = stream.as_raw_fd();
+    #[cfg(target_os = "linux")]
+    {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: `fd` is a valid connected AF_UNIX socket for the call's duration;
+        // `cred`/`len` are valid, correctly-sized out slots.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+                &mut len,
+            )
+        };
+        (rc == 0).then_some(cred.uid)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        // SAFETY: `fd` is a valid connected AF_UNIX fd; the out-params are valid slots.
+        let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        (rc == 0).then_some(uid)
+    }
+}
+
+/// A1 trust rule: the peer must run as us. A lookup failure (`None`) is untrusted.
+fn peer_trusted(peer: Option<u32>, ours: u32) -> bool {
+    peer == Some(ours)
 }
 
 /// Read one newline-terminated frame into `buf` (including the trailing `\n`),
@@ -955,5 +1018,29 @@ mod tests {
             .unwrap_err();
         assert_eq!(e, HostAgentClientError::Disconnected); // NOT Ok("leaked")
         client.stop();
+    }
+
+    #[test]
+    fn a1_peer_trusted_requires_matching_uid() {
+        // A1: the peer must run as us; a lookup error (None) fails closed.
+        assert!(peer_trusted(Some(1000), 1000));
+        assert!(!peer_trusted(Some(1001), 1000));
+        assert!(!peer_trusted(None, 1000));
+    }
+
+    #[tokio::test]
+    async fn a1_peer_uid_of_a_local_socket_is_ours() {
+        // Both ends of an in-process socket are us → the real getpeereid path
+        // returns our uid and the trust check passes (the happy side; a wrong-UID
+        // peer needs privileges to bind, so that case is the pure test above).
+        let path = std::env::temp_dir().join(format!("shed-peeruid-{}.sock", new_id()));
+        let _ = std::fs::remove_file(&path);
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let accept = tokio::spawn(async move { listener.accept().await.map(|(s, _)| s) });
+        let client = UnixStream::connect(&path).await.unwrap();
+        let _server = accept.await.unwrap().unwrap();
+        assert_eq!(peer_uid(&client), Some(our_uid()));
+        assert!(peer_trusted(peer_uid(&client), our_uid()));
+        let _ = std::fs::remove_file(&path);
     }
 }

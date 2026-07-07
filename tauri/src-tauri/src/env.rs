@@ -21,8 +21,9 @@ pub struct Env {
     /// unlike shed-gtk, to stay under the macOS Unix-socket path limit).
     pub socket_path: PathBuf,
     /// The host-agent approval socket (`SHED_TAURI_HOST_AGENT_SOCKET` in tests →
-    /// the fake agent; else the canonical `$SHED_HOST_AGENT_SOCKET_DIR` /
-    /// `$XDG_RUNTIME_DIR/shed` / `~/.local/share/shed` + `host-agent.sock`).
+    /// the fake agent; else the PLATFORM default — see [`default_host_agent_socket`]:
+    /// macOS `~/Library/Application Support/shed`, Linux `$XDG_RUNTIME_DIR/shed` or
+    /// `~/.local/share/shed`, both under `$SHED_HOST_AGENT_SOCKET_DIR` if set).
     pub host_agent_socket: PathBuf,
 }
 
@@ -55,23 +56,31 @@ impl Env {
     }
 }
 
-/// The host agent's approval socket, resolved like shed-extensions' host-agent-ipc
-/// doc: `$SHED_HOST_AGENT_SOCKET_DIR`, else `$XDG_RUNTIME_DIR/shed`, else
-/// `~/.local/share/shed`, plus `host-agent.sock`.
+/// The host agent's approval socket, matching where `shed-host-agent` (and the
+/// Swift app, `ShedBackend`) place it PER PLATFORM: an explicit
+/// `$SHED_HOST_AGENT_SOCKET_DIR` wins everywhere; else **macOS** uses the native
+/// `~/Library/Application Support/shed`, and **Linux** the XDG convention
+/// (`$XDG_RUNTIME_DIR/shed`, else `~/.local/share/shed`) — plus `host-agent.sock`.
+///
+/// The macOS branch is load-bearing: without it the mac app resolves the Linux
+/// path (`~/.local/share/shed`), never reaches the agent that actually listens on
+/// `~/Library/Application Support/shed/host-agent.sock`, and every secure server
+/// then 401s (no control-token minting) with approvals silently unavailable.
 fn default_host_agent_socket() -> PathBuf {
-    let dir = std::env::var_os("SHED_HOST_AGENT_SOCKET_DIR")
-        .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("XDG_RUNTIME_DIR")
-                .filter(|x| !x.is_empty())
-                .map(|x| PathBuf::from(x).join("shed"))
-        })
-        .unwrap_or_else(|| {
-            let home = std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .unwrap_or_default();
-            home.join(".local/share/shed")
-        });
+    let home = || {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_default()
+    };
+    let dir = if let Some(explicit) = std::env::var_os("SHED_HOST_AGENT_SOCKET_DIR") {
+        PathBuf::from(explicit)
+    } else if cfg!(target_os = "macos") {
+        home().join("Library/Application Support/shed")
+    } else if let Some(xdg) = std::env::var_os("XDG_RUNTIME_DIR").filter(|x| !x.is_empty()) {
+        PathBuf::from(xdg).join("shed")
+    } else {
+        home().join(".local/share/shed")
+    };
     dir.join("host-agent.sock")
 }
 

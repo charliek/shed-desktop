@@ -30,17 +30,11 @@ pub fn ssh_command(
     known_hosts: &str,
     session: Option<&str>,
 ) -> TerminalCommand {
-    let mut argv = vec![
-        "ssh".to_string(),
-        "-t".to_string(),
-        "-o".to_string(),
-        "StrictHostKeyChecking=yes".to_string(),
-        "-o".to_string(),
-        format!("UserKnownHostsFile={known_hosts}"),
-        format!("{shed}@{host}"),
-        "-p".to_string(),
-        ssh_port.to_string(),
-    ];
+    let mut argv = vec!["ssh".to_string(), "-t".to_string()];
+    argv.extend(ssh_host_key_opts(known_hosts));
+    argv.push(format!("{shed}@{host}"));
+    argv.push("-p".to_string());
+    argv.push(ssh_port.to_string());
     if let Some(session) = session.filter(|s| !s.is_empty()) {
         argv.extend(["tmux", "attach", "-t", session].map(String::from));
     }
@@ -52,9 +46,23 @@ pub fn ssh_command(
     TerminalCommand { argv, command }
 }
 
+/// The shared `-o` host-key options: strict checking against the shed CLI's
+/// `known_hosts`. Used by both the interactive terminal ssh (`ssh_command`) and
+/// the non-interactive RC ssh (`rc::ssh_argv`), so the two never drift. Mirrors
+/// Swift `ShedSSH.hostKeyOptions`.
+pub(crate) fn ssh_host_key_opts(known_hosts: &str) -> Vec<String> {
+    vec![
+        "-o".to_string(),
+        "StrictHostKeyChecking=yes".to_string(),
+        "-o".to_string(),
+        format!("UserKnownHostsFile={known_hosts}"),
+    ]
+}
+
 /// POSIX single-quote a shell argument (only when it contains anything outside a
 /// conservative safe set), so the `command` line re-parses to the same argv.
-fn shell_quote(s: &str) -> String {
+/// `pub(crate)` so `rc::ssh_argv` shares the exact quoting for the remote command.
+pub(crate) fn shell_quote(s: &str) -> String {
     let safe = !s.is_empty()
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"@%-_=+:,./".contains(&b));

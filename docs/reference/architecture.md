@@ -9,7 +9,9 @@ It is built as a SwiftUI app with a deliberate **core/UI split**: all I/O and lo
 a UI-free core (`ShedKit`) so they're unit-testable without a running app. The shed-server
 protocol layer (HTTP/SSE, decoding, control-token auth, TLS pinning) is extracted into a
 shared **Rust core** (`shed-core`) that backs both this macOS app and a **GTK/Linux client**
-(`shed-gtk`) without re-implementation — see [Rust core](rust-core.md). The Linux client
+(`shed-gtk`) without re-implementation — see [Rust core](rust-core.md). A newer **Tauri cross-platform
+client** (`tauri/`) is built on the same core — plus **`shed-app`**, the UI-free app-logic
+layer the clients share — as a pre-flip candidate to replace **both**. The Linux client
 ships as the `shed-desktop` binary/package (the crate keeps the name `shed-gtk`) in an nfpm
 `.deb` — with a headless `shedctl` alongside — via `charliek/apt-charliek` (`apt install
 shed-desktop`). The Rust core is the macOS **default**; `SHED_DESKTOP_RUST_CORE=0` forces the

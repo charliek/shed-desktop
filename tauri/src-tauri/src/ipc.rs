@@ -25,13 +25,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::runtime::Handle;
 
-use shed_app::{Backend, Coordinator};
+use shed_app::{Backend, Coordinator, RcService};
 use shed_core::approval::{
     ApprovalChoice, ApprovalDecision, ApprovalMethod, ApprovalScope, PolicyRule, SshApprovalPolicy,
 };
 use shed_core::models::CreateShedRequest;
+use shed_core::rc::{self, RcError, RcKind, RcSession, RcState};
 
 use crate::env::Env;
+use crate::prefs::SharedPrefs;
 use crate::state::SharedUi;
 use crate::termctl::SharedTerminal;
 
@@ -57,6 +59,24 @@ fn req_str<'a>(params: &'a Value, key: &str) -> Result<&'a str, (String, String)
         .get(key)
         .and_then(Value::as_str)
         .ok_or_else(|| err("bad_request", format!("missing '{key}'")))
+}
+
+/// Parse the `kind` param into an `RcKind` (its kebab-case wire value).
+fn rc_kind(params: &Value) -> Result<RcKind, (String, String)> {
+    params
+        .get("kind")
+        .and_then(|v| serde_json::from_value::<RcKind>(v.clone()).ok())
+        .ok_or_else(|| err("bad_request", "missing or invalid 'kind'"))
+}
+
+/// Map an `RcError` to an IPC `(code, message)`. A validation error surfaces as
+/// `invalid-param` — the code the shared `test_agents` suite asserts, matching the
+/// mac app; every binary/transport failure is `action_failed`.
+fn rc_err(e: RcError) -> (String, String) {
+    match e {
+        RcError::BadRequest(_) => err("invalid-param", e.to_string()),
+        _ => err("action_failed", e.to_string()),
+    }
 }
 
 /// Raise + focus the main window — the shared body of `ui.show_window`,
@@ -94,6 +114,12 @@ pub struct Handler {
     /// The approval coordinator (the security spine): the approvals queue, policy,
     /// grants, audit, and the host-agent decision path.
     coordinator: Coordinator,
+    /// The Remote-Control service (Agents pane): the session store + the process
+    /// seam. Shared with the frontend invoke commands.
+    rc_service: Arc<RcService>,
+    /// The persisted prefs store, so `ui.set_ssh_approval` persists the chosen SSH
+    /// prefs through the same path as the frontend command (both survive a restart).
+    prefs: SharedPrefs,
     /// Monotonic token stamped onto each `sheds.refresh` so it can wait for the
     /// frontend to echo it back (a synchronous refresh — see [`Self::sheds_refresh`]).
     refresh_seq: AtomicU64,
@@ -101,6 +127,7 @@ pub struct Handler {
 }
 
 impl Handler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         env: Env,
         app: AppHandle,
@@ -108,6 +135,8 @@ impl Handler {
         backend: Arc<Backend>,
         terminal: SharedTerminal,
         coordinator: Coordinator,
+        rc_service: Arc<RcService>,
+        prefs: SharedPrefs,
     ) -> Self {
         Self {
             env,
@@ -116,6 +145,8 @@ impl Handler {
             backend,
             terminal,
             coordinator,
+            rc_service,
+            prefs,
             refresh_seq: AtomicU64::new(0),
             pid: std::process::id(),
         }
@@ -168,6 +199,12 @@ impl Handler {
             "terminal.preview" => self.terminal_preview(params),
             "terminal.open" => self.terminal_open(params),
             "terminal.presets" => Ok(self.terminal_presets()),
+            "rc.classify" => self.rc_classify(params),
+            "rc.list" => self.rc_list(params).await,
+            "rc.launch" => self.rc_launch(params).await,
+            "rc.kill" => self.rc_kill(params).await,
+            "rc.inject_test" => self.rc_inject_test(params),
+            "agents.dump" => Ok(self.agents_dump()),
             "prefs.get" => Ok(self.prefs_get()),
             "prefs.set_terminal" => self.prefs_set_terminal(params),
             // -- approvals (the security spine) --
@@ -181,8 +218,20 @@ impl Handler {
             "notification.invoke" => self.notification_invoke(params).await,
             "notification.open" => self.notification_open(),
             "ui.set_ssh_approval" => self.set_ssh_approval(params).await,
+            "ui.ssh_prefs" => self.ssh_prefs().await,
+            "tray.dump" => Ok(self.tray_dump()),
             other => Err(err("unknown_op", format!("unknown op: {other}"))),
         }
+    }
+
+    /// `tray.dump` → the drivable view of the menu-bar/tray (B1a): whether the
+    /// tray installed on this host (a headless / no-SNI Linux box has nowhere to
+    /// show it → `false`, window-only) and its actionable menu-item ids.
+    fn tray_dump(&self) -> Value {
+        json!({
+            "present": self.app.tray_by_id(crate::tray::TRAY_ID).is_some(),
+            "items": crate::tray::menu_item_ids(),
+        })
     }
 
     /// `ui.navigate {pane}` → tell the frontend to switch panes (a `navigate`
@@ -349,6 +398,144 @@ impl Handler {
             .prefs_set_terminal(req_str(params, "preset")?, template)
     }
 
+    // -- RC / Agents (B2.3) — the launcher + session table -------------------
+
+    /// `rc.classify {kind, pane}` → the pure pane classifier `{state, url?}`.
+    fn rc_classify(&self, params: &Value) -> Result<Value, (String, String)> {
+        let kind = rc_kind(params)?;
+        Ok(json!(self.rc_service.classify(kind, req_str(params, "pane")?)))
+    }
+
+    /// `rc.list {host?, shed?}` → `{sessions}`. The running sheds + their ssh
+    /// targets come from `Backend` (resolution stays in shed-app); `RcService`
+    /// probes + reconciles them (a no-op filter in test mode).
+    async fn rc_list(&self, params: &Value) -> Result<Value, (String, String)> {
+        let host = params.get("host").and_then(Value::as_str);
+        let shed = params.get("shed").and_then(Value::as_str);
+        let targets = self.backend.rc_targets(host, shed).await;
+        Ok(json!({ "sessions": self.rc_service.list(targets, host, shed).await }))
+    }
+
+    /// `rc.launch {shed, kind, host?, display_name?, workdir?, initial_prompt?}` →
+    /// the launched `RcSession`. A validation error surfaces as `invalid-param`.
+    async fn rc_launch(&self, params: &Value) -> Result<Value, (String, String)> {
+        let shed = req_str(params, "shed")?.to_string();
+        let kind = rc_kind(params)?;
+        let target = self
+            .backend
+            .resolve_rc_target(params.get("host").and_then(Value::as_str))
+            .map_err(|e| err("bad_request", e.to_string()))?;
+        let opt = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+        let session = self
+            .rc_service
+            .launch(
+                target,
+                &shed,
+                kind,
+                opt("display_name"),
+                opt("workdir"),
+                opt("initial_prompt"),
+            )
+            .await
+            .map_err(rc_err)?;
+        Ok(json!(session))
+    }
+
+    /// `rc.kill {shed, slug, host?}` → remove the session (idempotent guest-side).
+    async fn rc_kill(&self, params: &Value) -> Result<Value, (String, String)> {
+        let shed = req_str(params, "shed")?;
+        let slug = req_str(params, "slug")?;
+        let target = self
+            .backend
+            .resolve_rc_target(params.get("host").and_then(Value::as_str))
+            .map_err(|e| err("bad_request", e.to_string()))?;
+        self.rc_service.kill(target, shed, slug).await.map_err(rc_err)?;
+        Ok(json!({}))
+    }
+
+    /// `rc.inject_test {…session fields…}` → inject a session directly (test-only,
+    /// guarded like `policy.set`). Backs the legacy/unmanaged render fixture.
+    fn rc_inject_test(&self, params: &Value) -> Result<Value, (String, String)> {
+        if !self.env.test_mode {
+            return Err(err("not_enabled", "rc.inject_test requires test mode"));
+        }
+        self.rc_service
+            .inject_test(self.build_inject_session(params)?)
+            .map_err(rc_err)?;
+        Ok(json!({}))
+    }
+
+    /// Build the full `RcSession` an inject-test param bag describes, filling the
+    /// tmux name + `<shed>/<slug>` display + workdir defaults the harness omits;
+    /// a missing host resolves to the default server.
+    fn build_inject_session(&self, params: &Value) -> Result<RcSession, (String, String)> {
+        let shed = req_str(params, "shed")?;
+        let slug = req_str(params, "slug")?;
+        let host = match params.get("host").and_then(Value::as_str) {
+            Some(h) => h.to_string(),
+            None => {
+                self.backend
+                    .resolve_rc_target(None)
+                    .map_err(|e| err("bad_request", e.to_string()))?
+                    .server_name
+            }
+        };
+        let opt = |k: &str| params.get(k).and_then(Value::as_str).map(str::to_string);
+        let managed = params.get("managed").and_then(Value::as_bool).unwrap_or(false);
+        Ok(RcSession {
+            host,
+            shed: shed.to_string(),
+            slug: slug.to_string(),
+            tmux_session: rc::tmux_name(slug),
+            // A managed session with no display_name is the bare slug; a legacy one
+            // is `<shed>/<slug>` — mirroring the Swift `rcInjectTestOp` branch.
+            display_name: opt("display_name").unwrap_or_else(|| {
+                if managed {
+                    slug.to_string()
+                } else {
+                    format!("{shed}/{slug}")
+                }
+            }),
+            workdir: opt("workdir").unwrap_or_else(|| rc::DEFAULT_WORKDIR.to_string()),
+            // kind + state both default (like the Swift `RcInjectTestParams`) — this
+            // is the test-only fixture op; the harness always sends valid values.
+            kind: params
+                .get("kind")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(RcKind::ClaudeRc),
+            state: params
+                .get("state")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or(RcState::Ready),
+            url: opt("url"),
+            rc_id: opt("rc_id"),
+            created_by: opt("created_by"),
+            created_at: opt("created_at"),
+            target_label: opt("target_label"),
+            managed,
+        })
+    }
+
+    /// `agents.dump` → the RC sessions the frontend reported (UI truth, like
+    /// `dashboard.dump` reads the reported sheds) so the pane is drivable by
+    /// logical content, not just a screenshot.
+    fn agents_dump(&self) -> Value {
+        // UI truth = what's rendered: the Agents pane only reports its sessions
+        // while mounted, so off-pane the `agents` snapshot is stale — report [] unless
+        // the UI is actually on the agents pane (like `dashboard.dump` reflects the
+        // current sheds, not a stale set).
+        let on_agents = self
+            .ui_get("pane")
+            .and_then(|p| p.as_str().map(|s| s == "agents"))
+            .unwrap_or(false);
+        let sessions = if on_agents {
+            self.ui_get("agents").unwrap_or_else(|| json!([]))
+        } else {
+            json!([])
+        };
+        json!({ "sessions": sessions })
+    }
+
     // -- approvals (the security spine; the harness drives the full matrix) ----
 
     /// `approvals.list` → the pending approval cards (each with its gate + the SSH
@@ -463,7 +650,18 @@ impl Handler {
         self.coordinator
             .set_ssh_approval(p.method, p.policy, p.ttl)
             .await;
+        // Persist the resulting prefs (same path as the frontend command) so a
+        // harness-driven change also survives a restart.
+        let (m, pol, ttl) = crate::ssh_prefs_wire(&self.coordinator.ssh_prefs().await);
+        self.prefs.set_ssh(m, pol, ttl);
         Ok(json!({}))
+    }
+
+    /// `ui.ssh_prefs` → the coordinator's current SSH approval prefs
+    /// (`{method, policy, ttl}`) — the observe side of `ui.set_ssh_approval`, so the
+    /// harness can assert what a set actually applied (the drivability North Star).
+    async fn ssh_prefs(&self) -> Result<Value, (String, String)> {
+        Ok(json!(self.coordinator.ssh_prefs().await))
     }
 
     /// `app.screenshot` → shell out to a platform tool and return `{png (base64),
@@ -616,6 +814,24 @@ async fn handle_line(line: &str, handler: &Handler) -> Value {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn rc_kind_parses_wire_value_or_rejects() {
+        assert_eq!(rc_kind(&json!({"kind": "claude-rc"})).unwrap(), RcKind::ClaudeRc);
+        assert_eq!(rc_kind(&json!({"kind": "shell"})).unwrap(), RcKind::Shell);
+        assert_eq!(rc_kind(&json!({"kind": "bogus"})).unwrap_err().0, "bad_request");
+        assert_eq!(rc_kind(&json!({})).unwrap_err().0, "bad_request");
+    }
+
+    #[test]
+    fn rc_err_maps_bad_request_to_invalid_param() {
+        // gotcha #7: the shared test_agents suite asserts `invalid-param` for a
+        // prompt-validation failure (matching the mac app's code); other RcErrors
+        // surface as action_failed.
+        assert_eq!(rc_err(RcError::BadRequest("x".into())).0, "invalid-param");
+        assert_eq!(rc_err(RcError::SlugTaken("x".into())).0, "action_failed");
+        assert_eq!(rc_err(RcError::MissingBinary).0, "action_failed");
+    }
 
     fn env(mock: Option<&str>) -> Env {
         Env {

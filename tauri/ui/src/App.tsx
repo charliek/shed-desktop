@@ -17,15 +17,13 @@ import {
   createStart, createStatus, createCancel, fetchHosts,
   fetchApprovals, decideApproval, fetchActivity, fetchGateNamespaces,
   getSshApproval, setSshApproval,
+  fetchRcSessions, rcLaunch, rcKill, reportAgents,
   useCoordinatorData, useNowTick,
   type Pane, type Shed, type HostDiskUsage, type TerminalPresetInfo,
   type Modal, type CreateProgress, type Approval, type AuditEntry, type SshPrefs,
+  type RcSession, type RcKind, type RcState,
 } from "@/lib/bridge";
 
-/* ---- seed data (Sheds is live at A1b; the rest lands A1c / Phase B) -------- */
-const SEED_AGENTS = [
-  { id: "g1", shed: "localmac-dev/ztest", name: "claude-test", kind: "claude-rc", status: "ready", sub: "tmux rc-dqtzeu · /home/shed · made by shed" },
-];
 /** "server/shed" when multi-server, else the shed name. */
 function qualifiedShed(server: string | null | undefined, shed: string | null | undefined): string {
   return server ? `${server}/${shed ?? ""}` : (shed ?? "");
@@ -275,32 +273,159 @@ function ApprovalsPane({ approvals }: { approvals: Approval[] }) {
   );
 }
 
-function AgentsPane() {
+/* ---- Agents / remote-control (B2.4) --------------------------------------- */
+const RC_KINDS: { id: RcKind; label: string }[] = [
+  { id: "claude-rc", label: "Claude" },
+  { id: "shell", label: "Shell" },
+];
+const rcInput =
+  "w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none focus:border-shed-accent";
+
+/** State → badge tone: green ready, red dead, amber for in-progress / needs-action. */
+function rcStateTone(state: RcState): { bg: string; fg: string } {
+  if (state === "ready")
+    return { bg: "color-mix(in oklch, var(--shed-ok) 15%, var(--shed-inset))", fg: "var(--shed-ok)" };
+  if (state === "dead") return { bg: "var(--shed-deny-bg)", fg: "var(--shed-danger)" };
+  return { bg: "color-mix(in oklch, var(--shed-attention) 15%, var(--shed-inset))", fg: "var(--shed-attention)" };
+}
+
+function AgentsPane({ sheds }: { sheds: Shed[] }) {
+  const [sessions, setSessions] = useState<RcSession[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const gen = useRef(0);
+
+  const refresh = useCallback(async () => {
+    const mine = ++gen.current;
+    const rows = await fetchRcSessions();
+    if (mine === gen.current) setSessions(rows); // drop a superseded fetch
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+  // Publish the rendered sessions so the `agents.dump` op can observe them.
+  useEffect(() => { reportAgents(sessions); }, [sessions]);
+
   return (
     <div>
       <PageHead
         title="Remote-control agents"
         sub="Drive an agent — a REPL, a shell, or a coding agent — inside a shed from here."
-        right={<HeadAction icon={Plus} label="New session" />}
+        right={<HeadAction icon={Plus} label="New session" onClick={() => { setError(null); setShowForm((v) => !v); }} />}
       />
-      <div className="flex flex-col gap-3">
-        {SEED_AGENTS.map((g) => (
-          <div key={g.id} className={cn(card, "flex items-center gap-3.5 py-3.5 pl-3.5 pr-4")} style={{ animation: "shed-in .25s ease" }}>
-            <span className="inline-flex min-w-[74px] flex-none items-center justify-center rounded-[9px] px-3 py-2.5 text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-ok) 15%, var(--shed-inset))", color: "var(--shed-ok)" }}>{g.status}</span>
-            <div className="min-w-0 flex-1">
-              <div className="mb-1 flex flex-wrap items-center gap-2.5">
-                <span className="text-[16px] font-bold text-shed-text">ztest/{g.name}</span>
-                <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium text-shed-text-secondary">{g.kind}</span>
-              </div>
-              <div className="truncate text-[13px] text-shed-text-muted">{g.sub}</div>
-            </div>
-            <button className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
-              <ExternalLink size={16} /> Open in Claude
-            </button>
-            <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" />
-            <IconBtn icon={Trash2} tone="danger" title="End session" />
+      {showForm && (
+        <LaunchForm sheds={sheds} onLaunched={() => { setShowForm(false); void refresh(); }} onError={setError} />
+      )}
+      {error && (
+        <div className={cn(card, "mb-3 flex items-start gap-2 p-3.5 text-[13px]")} style={{ borderColor: "var(--shed-danger)", color: "var(--shed-danger)" }}>
+          <X size={16} className="mt-px flex-none" /> <span className="min-w-0 break-words">{error}</span>
+        </div>
+      )}
+      {sessions.length === 0 ? (
+        <EmptyCard>No remote-control sessions. Start one with “New session”.</EmptyCard>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {sessions.map((s) => (
+            <SessionCard key={`${s.host}/${s.shed}/${s.slug}`} session={s} onKilled={() => void refresh()} onError={setError} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionCard({ session: s, onKilled, onError }: { session: RcSession; onKilled: () => void; onError: (e: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const tone = rcStateTone(s.state);
+  const sub = [`tmux ${s.tmux_session}`, s.workdir, s.created_by].filter(Boolean).join(" · ");
+  const kill = async () => {
+    setBusy(true);
+    try { await rcKill(s.shed, s.slug, s.host); onKilled(); }
+    catch (e) { onError(String(e)); setBusy(false); }
+  };
+  return (
+    <div className={cn(card, "flex items-center gap-3.5 py-3.5 pl-3.5 pr-4")} style={{ animation: "shed-in .25s ease" }}>
+      <span className="inline-flex min-w-[80px] flex-none items-center justify-center rounded-[9px] px-3 py-2.5 text-[14px] font-semibold" style={{ background: tone.bg, color: tone.fg }}>{s.state}</span>
+      <div className="min-w-0 flex-1">
+        <div className="mb-1 flex flex-wrap items-center gap-2.5">
+          <span className="text-[16px] font-bold text-shed-text">{s.display_name}</span>
+          <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[12px] font-medium text-shed-text-secondary">{s.kind}</span>
+          {!s.managed && <span className="rounded-md bg-shed-inset px-2 py-1 font-mono text-[11px] font-semibold text-shed-text-muted">legacy</span>}
+        </div>
+        <div className="truncate text-[13px] text-shed-text-muted">{sub}</div>
+      </div>
+      {s.url && (
+        <a href={s.url} target="_blank" rel="noreferrer" className="hbtn inline-flex flex-none items-center gap-2 rounded-[9px] px-[15px] py-[9px] text-[14px] font-semibold" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+          <ExternalLink size={16} /> Open in Claude
+        </a>
+      )}
+      <IconBtn icon={Terminal} tone="accent" title="Open in Terminal" onClick={() => void openTerminal(s.shed, s.host, s.tmux_session)} />
+      <IconBtn icon={Trash2} tone="danger" title="End session" onClick={() => void kill()} disabled={busy} spin={busy} />
+    </div>
+  );
+}
+
+function LaunchForm({ sheds, onLaunched, onError }: { sheds: Shed[]; onLaunched: () => void; onError: (e: string) => void }) {
+  const running = sheds.filter((s) => s.status === "running");
+  const [target, setTarget] = useState(running[0] ? `${running[0].host}/${running[0].name}` : "");
+  const [kind, setKind] = useState<RcKind>("claude-rc");
+  const [displayName, setDisplayName] = useState("");
+  const [prompt, setPrompt] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    const sel = running.find((s) => `${s.host}/${s.name}` === target);
+    if (!sel) { onError("Pick a running shed to launch in."); return; }
+    setBusy(true);
+    onError("");
+    try {
+      await rcLaunch({
+        shed: sel.name,
+        host: sel.host,
+        kind,
+        displayName: displayName.trim() || undefined,
+        initialPrompt: prompt.trim() || undefined,
+      });
+      setDisplayName(""); setPrompt("");
+      onLaunched();
+    } catch (e) {
+      onError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={cn(card, "mb-3 flex flex-col gap-3 p-4")} style={{ animation: "shed-in .2s ease" }}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Shed">
+          <select value={target} onChange={(e) => setTarget(e.target.value)} className={rcInput}>
+            {running.length === 0 && <option value="">no running sheds</option>}
+            {running.map((s) => (
+              <option key={`${s.host}/${s.name}`} value={`${s.host}/${s.name}`}>{qualifiedShed(s.host, s.name)}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Kind">
+          <div className="flex gap-2">
+            {RC_KINDS.map((k) => {
+              const on = kind === k.id;
+              return (
+                <button key={k.id} onClick={() => setKind(k.id)} className={cn("hbtn flex-1 rounded-[9px] px-3 py-2 text-[14px] font-semibold", on ? "text-shed-accent" : "text-shed-text-muted")} style={{ background: on ? "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))" : "var(--shed-inset)", border: on ? "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))" : "1px solid var(--shed-border)" }}>{k.label}</button>
+              );
+            })}
           </div>
-        ))}
+        </Field>
+      </div>
+      <Field label="Display name (optional)">
+        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="defaults to shed/slug" className={rcInput} />
+      </Field>
+      <Field label={kind === "shell" ? "Initial command (optional)" : "Initial prompt (optional)"}>
+        <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={2} placeholder={kind === "shell" ? "npm install && npm test" : "summarize this repo"} className={cn(rcInput, "resize-none")} />
+      </Field>
+      <div className="flex justify-end">
+        <button onClick={() => void submit()} disabled={busy || !target} className="hbtn inline-flex items-center gap-2 rounded-[10px] px-[22px] py-[11px] text-[15px] font-semibold disabled:opacity-50" style={{ background: "color-mix(in oklch, var(--shed-accent) 13%, var(--shed-inset))", border: "1px solid color-mix(in oklch, var(--shed-accent) 26%, var(--shed-border))", color: "var(--shed-accent)" }}>
+          <Sparkles size={18} /> {busy ? "Launching…" : "Launch"}
+        </button>
       </div>
     </div>
   );
@@ -405,11 +530,28 @@ const APPROVAL_METHODS: { id: SshPrefs["method"]; label: string; detail: string 
   { id: "prompt", label: "Prompt only", detail: "A plain Approve button — no password." },
 ];
 
+// The SSH approval policies, most → least permissive (mirrors SshApprovalPolicy in
+// shed-core). `prompts` gates the Method picker and `usesDuration` gates the
+// Duration field — the SAME policy→behavior mapping as the Swift app
+// (SSHApprovalPolicy.prompts / .usesDuration): only the two "Always" options
+// decide with no prompt, and only "Time Based Allow" carries a duration.
+const SSH_POLICIES: { id: string; label: string; prompts: boolean; usesDuration: boolean }[] = [
+  { id: "always-allow", label: "Always Allow", prompts: false, usesDuration: false },
+  { id: "per-shed-allow", label: "Per Shed Allow", prompts: true, usesDuration: false },
+  { id: "time-based-allow", label: "Time Based Allow", prompts: true, usesDuration: true },
+  { id: "always-ask", label: "Always Ask", prompts: true, usesDuration: false },
+  { id: "always-deny", label: "Always Deny", prompts: false, usesDuration: false },
+];
+
 function PreferencesModal({ onClose }: { onClose: () => void }) {
   const [presets, setPresets] = useState<TerminalPresetInfo[]>([]);
   const [preset, setPreset] = useState("custom");
   const [template, setTemplate] = useState("");
   const [method, setMethod] = useState<SshPrefs["method"]>("biometrics-or-password");
+  const [policy, setPolicy] = useState("time-based-allow");
+  const [ttl, setTtl] = useState("2h");
+  const sshGen = useRef(0);
+  const ttlAtFocus = useRef(""); // the Duration value when the field gained focus
 
   useEffect(() => {
     void fetchTerminalPresets().then(setPresets);
@@ -417,7 +559,16 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
       setPreset(p.terminal_preset);
       setTemplate(p.terminal_template);
     });
-    void getSshApproval().then((p) => setMethod(p.method));
+    // Guard the initial load with the same generation ref as applySsh: if the user
+    // edits a pref before this slow first read resolves, the stale load must not
+    // clobber their change (its optimistic set already bumped sshGen).
+    const mine = ++sshGen.current;
+    void getSshApproval().then((p) => {
+      if (mine !== sshGen.current) return;
+      setMethod(p.method);
+      setPolicy(p.policy);
+      setTtl(p.ttl);
+    });
   }, []);
 
   useEffect(() => {
@@ -436,16 +587,27 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
     setTemplate(t);
     if (preset === "custom") void setTerminalPref("custom", t);
   };
-  const chooseMethod = (id: SshPrefs["method"]) => {
-    setMethod(id); // optimistic
-    // Reconcile from the backend so a rejected/failed write can't leave the radio
-    // misrepresenting the actual gate strength (a security-signal surface).
+  // Apply one SSH-pref delta: set it optimistically, persist only the changed
+  // field (the coordinator composes partial updates), then reconcile ALL three
+  // from the backend — so a rejected/failed write can't leave the method radio
+  // misrepresenting the actual gate strength (a security-signal surface). A
+  // generation guard drops a superseded reload so fast Duration typing can't be
+  // clobbered by an out-of-order confirm.
+  const applySsh = (delta: { method?: SshPrefs["method"]; policy?: string; ttl?: string }) => {
+    if (delta.method !== undefined) setMethod(delta.method);
+    if (delta.policy !== undefined) setPolicy(delta.policy);
+    if (delta.ttl !== undefined) setTtl(delta.ttl);
+    const mine = ++sshGen.current;
     void (async () => {
-      await setSshApproval(id); // method only — policy/TTL unchanged
+      await setSshApproval(delta.method, delta.policy, delta.ttl);
       const p = await getSshApproval();
+      if (mine !== sshGen.current) return; // superseded by a newer change
       setMethod(p.method);
+      setPolicy(p.policy);
+      setTtl(p.ttl);
     })();
   };
+  const policyMeta = SSH_POLICIES.find((p) => p.id === policy);
 
   return (
     <div
@@ -512,33 +674,81 @@ function PreferencesModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="mt-6 mb-1.5 text-[12px] font-semibold uppercase tracking-wider text-shed-text-muted">Credential approvals</div>
-        <p className="mb-3 text-[13px] text-shed-text-muted">How an SSH-key approval is confirmed when the host agent routes one here.</p>
-        <div className="flex flex-col gap-2">
-          {APPROVAL_METHODS.map((m) => {
-            const active = method === m.id;
-            return (
-              <label
-                key={m.id}
-                className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
-                style={{
-                  borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
-                  background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+        <p className="mb-3 text-[13px] text-shed-text-muted">What happens when the host agent routes an SSH-key approval here.</p>
+        <div className="flex flex-col gap-3">
+          <Field label="Approval policy">
+            <select
+              value={policy}
+              onChange={(e) => applySsh({ policy: e.target.value })}
+              className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 text-[14px] text-shed-text outline-none"
+              data-ssh-policy
+            >
+              {SSH_POLICIES.map((p) => (
+                <option key={p.id} value={p.id}>{p.label}</option>
+              ))}
+            </select>
+          </Field>
+
+          {/* Duration — only the time-based policy carries one (policy.usesDuration). */}
+          {policyMeta?.usesDuration && (
+            <Field label="Duration">
+              <input
+                value={ttl}
+                // Free text → keep each keystroke LOCAL (optimistic) and persist only
+                // on blur/Enter, and only when it changed. `applySsh`→set_ssh_approval
+                // resets live SSH grants + rewrites prefs.json, so a per-keystroke
+                // persist would revoke active grants and churn disk mid-typing.
+                onChange={(e) => setTtl(e.target.value)}
+                onFocus={() => {
+                  ttlAtFocus.current = ttl;
                 }}
-              >
-                <input
-                  type="radio"
-                  name="approval-method"
-                  checked={active}
-                  onChange={() => chooseMethod(m.id)}
-                  style={{ accentColor: "var(--shed-accent)" }}
-                />
-                <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
-                <span className="flex-1" />
-                <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
-              </label>
-            );
-          })}
+                onBlur={() => {
+                  if (ttl !== ttlAtFocus.current) applySsh({ ttl });
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                placeholder="2h"
+                className="w-full rounded-[9px] border border-shed-border bg-shed-inset px-3 py-2 font-mono text-[13px] text-shed-text outline-none"
+                data-ssh-ttl
+              />
+            </Field>
+          )}
+
+          {/* Method — only the prompting policies confirm an approval (policy.prompts). */}
+          {policyMeta?.prompts && (
+            <div className="flex flex-col gap-2">
+              <span className="text-[12px] font-semibold text-shed-text-secondary">Method</span>
+              {APPROVAL_METHODS.map((m) => {
+                const active = method === m.id;
+                return (
+                  <label
+                    key={m.id}
+                    className="flex cursor-pointer items-center gap-3 rounded-[10px] border px-3.5 py-2.5"
+                    style={{
+                      borderColor: active ? "var(--shed-accent-border)" : "var(--shed-border)",
+                      background: active ? "var(--shed-accent-subtle)" : "var(--shed-inset)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="approval-method"
+                      checked={active}
+                      onChange={() => applySsh({ method: m.id })}
+                      style={{ accentColor: "var(--shed-accent)" }}
+                    />
+                    <span className="text-[15px] font-semibold text-shed-text">{m.label}</span>
+                    <span className="flex-1" />
+                    <span className="truncate text-[12px] text-shed-text-muted">{m.detail}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
         </div>
+        <p className="mt-3 text-[12px] text-shed-text-muted">
+          Always Allow / Always Deny decide every SSH sign with no prompt. The others prompt, then remember your approval per the policy. Changing the policy clears live grants. Method is how each approval is confirmed.
+        </p>
       </div>
     </div>
   );
@@ -851,7 +1061,7 @@ export default function App() {
           <div className="mx-auto max-w-[880px]" data-pane={pane}>
             {pane === "sheds" && <ShedsPane sheds={sheds} refresh={refresh} onNew={() => setModal("create")} />}
             {pane === "approvals" && <ApprovalsPane approvals={approvals} />}
-            {pane === "agents" && <AgentsPane />}
+            {pane === "agents" && <AgentsPane sheds={sheds} />}
             {pane === "activity" && <ActivityPane />}
             {pane === "system" && <SystemPane />}
           </div>

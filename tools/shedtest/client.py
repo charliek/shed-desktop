@@ -178,6 +178,11 @@ class _ApprovalOps:
             params["ttl"] = ttl
         self.call("ui.set_ssh_approval", params)
 
+    def ssh_prefs_get(self) -> dict:
+        """The coordinator's current SSH approval prefs ({method, policy, ttl}) —
+        the read side of set_ssh_approval, so a test can assert what a set applied."""
+        return self.call("ui.ssh_prefs")
+
     def approvals_list(self) -> list[dict]:
         return self.call("approvals.list")["approvals"]
 
@@ -213,7 +218,59 @@ class _ApprovalOps:
         self.call("notification.open")
 
 
-class ShedDesktop(_ApprovalOps, IPCClient):
+class _RcOps:
+    """The remote-control (Agents) op surface — classify / list / launch / kill /
+    inject_test — shared by the mac app and the Tauri client (both wire the same
+    shed-core/shed-app RC spine with identical op names + shapes). `self.call`
+    comes from the `IPCClient` base each mixes in with."""
+
+    def rc_classify(self, kind: str, pane: str) -> dict:
+        return self.call("rc.classify", {"kind": kind, "pane": pane})
+
+    def rc_list(self, host: str | None = None, shed: str | None = None) -> list[dict]:
+        params: dict = {}
+        if host:
+            params["host"] = host
+        if shed:
+            params["shed"] = shed
+        return self.call("rc.list", params)["sessions"]
+
+    def rc_launch(self, shed: str, kind: str = "claude-rc", host: str | None = None,
+                  display_name: str | None = None, initial_prompt: str | None = None) -> dict:
+        params: dict = {"shed": shed, "kind": kind}
+        if host:
+            params["host"] = host
+        if display_name:
+            params["display_name"] = display_name
+        # Include whenever non-None (not just truthy) so negative tests can send a
+        # deliberately bad value (e.g. a control char) through to the op.
+        if initial_prompt is not None:
+            params["initial_prompt"] = initial_prompt
+        return self.call("rc.launch", params)
+
+    def rc_kill(self, shed: str, slug: str, host: str | None = None) -> None:
+        params: dict = {"shed": shed, "slug": slug}
+        if host:
+            params["host"] = host
+        self.call("rc.kill", params)
+
+    def rc_inject_test(self, shed: str, slug: str, *, host: str | None = None,
+                       kind: str = "claude-broker", state: str = "ready", managed: bool = False,
+                       display_name: str | None = None, created_by: str | None = None,
+                       created_at: str | None = None, rc_id: str | None = None,
+                       url: str | None = None, target_label: str | None = None) -> None:
+        """Inject a session (managed or legacy) into the table — test mode only."""
+        params: dict = {"shed": shed, "slug": slug, "kind": kind,
+                        "state": state, "managed": managed}
+        for k, v in (("host", host), ("display_name", display_name),
+                     ("created_by", created_by), ("created_at", created_at),
+                     ("rc_id", rc_id), ("url", url), ("target_label", target_label)):
+            if v is not None:
+                params[k] = v
+        self.call("rc.inject_test", params)
+
+
+class ShedDesktop(_ApprovalOps, _RcOps, IPCClient):
     """The macOS app's full op surface (drives the SwiftUI dashboard, the
     approval gate, remote-control agents, prefs, and notifications)."""
 
@@ -265,52 +322,6 @@ class ShedDesktop(_ApprovalOps, IPCClient):
             params["session"] = session
         return self.call("terminal.preview", params)
 
-    # -- M2: remote control ----------------------------------------------
-    def rc_classify(self, kind: str, pane: str) -> dict:
-        return self.call("rc.classify", {"kind": kind, "pane": pane})
-
-    def rc_list(self, host: str | None = None, shed: str | None = None) -> list[dict]:
-        params: dict = {}
-        if host:
-            params["host"] = host
-        if shed:
-            params["shed"] = shed
-        return self.call("rc.list", params)["sessions"]
-
-    def rc_launch(self, shed: str, kind: str = "claude-rc", host: str | None = None,
-                  display_name: str | None = None, initial_prompt: str | None = None) -> dict:
-        params: dict = {"shed": shed, "kind": kind}
-        if host:
-            params["host"] = host
-        if display_name:
-            params["display_name"] = display_name
-        # Include whenever non-None (not just truthy) so negative tests can send a
-        # deliberately bad value (e.g. a control char) through to the op.
-        if initial_prompt is not None:
-            params["initial_prompt"] = initial_prompt
-        return self.call("rc.launch", params)
-
-    def rc_kill(self, shed: str, slug: str, host: str | None = None) -> None:
-        params: dict = {"shed": shed, "slug": slug}
-        if host:
-            params["host"] = host
-        self.call("rc.kill", params)
-
-    def rc_inject_test(self, shed: str, slug: str, *, host: str | None = None,
-                       kind: str = "claude-broker", state: str = "ready", managed: bool = False,
-                       display_name: str | None = None, created_by: str | None = None,
-                       created_at: str | None = None, rc_id: str | None = None,
-                       url: str | None = None, target_label: str | None = None) -> None:
-        """Inject a session (managed or legacy) into the table — test mode only."""
-        params: dict = {"shed": shed, "slug": slug, "kind": kind,
-                        "state": state, "managed": managed}
-        for k, v in (("host", host), ("display_name", display_name),
-                     ("created_by", created_by), ("created_at", created_at),
-                     ("rc_id", rc_id), ("url", url), ("target_label", target_label)):
-            if v is not None:
-                params[k] = v
-        self.call("rc.inject_test", params)
-
     def window_metrics(self) -> dict:
         return self.call("app.window_metrics")
 
@@ -338,9 +349,10 @@ class GtkClient(_RustCoreClient):
     """shed-gtk's op surface — the shared Rust-core base, no additions."""
 
 
-class TauriClient(_ApprovalOps, _RustCoreClient):
+class TauriClient(_ApprovalOps, _RcOps, _RustCoreClient):
     """The Tauri client's op surface: the shared Rust-core base + the approval ops
-    (`_ApprovalOps`, B3) + pane `navigate` and `show_window`/`activate` (A0a)."""
+    (`_ApprovalOps`, B3) + the RC/Agents ops (`_RcOps`, B2) + pane `navigate` and
+    `show_window`/`activate` (A0a)."""
 
     def navigate(self, pane: str) -> None:
         self.call("ui.navigate", {"pane": pane})
@@ -355,6 +367,11 @@ class TauriClient(_ApprovalOps, _RustCoreClient):
     def show_create(self) -> None:
         """Open the New-Shed dialog (raises the window + emits the event)."""
         self.call("ui.show_create")
+
+    def agents_dump(self) -> list[dict]:
+        """The RC sessions the Agents pane rendered — the drivable `agents.dump`
+        UI truth (empty unless the UI is on the agents pane)."""
+        return self.call("agents.dump")["sessions"]
 
     def activate(self) -> None:
         self.call("app.activate")

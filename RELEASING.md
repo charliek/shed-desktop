@@ -44,6 +44,13 @@ jobs upload to it in parallel:
   Release). End users then `apt install shed-desktop` (see the apt-charliek README for the
   one-time repo setup).
 
+> **Backend:** the shipped macOS app runs on the **Rust core by default**. `bundle.sh` builds the
+> UniFFI `xcframework` and `SHED_DESKTOP_RUST_CORE` is left unset in the release build; the app
+> treats anything but `=0` as on (`ShedBackend.swift`), so the DMG is the Rust-backed Swift app —
+> the legacy Swift `URLSession` path is opt-out only. The macOS job's `make test` step exercises
+> the Rust-FFI canary, so a broken core fails the release. Keep the release env free of
+> `SHED_DESKTOP_RUST_CORE=0` (its only use is the `ci.yml` Swift-fallback *test* leg).
+
 ## Pipeline configuration (in place)
 
 The release-workflows + Sparkle appcast pipeline is fully wired:

@@ -34,6 +34,17 @@ def test_ui_ops_ack(tauri):
     tauri.navigate("sheds")
 
 
+def test_tray_dump(tauri):
+    # B1a: the menu-bar/tray is drivable over IPC (the North Star). Its actionable
+    # menu ids are always reported; the tray *installs* on macOS (a status-bar host
+    # is always present), while a headless / no-SNI Linux box may be window-only.
+    dump = tauri.call("tray.dump")
+    # B1: the menu opens the dashboard, its Approvals/Preferences panes, or quits.
+    assert dump["items"] == ["open", "approvals", "preferences", "quit"]
+    if platform.system() == "Darwin":
+        assert dump["present"] is True
+
+
 def test_navigate_rejects_unknown_pane(tauri):
     # An unknown pane is a bad_request, not blindly emitted — a bogus pane would
     # otherwise blank the UI (PANES[pane] undefined).
@@ -179,6 +190,31 @@ def test_terminal_pref_persists_and_drives_preview(tauri):
     # switching the preset persists (across the store's write-through)
     tauri.prefs_set_terminal("ghostty")
     assert tauri.prefs_get()["terminal_preset"] == "ghostty"
+
+
+def test_ssh_prefs_round_trip_and_partial_update(tauri):
+    # B4: the full {method, policy, ttl} is drivable + observable. ui.set_ssh_approval
+    # applies it; ui.ssh_prefs reads back exactly what the coordinator holds — and a
+    # partial update (one field) composes with the rest, the property the modal relies
+    # on when it sends only the changed control. Restore the prior prefs after (the app
+    # + coordinator are session-scoped, so a left-over policy would leak to later tests).
+    before = tauri.ssh_prefs_get()
+    try:
+        tauri.set_ssh_approval(method="prompt", policy="time-based-allow", ttl="4h")
+        got = tauri.ssh_prefs_get()
+        assert got["method"] == "prompt"
+        assert got["policy"] == "time-based-allow"
+        assert got["ttl"] == "4h"
+        # a policy-only update leaves method + ttl untouched (partial-update compose)
+        tauri.set_ssh_approval(policy="always-allow")
+        got = tauri.ssh_prefs_get()
+        assert got["policy"] == "always-allow"
+        assert got["method"] == "prompt"
+        assert got["ttl"] == "4h"
+    finally:
+        tauri.set_ssh_approval(
+            method=before["method"], policy=before["policy"], ttl=before["ttl"]
+        )
 
 
 def test_preferences_modal_opens(tauri):
