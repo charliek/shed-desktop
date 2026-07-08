@@ -9,4 +9,4 @@ Terminal=false
 Categories=System;Utility;
 Keywords=shed;vm;dashboard;
 StartupNotify=true
-StartupWMClass=ai.stridelabs.ShedDesktop
+StartupWMClass=shed-desktop
