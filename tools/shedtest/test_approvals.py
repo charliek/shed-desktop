@@ -12,7 +12,7 @@ from _marks import needs_approvals
 from client import ShedError
 
 # The approval spine is shared (mac + tauri); each test drives the
-# target-appropriate `client` fixture. gtk has no approval pane (deferred).
+# target-appropriate `client` fixture.
 pytestmark = needs_approvals
 
 

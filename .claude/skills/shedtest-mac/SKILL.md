@@ -1,6 +1,6 @@
 ---
 name: shedtest-mac
-description: Run and debug shed-desktop's macOS app end-to-end tests — the hermetic pytest harness that drives the real app over its IPC socket and captures in-process screenshots, plus the Swift unit tests and the Rust-core parity leg. Use when asked to run the Mac tests, verify a UI/behavior change by driving the app, debug an e2e failure, add a harness test, or check screenshot/IPC ops. For the GTK/Linux client's tests (in a shed), see shedtest-linux.
+description: Run and debug shed-desktop's macOS app end-to-end tests — the hermetic pytest harness that drives the real app over its IPC socket and captures in-process screenshots, plus the Swift unit tests and the Rust-core parity leg. Use when asked to run the Mac tests, verify a UI/behavior change by driving the app, debug an e2e failure, add a harness test, or check screenshot/IPC ops. The Linux client is the Tauri app; its render gate is `make tauri-build-linux` (WebKitGTK in Docker), and the shipped Linux `.deb` is built from it.
 ---
 
 # macOS app end-to-end + unit tests

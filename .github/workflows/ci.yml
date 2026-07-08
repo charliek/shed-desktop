@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 jobs:
-  # Path-filter so Mac-only and docs-only PRs skip the Linux/GTK/deb legs
+  # Path-filter so Mac-only and docs-only PRs skip the Linux/deb/tauri legs
   # (mirrors roost). `swift` is never gated — it's the primary check. The `ci`
   # filter (this workflow / Makefile) forces every leg to run.
   changes:
@@ -135,69 +135,12 @@ jobs:
       - name: shed-core — test + clippy (Linux)
         # Scoped to -p shed-core so the macOS-only shed-core-ffi (uniffi) is never
         # dragged in. --all-targets runs the pinned-TLS verifier + redirect/
-        # non-https fail-closed tests here; the GTK e2e's plain-HTTP mock never
+        # non-https fail-closed tests here; the e2e's plain-HTTP mock never
         # exercises the pin/token paths, so they stay cargo-only on Linux.
         working-directory: core
         run: |
           cargo test -p shed-core --all-targets --locked
           cargo clippy -p shed-core --all-targets --locked -- -D warnings
-
-  gtk-build:
-    name: gtk-build
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal --component clippy
-          rustc --version && cargo --version
-      - name: GTK + C toolchain (gtk4-rs build scripts need the -dev packages)
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
-      - name: shed-gtk — build + clippy + lib tests (Linux)
-        # The lib tests (IPC dispatch + config) run without a display; the full
-        # window/screenshot e2e under Xvfb lands with the pytest harness (M3).
-        working-directory: core
-        run: |
-          cargo build -p shed-gtk --locked
-          cargo clippy -p shed-gtk --all-targets --locked -- -D warnings
-          cargo test -p shed-gtk --lib --locked
-
-  e2e-gtk:
-    name: e2e-gtk
-    needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.harness == 'true' || needs.changes.outputs.ci == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustc --version && cargo --version
-      - name: GTK + Xvfb + mesa
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev libgl1-mesa-dri xvfb
-      - name: Build shed-gtk
-        working-directory: core
-        run: cargo build -p shed-gtk --locked
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-      - name: Hermetic GTK E2E (headless Xvfb)
-        # Virtual display via xvfb-run; GDK_BACKEND=x11. GSK_RENDERER=cairo forces
-        # the software renderer so the screenshot op doesn't depend on the runner's
-        # GL stack (the headless-GL trap) — dashboard.dump is the assertion gate;
-        # the screenshot only asserts a non-empty PNG. A wider timeout scale buys
-        # headroom on a shared runner (proven headless: Docker+Xvfb+cairo locally).
-        env:
-          GDK_BACKEND: x11
-          GSK_RENDERER: cairo
-          SHED_GTK_TEST_TIMEOUT_SCALE: "3"
-        run: >
-          xvfb-run -a --server-args="-screen 0 1600x1200x24"
-          uv run --group test pytest tools/shedtest --target gtk -q
-      - name: GTK E2E diagnostics (on failure)
-        if: failure()
-        run: find "${TMPDIR:-/tmp}" -name shed-gtk-ui.log -exec sh -c 'echo "== $1 =="; cat "$1"' _ {} \; || true
 
   deb:
     name: deb
@@ -286,7 +229,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Hermetic Tauri E2E (macOS WKWebView)
         # A wider timeout scale buys headroom on a shared CI runner (as the swift
-        # + gtk legs do). WKWebView needs no Xvfb; the mac screenshot op is
+        # + tauri-linux legs do). WKWebView needs no Xvfb; the mac screenshot op is
         # TCC-gated so it's skipped here (the WebKitGTK leg is the screenshot gate).
         run: SHED_TAURI_TEST_TIMEOUT_SCALE=4 make e2e-tauri
 
@@ -309,12 +252,12 @@ jobs:
   ci-success:
     name: ci-success
     if: always()
-    needs: [changes, swift, core-linux, gtk-build, e2e-gtk, deb, tauri-linux, tauri-mac, docs]
+    needs: [changes, swift, core-linux, deb, tauri-linux, tauri-mac, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require no job failed (skipped-by-filter counts as pass)
         run: |
-          results="${{ needs.changes.result }} ${{ needs.swift.result }} ${{ needs.core-linux.result }} ${{ needs.gtk-build.result }} ${{ needs.e2e-gtk.result }} ${{ needs.deb.result }} ${{ needs.tauri-linux.result }} ${{ needs.tauri-mac.result }} ${{ needs.docs.result }}"
+          results="${{ needs.changes.result }} ${{ needs.swift.result }} ${{ needs.core-linux.result }} ${{ needs.deb.result }} ${{ needs.tauri-linux.result }} ${{ needs.tauri-mac.result }} ${{ needs.docs.result }}"
           echo "job results: ${results}"
           for r in ${results}; do
             case "${r}" in

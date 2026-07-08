@@ -1,8 +1,7 @@
 //! The IPC server: newline-delimited JSON over a Unix socket — the same envelope
 //! the shed-desktop harness + `shedctl` speak (`{id, op, params}` in, `{id, ok,
-//! result}` / `{id, ok:false, error:{code,message}}` out). Ported from
-//! `shed-gtk/src/ipc.rs`. Making the app drivable + observable by an agent over
-//! IPC is the North Star.
+//! result}` / `{id, ok:false, error:{code,message}}` out). Making the app drivable
+//! + observable by an agent over IPC is the North Star.
 //!
 //! Window/UI ops (`identify` / `ui.navigate` / `ui.show_window` / `app.activate` /
 //! `app.screenshot` / the `ui.*` truth reads) go straight through the Tauri

@@ -1,7 +1,6 @@
 //! Runtime configuration resolved from `SHED_TAURI_*` env vars, mirroring the
-//! `shed-gtk` `Env` (and the Swift `ShedBackend` hermeticity hooks) so the pytest
-//! harness can point the Tauri app at an in-process mock + a fixture config
-//! without touching real hosts.
+//! Swift `ShedBackend` hermeticity hooks so the pytest harness can point the Tauri
+//! app at an in-process mock + a fixture config without touching real hosts.
 
 use std::path::PathBuf;
 
@@ -17,8 +16,8 @@ pub struct Env {
     #[allow(dead_code)] // read by the shed-app backend in A1b
     pub config_path: PathBuf,
     /// The IPC socket path (`SHED_TAURI_SOCKET`, else `$XDG_RUNTIME_DIR/shed-tauri.sock`
-    /// with a `/tmp/shed-tauri-<uid>/shed-tauri.sock` fallback — no nested subdir,
-    /// unlike shed-gtk, to stay under the macOS Unix-socket path limit).
+    /// with a `/tmp/shed-tauri-<uid>/shed-tauri.sock` fallback — flat, no nested
+    /// subdir, to stay under the macOS Unix-socket path limit).
     pub socket_path: PathBuf,
     /// The host-agent approval socket (`SHED_TAURI_HOST_AGENT_SOCKET` in tests →
     /// the fake agent; else the PLATFORM default — see [`default_host_agent_socket`]:
@@ -92,9 +91,9 @@ fn default_config_path() -> PathBuf {
 }
 
 /// `$XDG_RUNTIME_DIR/shed-tauri.sock`, falling back to `/tmp/shed-tauri-<uid>/
-/// shed-tauri.sock` when `XDG_RUNTIME_DIR` is unset. No nested subdir (unlike
-/// shed-gtk): a throwaway `XDG_RUNTIME_DIR` under macOS's long TMPDIR can otherwise
-/// overrun the Unix-socket path limit (`SUN_LEN`, ~104 bytes).
+/// shed-tauri.sock` when `XDG_RUNTIME_DIR` is unset. Flat, no nested subdir: a
+/// throwaway `XDG_RUNTIME_DIR` under macOS's long TMPDIR can otherwise overrun the
+/// Unix-socket path limit (`SUN_LEN`, ~104 bytes).
 fn default_socket_path() -> PathBuf {
     let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
         Some(x) if !x.is_empty() => PathBuf::from(x),

@@ -1,11 +1,11 @@
 """Cross-target E2E: the IPC ops the clients implement, driven through the
 `client` (target-appropriate) + `target` fixtures so one suite is the
 behavioral-parity gate. `identify` + a `screenshot` run on every target; the
-backend-dependent tests (sheds / lifecycle / create) carry `@needs_backend`, so
-they run on `--target mac` + `--target gtk` and skip on `--target tauri` until
-the Tauri backend lands (A1b) — a regression on any active leg fails its CI leg.
+backend-dependent tests (sheds / lifecycle / create) carry `@needs_backend` and
+run on both `--target mac` + `--target tauri` — a regression on either leg fails
+its CI leg.
 
-The dashboard-truth op differs per UI (mac `ui.state.sheds`, gtk/tauri
+The dashboard-truth op differs per UI (mac `ui.state.sheds`, tauri
 `dashboard.dump.rows`) but is normalized by `client.dashboard_rows(target)` to
 `[{name, status, host}]`, so the assertions here are identical across targets.
 """
@@ -26,9 +26,8 @@ def test_identify_is_hermetic(client, target, mock):
     info = client.identify()
     assert info["test_mode"] is True
     assert info["mock_base_url"] == mock.base_url
-    if target in ("gtk", "tauri"):
-        # The Rust-core clients stamp their platform + socket name; the socket is
-        # shed-<target>.sock in both cases.
+    if target == "tauri":
+        # The Rust-core client stamps its platform + socket name (shed-tauri.sock).
         assert info["core"] == "rust"
         assert info["platform"] == target
         assert info["socket_path"].endswith(f"shed-{target}.sock")
@@ -111,8 +110,8 @@ def test_create_cancel_drops_it(client):
     cid = client.create_start("cancelme")
     client.create_cancel(cid)
     # After cancel the store entry is gone (whether or not it had completed):
-    # shed-gtk's create.status reports {"state": "unknown"}; the mac app raises
-    # not-found. Either outcome proves the create was dropped.
+    # the Tauri client's create.status reports {"state": "unknown"}; the mac app
+    # raises not-found. Either outcome proves the create was dropped.
     try:
         assert client.create_status(cid).get("state") == "unknown"
     except ShedError as e:
@@ -123,8 +122,8 @@ def test_create_cancel_drops_it(client):
 def test_create_error_surfaced(client, mock):
     # A server-side create failure surfaces as an `error` state carrying the
     # message — the cross-target parity of the mac-only
-    # test_lifecycle::test_create_error_surfaced. shed-gtk's CreateStore folds the
-    # SSE error event into state=error the same way the mac backend does.
+    # test_lifecycle::test_create_error_surfaced. The shared shed-app CreateStore
+    # folds the SSE error event into state=error the same way the mac backend does.
     mock.create_should_fail = True
     cid = client.create_start("doomed")
     client.wait_until(
@@ -145,15 +144,13 @@ def test_screenshot_returns_non_empty_png(client, target):
     # Linux/Xvfb capture is the real gate and mac-tauri is skipped.
     if target == "tauri" and platform.system() == "Darwin":
         pytest.skip("tauri screenshot on macOS is Screen-Recording-TCC-gated; Linux/Xvfb is the gate")
-    # Front the window so the capture has the app on screen (gtk instead retries
-    # until its surface is realized).
-    if target in ("mac", "tauri"):
-        client.show_window()
+    # Front the window so the capture has the app on screen (both targets have it).
+    client.show_window()
 
     captured: dict = {}
 
     def grab() -> bool:
-        # gtk raises ("window not realized") until the surface is up; retry.
+        # The client may raise ("window not realized") until the surface is up; retry.
         png, width, height = client.screenshot(scale=1)
         captured.update(png=png, width=width, height=height)
         return True

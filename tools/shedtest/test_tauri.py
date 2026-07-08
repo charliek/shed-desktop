@@ -1,5 +1,5 @@
 """tauri-only E2E: behavior specific to the Tauri client's runtime that has no
-mac/gtk analog — the single-instance hand-off, and the A0a UI ops (navigate /
+mac analog — the single-instance hand-off, and the A0a UI ops (navigate /
 show_window / activate) that aren't in the cross-target shared suite. Gated on
 `SHED_TEST_TARGET`, so the whole module is skipped unless `--target tauri`.
 """
@@ -149,8 +149,8 @@ _GiB = 1024 ** 3
 
 def test_system_df_returns_per_host_usage(tauri):
     # A1c: the System pane's per-host disk usage on the shared shed-app Backend
-    # (the same `system.df` the mac app exposes; gtk has no System pane). The row
-    # shape + values match the mock df fixture.
+    # (the same `system.df` the mac app exposes). The row shape + values match the
+    # mock df fixture.
     usage = tauri.system_df()
     assert usage, "expected at least one host"
     row = usage[0]
@@ -176,8 +176,8 @@ def test_system_pane_renders(tauri):
 
 
 def test_terminal_preview_builds_ssh_command(tauri):
-    # A1c-2a: the shared ssh command (mac+tauri parity; gtk has no terminal), built
-    # from the fixture's ssh endpoint (127.0.0.1:2222) with strict host-key pinning.
+    # A1c-2a: the shared ssh command (mac+tauri parity), built from the fixture's
+    # ssh endpoint (127.0.0.1:2222) with strict host-key pinning.
     # No spawn — terminal.open (the preset launch) is A1c-2b.
     r = tauri.terminal_preview("hello-world")
     argv = r["argv"]

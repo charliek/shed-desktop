@@ -1,11 +1,11 @@
 """Launch / quit a hermetic shed-desktop UI for tests, and resolve its socket.
 
-All three UIs speak the same IPC, so the test driver is one client parameterized
-by `--target`; only launch/quit/socket differ per UI. mac launches the Swift
-`ShedDesktop.app` via `open --env`. gtk and Tauri are both *subprocess* UIs with
-the same shape — a binary run in test mode, pointed at the in-process mock, with
-a throwaway HOME/XDG_RUNTIME_DIR — so they share one config-driven path
-(`_SUBPROC`), differing only in binary, env-var prefix, socket name, and the
+Both UIs speak the same IPC, so the test driver is one client parameterized by
+`--target`; only launch/quit/socket differ per UI. mac launches the Swift
+`ShedDesktop.app` via `open --env`. The Tauri client is a *subprocess* UI — a
+binary run in test mode, pointed at the in-process mock, with a throwaway
+HOME/XDG_RUNTIME_DIR — driven through one config-driven path (`_SUBPROC`),
+differing from mac in binary, env-var prefix, socket name, and the
 `identify.platform` stamp. The harness ALWAYS owns the app it drives.
 """
 
@@ -20,10 +20,10 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from client import GtkClient, IPCClient, ShedDesktop, ShedError, TauriClient, scaled_timeout
+from client import IPCClient, ShedDesktop, ShedError, TauriClient, scaled_timeout
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-TARGETS = ("mac", "gtk", "tauri")
+TARGETS = ("mac", "tauri")
 
 # mac: the ad-hoc-signed bundle the harness drives.
 APP = REPO_ROOT / "build" / "ShedDesktop.app"
@@ -32,24 +32,19 @@ DEFAULTS_SUITE = "ai.stridelabs.ShedDesktop.e2e"
 
 @dataclass(frozen=True)
 class _Subproc:
-    """Per-target config for the subprocess-launched UIs (gtk, tauri)."""
+    """Per-target config for the subprocess-launched UI (tauri)."""
     binary: Path
-    env_prefix: str      # "SHED_GTK" / "SHED_TAURI"
+    env_prefix: str      # "SHED_TAURI"
     fallback_stem: str   # /tmp/<stem>-<uid> when XDG_RUNTIME_DIR is unset; also the log-file stem
     sock_rel: str        # socket path relative to the runtime dir (matches the app's env resolver)
-    platform_id: str     # the identify.platform stamp: "gtk" / "tauri"
+    platform_id: str     # the identify.platform stamp: "tauri"
     client_cls: type     # the IPC client class for this target
 
 
 _SUBPROC: dict[str, _Subproc] = {
-    # gtk's `[[bin]]` name is `shed-desktop`, built into core/'s target dir; it
-    # nests the socket in a shed-gtk/ subdir. tauri keeps the socket flat (shorter,
-    # so a throwaway XDG_RUNTIME_DIR under macOS's long TMPDIR stays under SUN_LEN).
-    "gtk": _Subproc(
-        binary=REPO_ROOT / "core" / "target" / "debug" / "shed-desktop",
-        env_prefix="SHED_GTK", fallback_stem="shed-gtk",
-        sock_rel="shed-gtk/shed-gtk.sock", platform_id="gtk", client_cls=GtkClient),
-    # the Tauri crate builds `shed-desktop-tauri` in its standalone workspace.
+    # the Tauri crate builds `shed-desktop-tauri` in its standalone workspace; the
+    # socket is flat (shorter, so a throwaway XDG_RUNTIME_DIR under macOS's long
+    # TMPDIR stays under SUN_LEN).
     "tauri": _Subproc(
         binary=REPO_ROOT / "tauri" / "src-tauri" / "target" / "debug" / "shed-desktop-tauri",
         env_prefix="SHED_TAURI", fallback_stem="shed-tauri",
@@ -62,9 +57,7 @@ _SUBPROC: dict[str, _Subproc] = {
 if os.environ.get("SHED_TAURI_BIN"):
     _SUBPROC["tauri"] = replace(_SUBPROC["tauri"], binary=Path(os.environ["SHED_TAURI_BIN"]))
 
-# gtk's binary path as a module attr — test_gtk.py references `ui.BIN`.
-BIN = _SUBPROC["gtk"].binary
-# the Tauri binary, for symmetry (test_tauri.py references `ui.TAURI_BIN`).
+# the Tauri binary as a module attr (test_tauri.py references `ui.TAURI_BIN`).
 TAURI_BIN = _SUBPROC["tauri"].binary
 
 
@@ -117,11 +110,6 @@ def launch_env(target: str) -> dict[str, str]:
     if env is None:
         raise RuntimeError(f"no {target} UI launched this session")
     return dict(env)
-
-
-def gtk_launch_env() -> dict[str, str]:
-    """Back-compat alias for test_gtk.py."""
-    return launch_env("gtk")
 
 
 def _log_path(cfg: _Subproc) -> Path:
@@ -226,7 +214,7 @@ def launch(target: str = "mac", *, mock_base_url: str, config_path: Path, state_
     `state_dir` is the throwaway per-session dir: on mac SHED_DESKTOP_STATE_DIR;
     on a subprocess target it doubles as HOME + XDG_RUNTIME_DIR (so ~/.shed and
     the runtime socket are both isolated). `host_agent_socket` backs the approval
-    gate — set for mac + tauri (the fake host-agent); gtk has no approval spine.
+    gate — set for both mac + tauri (the fake host-agent).
     """
     if target == "mac":
         _launch_mac(mock_base_url=mock_base_url, config_path=config_path,
@@ -272,7 +260,7 @@ def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
     if not cfg.binary.exists():
         raise RuntimeError(
             f"{target} binary not found at {cfg.binary}; build it first "
-            f"(gtk: `make gtk-build`; tauri: `make tauri-build`).")
+            f"(tauri: `make tauri-build`).")
     # HOME/XDG_RUNTIME_DIR redirected to the temp dir (never the dev's ~/.shed or
     # real runtime socket), config pinned to the fixture, test mode + mock set.
     # <PREFIX>_SOCKET is cleared so the XDG default (under runtime_dir) is used.
@@ -285,8 +273,7 @@ def _launch_subproc(target: str, *, mock_base_url: str, config_path: Path,
     env[f"{cfg.env_prefix}_TEST_MODE"] = "1"
     env[f"{cfg.env_prefix}_MOCK_BASE_URL"] = mock_base_url
     env[f"{cfg.env_prefix}_SHED_CONFIG"] = str(config_path)
-    # The approval gate's host-agent socket (the fake, in tests). Only tauri has
-    # an approval spine among the subprocess targets; gtk ignores it.
+    # The approval gate's host-agent socket (the fake, in tests).
     if host_agent_socket:
         env[f"{cfg.env_prefix}_HOST_AGENT_SOCKET"] = str(host_agent_socket)
     env.pop(f"{cfg.env_prefix}_SOCKET", None)

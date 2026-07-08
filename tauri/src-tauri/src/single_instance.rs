@@ -1,7 +1,6 @@
 //! Single-instance guard: flock a pidfile *before* the IPC socket is bound, so a
 //! second launch never unlinks the live socket. On contention the caller sends an
-//! `app.activate` IPC op to the running instance and exits. Ported from
-//! `shed-gtk/src/single_instance.rs` (roost's pattern).
+//! `app.activate` IPC op to the running instance and exits (roost's pattern).
 //!
 //! Deliberately NOT the `tauri-plugin-single-instance`: that keys its singleton on
 //! the app *identifier* (a global D-Bus name / mach port), so two hermetic test

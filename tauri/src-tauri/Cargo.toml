@@ -1,10 +1,9 @@
-# The Tauri desktop client (Phase A) — a real Linux client toward Mac parity, on
-# the shared shed-core. Deliberately its OWN cargo workspace (note the empty
+# The Tauri desktop client — the shipped Linux client (and a Mac-parity client),
+# on the shared shed-core. Deliberately its OWN cargo workspace (note the empty
 # `[workspace]` table) so WebKitGTK + Tauri deps are NEVER absorbed into ../../core's
-# workspace: `make build` / `core-lint --workspace --exclude shed-gtk` stay
-# WebKit-free, exactly the isolation shed-gtk gets by being a non-default member.
-# shed-core / shed-app are pulled in as plain path deps (that does not make this a
-# member of core's workspace). See plans/tauri-phase-a.md.
+# workspace: `make build` / `core-lint --workspace` stay WebKit-free. shed-core /
+# shed-app are pulled in as plain path deps (that does not make this a member of
+# core's workspace). See plans/tauri-phase-a.md.
 [package]
 name = "shed-desktop-tauri"
 version = "0.0.1"
@@ -38,7 +37,7 @@ libc = "0.2"
 # For the prod FailClosedGate's async AuthGate impl (real polkit gate = B6).
 async-trait = "0.1"
 # Advisory file lock for the single-instance guard (flock, keyed to the socket
-# dir — hermetic, unlike an identifier-scoped plugin). Mirrors shed-gtk.
+# dir — hermetic, unlike an identifier-scoped plugin).
 fs2 = "0.4"
 # Launch-at-login (B4): the `auto-launch` crate under a Tauri plugin (macOS
 # LaunchAgent / Linux `.desktop` autostart — NOT SMAppService). Cross-platform, so
