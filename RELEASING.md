@@ -32,12 +32,14 @@ make dmg      # build/ShedDesktop-<version>.dmg (drag-install + first-launch not
 ## Cut a release
 
 1. Bump the version: `scripts/release/update-version.sh X.Y.Z` (updates `VERSION` +
-   `core/Cargo.toml` + `core/Cargo.lock`).
+   `core/Cargo.toml` + `core/Cargo.lock` + the standalone Tauri workspace
+   `tauri/src-tauri/Cargo.toml` + `tauri.conf.json` + `tauri/src-tauri/Cargo.lock`).
 2. Commit the changelog + version bump.
 3. Tag `vX.Y.Z` and push with `--follow-tags`.
 
 The `release` workflow (`.github/workflows/release.yml`) cuts the GitHub Release up front (a
-`create-release` job that first checks tag == `VERSION` == `core/Cargo.toml`), then two build
+`create-release` job that first checks tag == `VERSION` == `core/Cargo.toml` ==
+`tauri/src-tauri/Cargo.toml`), then two build
 jobs upload to it in parallel:
 
 - **macOS** builds + bundles, packages the DMG, EdDSA-signs it, and the bot pushes the

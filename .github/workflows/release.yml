@@ -31,6 +31,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # No git push here (gh uses GH_TOKEN from env); don't leave the checkout
+          # credential available to later steps.
+          persist-credentials: false
       - name: Verify tag == VERSION == core/Cargo.toml == tauri/src-tauri/Cargo.toml
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -241,6 +245,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # This job runs npm ci + cargo build (untrusted dependency code) before
+          # `gh release upload` (GH_TOKEN from env, not the git credential) — don't
+          # leave the checkout credential available for those steps to exfiltrate.
+          persist-credentials: false
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal
       - name: Tauri (WebKitGTK) build deps
