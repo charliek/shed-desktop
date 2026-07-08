@@ -1,5 +1,13 @@
 # shed-desktop
 
+> ## ⚠️ Moved to the shed monorepo
+>
+> Development of shed-desktop has moved into [charliek/shed](https://github.com/charliek/shed) (the desktop code lives under `desktop/` + `crates/`; see `docs/discovery/monorepo-consolidation.md` there for the design).
+>
+> **One final release still ships from this repo** — planned **v0.0.14**, whose only change is repointing the Sparkle `SUFeedURL` to the new feed (`https://charliek.github.io/shed/appcast.xml`). That release lets existing installs migrate to the new update feed automatically, without a reinstall.
+>
+> After it lands, this repository will be **archived** and stays browsable for history. GitHub Pages stays up, serving the frozen old appcast as a permanent fallback. All future desktop releases ship from the monorepo on shed's version line — desktop jumps from `0.0.x` to `0.8.x+` (a forward version jump, which is safe for Sparkle and apt upgrades).
+
 A native macOS menu-bar application that ties the [shed](https://github.com/charliek/shed)
 toolchain — shed, [shed-extensions](https://github.com/charliek/shed-extensions), and the
 remote-control patterns from
