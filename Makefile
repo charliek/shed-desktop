@@ -46,42 +46,19 @@ core-test:  ## cargo test the Rust core workspace (+ the non-default `rc` featur
 	# (the RcRunner timeout watchdog, the filter-aware list reconcile, slug/argv).
 	cd core && cargo test -p shed-app --features rc
 
-core-lint:  ## cargo clippy the Rust core (deny warnings; excludes GTK; + the `rc` feature)
-	cd core && cargo clippy --workspace --exclude shed-gtk --all-targets -- -D warnings
+core-lint:  ## cargo clippy the Rust core (deny warnings; + the `rc` feature)
+	cd core && cargo clippy --workspace --all-targets -- -D warnings
 	# The default clippy above never compiles the `rc` module (non-default feature).
 	cd core && cargo clippy -p shed-app --features rc --all-targets -- -D warnings
 
 core-fmt:  ## cargo fmt the Rust core
 	cd core && cargo fmt --all
 
-# ---- shed-gtk (Linux client; also builds on macOS via Homebrew GTK) ----
-# shed-gtk is a workspace member but NOT a default member, so the targets above
-# never build GTK. Building it is opt-in. On macOS: `brew install gtk4 libadwaita`.
+# ---- Linux .deb packaging (built from the Tauri client) --------------
 
 DEB_VERSION ?= 0.0.1-dev
 
-.PHONY: gtk-build gtk-run gtk-lint gtk-build-linux deb deb-validate
-gtk-build:  ## Build shed-gtk (Homebrew GTK on macOS; libgtk-4-dev on Linux)
-	cd core && cargo build -p shed-gtk
-
-gtk-run: gtk-build  ## Build + launch shed-gtk (native window on macOS/Linux)
-	cd core && cargo run -p shed-gtk --bin shed-desktop
-
-gtk-lint:  ## clippy shed-gtk (needs GTK dev libs)
-	cd core && cargo clippy -p shed-gtk --all-targets -- -D warnings
-
-gtk-build-linux:  ## Build + clippy shed-gtk on Linux in Docker (ubuntu:24.04 + GTK)
-	docker build -t shed-core-linux:latest - < Dockerfile.linux
-	docker run --rm \
-	  -v "$(CURDIR)/core:/work:ro" \
-	  -v shed-core-linux-target:/target \
-	  -v shed-core-linux-cargo:/usr/local/cargo/registry \
-	  -e CARGO_TARGET_DIR=/target \
-	  -w /work shed-core-linux:latest \
-	  bash -lc 'cargo build -p shed-gtk --locked && \
-	            cargo clippy -p shed-gtk --all-targets --locked -- -D warnings && \
-	            cargo test -p shed-gtk --lib --locked'
-
+.PHONY: deb deb-validate
 deb: tauri-ui-build  ## Build the shed-desktop Tauri .deb in Docker (ubuntu:24.04 + WebKitGTK + nfpm) → out/ (DEB_VERSION=x)
 	# Reuses the render image (WebKitGTK build deps) + installs nfpm. The frontend
 	# bundle (tauri/ui/dist) is built on the host first (tauri-ui-build); the source
@@ -195,7 +172,7 @@ core-linux:  ## Build+test shed-core on Linux in Docker (ubuntu:24.04; ring need
 
 # ---- test -------------------------------------------------------------
 
-.PHONY: test e2e e2e-ci e2e-swift e2e-gtk e2e-tauri m0-gates smoke smoke-real-launch smoke-launch-window
+.PHONY: test e2e e2e-ci e2e-swift e2e-tauri m0-gates smoke smoke-real-launch smoke-launch-window
 test: core  ## swift test (ShedKit unit tests + Rust FFI canary)
 	swift test
 
@@ -211,9 +188,6 @@ e2e-swift: bundle  ## E2E with the Rust core forced off (SHED_DESKTOP_RUST_CORE=
 m0-gates:  ## M0 ship-gates (release bundle): arm64/size/cold-launch + golden cross-backend byte-diff
 	./scripts/bundle.sh release
 	SHED_DESKTOP_SIZE_BUDGET_MB=20 uv run --group test python tools/shedtest/m0_ship_gates.py
-
-e2e-gtk: gtk-build  ## GTK e2e: the shared suite at --target gtk (needs a display; Xvfb on Linux)
-	uv run --group test pytest tools/shedtest --target gtk -q
 
 e2e-tauri: tauri-build  ## Tauri e2e: shared suite + test_tauri at --target tauri (needs a display; Xvfb on Linux)
 	uv run --group test pytest tools/shedtest --target tauri -q

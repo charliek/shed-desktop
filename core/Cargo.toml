@@ -1,19 +1,16 @@
 # shed-core Rust workspace — the shared shed-server protocol client + wire DTOs.
-# Conventions mirror ../roost (workspace, lints, release profile). Consumed by
-# the Swift app via the shed-core-ffi UniFFI wrapper, and (Phase 3) by a GTK app
-# linking shed-core directly.
+# Conventions mirror ../roost (workspace, lints, release profile). Consumed by the
+# Swift app via the shed-core-ffi UniFFI wrapper, and by the Tauri client (its own
+# standalone workspace in ../tauri/src-tauri) linking shed-core + shed-app directly.
 [workspace]
 resolver = "2"
-members = ["shed-core", "shed-core-ffi", "shed-app", "shed-gtk", "shedctl"]
-# The GTK client is a member but NOT a default member: a plain `cargo build` /
-# `cargo test` (and `make core-test`) build shed-core + shed-core-ffi + shed-app +
-# shedctl (shed-app is the UI-free app-logic layer, so it gets default coverage),
-# so the macOS dev loop + CI never need GTK installed. Building shed-gtk is opt-in
-# (`cargo build -p shed-gtk` / `make gtk-build` / `make gtk-run`), which works on
-# Linux and on macOS with Homebrew GTK (`brew install gtk4 libadwaita`).
-# shedctl (the headless Linux CLI driver for shed-gtk's IPC socket) has no GTK
-# dependency, so it IS a default member and gets Mac `cargo test` coverage; the
-# Mac bundle is unaffected (build-core.sh is `-p shed-core-ffi`-scoped).
+members = ["shed-core", "shed-core-ffi", "shed-app", "shedctl"]
+# All members are default members: a plain `cargo build` / `cargo test` (and
+# `make core-test`) build shed-core + shed-core-ffi + shed-app + shedctl. shedctl
+# (the headless Linux CLI driver for the shed-desktop IPC socket) has no GUI-toolkit
+# dependency, so it gets Mac `cargo test` coverage too; the Mac bundle is unaffected
+# (build-core.sh is `-p shed-core-ffi`-scoped). The Tauri client (WebKitGTK) lives
+# in its OWN workspace so its heavy deps never enter this one.
 default-members = ["shed-core", "shed-core-ffi", "shed-app", "shedctl"]
 
 [workspace.package]

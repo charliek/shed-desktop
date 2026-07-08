@@ -20,7 +20,7 @@ serde_json = { workspace = true }
 # dependency-light).
 libc = "0.2"
 # base64-decode the screenshot op's `result.png` before writing the PNG to --out
-# (the same wire shape shed-gtk's app.screenshot emits).
+# (the same wire shape the shed-desktop app's app.screenshot emits).
 base64 = "0.22"
 
 [dev-dependencies]

@@ -34,9 +34,9 @@ libc = "0.2"
 
 [features]
 # The Remote-Control layer (`rc.rs`): process/SSH spawning via `tokio/process`.
-# NON-default so `shed-gtk` (which links `shed-app` featureless, and has no RC
-# pane) never compiles it; the Tauri client enables it. `make test` must pass
-# `--features rc` or the rc unit tests are cfg'd out.
+# NON-default so a featureless consumer of `shed-app` (e.g. the mac FFI build,
+# which has no RC pane) never compiles it; the Tauri client enables it. `make test`
+# must pass `--features rc` or the rc unit tests are cfg'd out.
 rc = ["tokio/process"]
 
 [dev-dependencies]
