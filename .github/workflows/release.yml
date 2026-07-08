@@ -31,13 +31,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify tag == VERSION == core/Cargo.toml
+      - name: Verify tag == VERSION == core/Cargo.toml == tauri/src-tauri/Cargo.toml
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           FILE="$(tr -d '[:space:]' < VERSION)"
           CARGO="$(grep -m1 '^version = ' core/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          if [ "$TAG" != "$FILE" ] || [ "$TAG" != "$CARGO" ]; then
-            echo "::error::version mismatch — tag=$TAG VERSION=$FILE core/Cargo.toml=$CARGO" >&2
+          # The Tauri client (the shipped Linux .deb's source) is a standalone
+          # workspace bumped by update-version.sh; keep it in the gate so a stale
+          # tauri version can't ship a mismatched .deb.
+          TAURI="$(grep -m1 '^version = ' tauri/src-tauri/Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ "$TAG" != "$FILE" ] || [ "$TAG" != "$CARGO" ] || [ "$TAG" != "$TAURI" ]; then
+            echo "::error::version mismatch — tag=$TAG VERSION=$FILE core/Cargo.toml=$CARGO tauri/src-tauri/Cargo.toml=$TAURI" >&2
             exit 1
           fi
       - name: Create the release if absent (idempotent)
@@ -239,8 +243,18 @@ jobs:
       - uses: actions/checkout@v4
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal
-      - name: GTK dev libs
-        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+      - name: Tauri (WebKitGTK) build deps
+        # The shipped .deb is now built from the Tauri client (React/WebKitGTK) on
+        # the shared shed-core, not shed-gtk — so its build deps, not GTK4/libadwaita.
+        run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libayatana-appindicator3-dev
+      - name: Node (the Vite/React frontend bundle)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tauri/ui/package-lock.json
+      - name: Frontend bundle (generate_context! needs tauri/ui/dist)
+        run: cd tauri/ui && npm ci && npm run build
       - name: Install nfpm (pinned)
         run: |
           NFPM_VERSION=2.46.3
@@ -262,6 +276,12 @@ jobs:
           fi
       - name: Build the .deb
         run: ./linux/scripts/build-deb.sh "${GITHUB_REF_NAME#v}"
+      - name: Install-validate the .deb (per arch)
+        # CI only builds/validates amd64; the release matrix is where the arm64 .deb
+        # is built AND install-validated in a clean container (launch on WebKitGTK →
+        # identify=tauri, bundled shedctl drives it, polkit action present) — the
+        # arm64 runtime-dep proof. Docker is available on the GitHub ubuntu runners.
+        run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-desktop_*.deb | head -1)"
       - name: Upload the .deb to the Release
         env:
           GH_TOKEN: ${{ github.token }}
