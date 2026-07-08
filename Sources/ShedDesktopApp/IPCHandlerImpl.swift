@@ -99,6 +99,10 @@ actor IPCHandlerImpl: IPCHandler {
         case "create.status":
             let p = try decodeParams(params, as: CreateStatusParams.self, expected: ["create_id"])
             return try await encodeResult(createStatusOp(id: p.createID))
+        case "create.cancel":
+            let p = try decodeParams(params, as: CreateStatusParams.self, expected: ["create_id"])
+            try await createCancelOp(id: p.createID)
+            return emptyResult
         case "terminal.preview":
             let p = try decodeParams(params, as: TerminalParams.self, expected: ["host", "shed", "session"])
             return try await encodeResult(terminalPreviewOp(p))
@@ -182,7 +186,8 @@ actor IPCHandlerImpl: IPCHandler {
             uiVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0",
             protocolVersion: ipcProtocolVersion,
             testMode: ShedBackend.shared.testMode,
-            mockBaseURL: ShedBackend.shared.mockBaseURL)
+            mockBaseURL: ShedBackend.shared.mockBaseURL,
+            core: ShedBackend.shared.rustCore ? "rust" : "swift")
     }
 
     @MainActor private func windowMetricsOp() throws -> WindowMetrics { try uiBridge().windowMetrics() }
@@ -225,6 +230,10 @@ actor IPCHandlerImpl: IPCHandler {
             throw IPCHandlerError.notFound("no create with id \(id)")
         }
         return status
+    }
+
+    @MainActor private func createCancelOp(id: String) throws {
+        try uiBridge().cancelCreate(id: id)
     }
 
     @MainActor private func terminalPreviewOp(_ p: TerminalParams) throws -> TerminalPreviewResult {
@@ -526,6 +535,7 @@ private struct IdentifyResult: Encodable, Sendable {
     let protocolVersion: UInt32
     let testMode: Bool
     let mockBaseURL: String?
+    let core: String
     enum CodingKeys: String, CodingKey {
         case socketPath = "socket_path"
         case pid
@@ -535,6 +545,7 @@ private struct IdentifyResult: Encodable, Sendable {
         case protocolVersion = "protocol_version"
         case testMode = "test_mode"
         case mockBaseURL = "mock_base_url"
+        case core
     }
 }
 

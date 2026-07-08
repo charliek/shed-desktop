@@ -25,6 +25,11 @@ final class AppModel: NSObject, UiBridge {
     private var clients: [String: ShedServerClient] = [:]
     private var defaultServerName: String?
     private var creates: [String: CreateProgress] = [:]
+    // The task driving each in-flight create's SSE stream, retained so
+    // `cancelCreate` can cancel it (propagating the cancel through the backend).
+    // A create's handle is present only while its task runs; its absence is the
+    // signal `updateCreate` uses to not resurrect a cancelled entry.
+    private var createTasks: [String: Task<Void, Never>] = [:]
     /// In-memory RC session table, keyed by the composite `RcSession.id`
     /// (`host/shed/slug`) so identical slugs across sheds don't collide.
     private var rcTable: [String: RcSession] = [:]
@@ -394,7 +399,11 @@ final class AppModel: NSObject, UiBridge {
             clients[entry.name] = ShedServerClient(
                 baseURL: baseURL, serverName: entry.name,
                 token: entry.controlToken, tlsCertFingerprint: pin,
-                tokenProvider: provider)
+                tokenProvider: provider, useRustCore: ShedBackend.shared.rustCore,
+                // The Rust path's control-token minter uses the same host agent as
+                // the Swift provider — dropped in test mode (mock is tokenless), so
+                // e2e stays hermetic.
+                hostAgent: mockBase == nil ? hostAgent : nil)
             diag?.log(.info, "config", "resolved server", [
                 ("server", entry.name),
                 ("endpoint", baseURL.absoluteString),
@@ -854,7 +863,7 @@ final class AppModel: NSObject, UiBridge {
         creates[id] = progress
         state.activeCreate = progress
 
-        Task { [weak self] in
+        createTasks[id] = Task { [weak self] in
             do {
                 for try await event in client.createShed(request) {
                     guard let self else { return }
@@ -874,17 +883,29 @@ final class AppModel: NSObject, UiBridge {
                 progress.error = "\(error)"
                 self?.updateCreate(progress)
             }
+            // Drop only the task handle: the final progress stays in `creates`
+            // so a post-completion createStatus still returns it.
+            self?.createTasks[id] = nil
         }
         return id
     }
 
     private func updateCreate(_ progress: CreateProgress) {
+        // A cancelled create drops its task handle first; don't let an already
+        // in-flight event resurrect the store entry cancelCreate just removed.
+        guard createTasks[progress.id] != nil else { return }
         creates[progress.id] = progress
         if state.activeCreate?.id == progress.id { state.activeCreate = progress }
     }
 
     func createStatus(id: String) -> CreateProgress? {
         creates[id]
+    }
+
+    func cancelCreate(id: String) {
+        createTasks.removeValue(forKey: id)?.cancel()
+        creates[id] = nil
+        if state.activeCreate?.id == id { state.activeCreate = nil }
     }
 
     func terminalCommand(shed: String, host: String?, session: String?) throws -> TerminalCommand {

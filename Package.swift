@@ -35,10 +35,29 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
+        // Rust protocol core (Phase 1). ShedCoreFFI is the static Rust library
+        // (xcframework); ShedRustCore is the generated UniFFI Swift that links it
+        // (named to avoid colliding with the generated `ShedCore` client type).
+        // Both live under core/artifacts/ (gitignored), produced by
+        // scripts/build-core.sh — run `make core` before a bare `swift build`.
+        .binaryTarget(
+            name: "ShedCoreFFI",
+            path: "core/artifacts/ShedCoreFFI.xcframework"
+        ),
+        .target(
+            name: "ShedRustCore",
+            dependencies: ["ShedCoreFFI"],
+            path: "core/artifacts/ShedCoreSwift",
+            // The generated UniFFI bindings aren't Swift-6-strict-concurrency
+            // clean; the FFI boundary is exercised under strict concurrency from
+            // ShedKit + the canary test instead.
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // Core: no SwiftUI. Foundation + AppKit (the latter only for
         // NSBitmapImageRep in Screenshot and NSWindow types in UiBridge).
         .target(
             name: "ShedKit",
+            dependencies: ["ShedRustCore"],
             path: "Sources/ShedKit"
         ),
         // SwiftUI views + the AppState view-model.
@@ -72,7 +91,7 @@ let package = Package(
         ),
         .testTarget(
             name: "ShedKitTests",
-            dependencies: ["ShedKit"],
+            dependencies: ["ShedKit", "ShedRustCore"],
             path: "Tests/ShedKitTests"
         ),
     ]

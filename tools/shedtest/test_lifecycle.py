@@ -6,6 +6,10 @@ from __future__ import annotations
 import pytest
 from client import ShedError
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_stop_then_start(shed):
     shed.refresh()

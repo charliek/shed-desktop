@@ -11,6 +11,10 @@ Covers, end to end against the hermetic mock:
 
 from __future__ import annotations
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_images_list_exposes_alias_and_default(shed):
     hosts = shed.images_list()

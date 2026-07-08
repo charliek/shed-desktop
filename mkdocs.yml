@@ -93,6 +93,7 @@ nav:
       - First Run: getting-started/first-run.md
   - Reference:
       - Architecture: reference/architecture.md
+      - Rust core: reference/rust-core.md
       - Configuration: reference/configuration.md
       - Credential approvals: reference/approvals.md
       - RC sessions: reference/rc-sessions.md

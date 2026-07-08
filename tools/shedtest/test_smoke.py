@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from _marks import mac_only
+
+pytestmark = mac_only
+
 
 def test_identify_is_hermetic(shed, mock):
     info = shed.identify()

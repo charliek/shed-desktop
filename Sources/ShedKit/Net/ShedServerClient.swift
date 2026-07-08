@@ -38,11 +38,17 @@ public struct ShedServerClient: Sendable {
     // by the host agent (token.get) and re-minted on a 401. nil → the static
     // `token` String above is used as-is (open-mode / pre-bootstrap servers).
     private let tokenProvider: ControlTokenProvider?
-    // Set when the client is misconfigured (a TLS pin on a non-https URL); every
-    // request throws it instead of sending unpinned plaintext.
+    // Set when the client is misconfigured — a TLS pin on a non-https URL, or
+    // (when the Rust core is the default) a failure to construct the Rust
+    // adapter. Every request throws it instead of sending unpinned plaintext or
+    // silently downgrading to the Swift path.
     private let configError: ShedClientError?
+    // When SHED_DESKTOP_RUST_CORE is on, read ops delegate to the Rust shed-core
+    // (nil otherwise → the URLSession path below). M2: reads only; write/create +
+    // the token/pin paths stay Swift until M3/M4.
+    private let rustAdapter: RustShedCoreAdapter?
 
-    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil) {
+    public init(baseURL: URL, serverName: String, token: String = "", tlsCertFingerprint: String = "", tokenProvider: ControlTokenProvider? = nil, session: URLSession? = nil, useRustCore: Bool = false, hostAgent: HostAgentClient? = nil) {
         self.baseURL = baseURL
         self.serverName = serverName
         self.token = token
@@ -50,24 +56,48 @@ public struct ShedServerClient: Sendable {
 
         // The injected `session` (the hermetic test mock) is honored only on the
         // unpinned path; a pinned build always owns its delegate-backed session.
+        let resolvedSession: URLSession
+        var configError: ShedClientError?
         if tlsCertFingerprint.isEmpty {
-            self.session = session ?? .shared
-            self.configError = nil
+            resolvedSession = session ?? .shared
         } else if baseURL.scheme?.lowercased() == "https" {
             // Pinned TLS: a delegate-backed session verifies the leaf cert
             // against the fingerprint. The session retains its delegate until
             // invalidated; these clients live for the app session, which is
             // acceptable for the handful of configured hosts.
             let delegate = PinningSessionDelegate(fingerprint: tlsCertFingerprint)
-            self.session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
-            self.configError = nil
+            resolvedSession = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         } else {
             // Fail closed: a pin only protects https, so refuse rather than
             // silently send unpinned plaintext (mirrors the Go/sdk contract).
-            self.session = session ?? .shared
-            self.configError = .transport(
+            resolvedSession = session ?? .shared
+            configError = .transport(
                 "TLS pin configured for a non-https URL \(baseURL.absoluteString); refusing to send unpinned plaintext")
         }
+        self.session = resolvedSession
+
+        // Read/lifecycle/create ops go through the Rust core when it's the active
+        // backend (default-on since M0). Built from the same base URL + static
+        // token + pin + host-agent minter. When the core is the default, a
+        // construction failure must fail this host LOUDLY: falling back to the
+        // Swift URLSession path would let `identify.core=rust` mask a silent
+        // per-host Swift downgrade. (A pin-on-non-https misconfig already fails
+        // closed above, so we don't also build the adapter in that case.)
+        var adapter: RustShedCoreAdapter?
+        if useRustCore && configError == nil {
+            do {
+                adapter = try RustShedCoreAdapter(
+                    baseURL: baseURL.absoluteString, serverName: serverName,
+                    token: token, pin: tlsCertFingerprint.isEmpty ? nil : tlsCertFingerprint,
+                    hostAgent: hostAgent)
+            } catch {
+                configError = .transport(
+                    "Rust shed-core adapter failed to construct for host \(serverName): \(error); "
+                    + "refusing to silently fall back to Swift (set SHED_DESKTOP_RUST_CORE=0 to force it)")
+            }
+        }
+        self.configError = configError
+        self.rustAdapter = adapter
     }
 
     /// The bearer token to send. For a provider-backed (secure) client the host
@@ -92,6 +122,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/info`.
     public func info() async throws -> ServerInfo {
+        if let rustAdapter { return try await rustAdapter.info() }
         let data = try await get("/api/info")
         do {
             return try JSONDecoder().decode(ServerInfo.self, from: data)
@@ -104,6 +135,7 @@ public struct ShedServerClient: Sendable {
     /// `{"sheds": null}` (the real empty shape) decodes to []. The server
     /// omits `host`; the `Shed` decoder tolerates that and we stamp it here.
     public func listSheds() async throws -> [Shed] {
+        if let rustAdapter { return try await rustAdapter.listSheds() }
         let data = try await get("/api/sheds")
         do {
             let wrapper = try JSONDecoder().decode(ShedListWire.self, from: data)
@@ -115,6 +147,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/system/df` → this server's disk usage (M7).
     public func systemDF() async throws -> SystemDiskUsage {
+        if let rustAdapter { return try await rustAdapter.systemDF() }
         let data = try await get("/api/system/df")
         do {
             return try JSONDecoder().decode(SystemDiskUsage.self, from: data)
@@ -125,6 +158,7 @@ public struct ShedServerClient: Sendable {
 
     /// `GET /api/images` → this server's installed images (for the picker).
     public func listImages() async throws -> [ShedImage] {
+        if let rustAdapter { return try await rustAdapter.listImages() }
         let data = try await get("/api/images")
         do {
             return try JSONDecoder().decode(ImageListWire.self, from: data).images ?? []
@@ -136,6 +170,7 @@ public struct ShedServerClient: Sendable {
     /// `GET /api/egress/profiles` → this server's egress profiles (config
     /// baseline + user store), each tagged with its source. Read-only.
     public func egressProfiles() async throws -> [EgressProfileInfo] {
+        if let rustAdapter { return try await rustAdapter.egressProfiles() }
         let data = try await get("/api/egress/profiles")
         do {
             return try JSONDecoder().decode([EgressProfileInfo].self, from: data)
@@ -146,15 +181,28 @@ public struct ShedServerClient: Sendable {
 
     // MARK: - lifecycle (M1)
 
-    public func start(name: String) async throws { try await send("POST", "/api/sheds/\(name)/start") }
-    public func stop(name: String) async throws { try await send("POST", "/api/sheds/\(name)/stop") }
-    public func reset(name: String) async throws { try await send("POST", "/api/sheds/\(name)/reset") }
-    public func delete(name: String) async throws { try await send("DELETE", "/api/sheds/\(name)") }
+    public func start(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.start(name: name) }
+        try await send("POST", "/api/sheds/\(name)/start")
+    }
+    public func stop(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.stop(name: name) }
+        try await send("POST", "/api/sheds/\(name)/stop")
+    }
+    public func reset(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.reset(name: name) }
+        try await send("POST", "/api/sheds/\(name)/reset")
+    }
+    public func delete(name: String) async throws {
+        if let rustAdapter { return try await rustAdapter.delete(name: name) }
+        try await send("DELETE", "/api/sheds/\(name)")
+    }
 
     /// `POST /api/sheds` with `Accept: text/event-stream`, surfaced as a
     /// stream of create events (`progress` messages then a final shed). The
     /// producer parses the SSE bytes; the caller consumes on its own actor.
     public func createShed(_ body: CreateShedRequest) -> AsyncThrowingStream<CreateEvent, Error> {
+        if let rustAdapter { return rustAdapter.createShed(body) }
         let baseURL = self.baseURL
         let serverName = self.serverName
         let session = self.session

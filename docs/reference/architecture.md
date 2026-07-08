@@ -6,9 +6,17 @@ remote-control agents, and brokers the credential-approval gate. It holds no cre
 it coordinates the processes that do.
 
 It is built as a SwiftUI app with a deliberate **core/UI split**: all I/O and logic live in
-a UI-free core (`ShedKit`) so they're unit-testable without a running app, and so a future
-Linux port can reuse the core. A first-class design goal is that the app is **drivable and
-observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
+a UI-free core (`ShedKit`) so they're unit-testable without a running app. The shed-server
+protocol layer (HTTP/SSE, decoding, control-token auth, TLS pinning) is extracted into a
+shared **Rust core** (`shed-core`) that backs both this macOS app and the **Tauri cross-platform
+client** (`tauri/`) without re-implementation — see [Rust core](rust-core.md). The Tauri client
+is built on the same core — plus **`shed-app`**, the UI-free app-logic layer the clients share —
+and is the **shipped Linux client** (WebKitGTK). It ships as the `shed-desktop` binary/package,
+built from `tauri/src-tauri` (bin `shed-desktop-tauri` → `/usr/bin/shed-desktop`) in an nfpm
+`.deb` — with a headless `shedctl` and the polkit action alongside — via `charliek/apt-charliek`
+(`apt install shed-desktop`). The Rust core is the macOS **default**; `SHED_DESKTOP_RUST_CORE=0`
+forces the legacy Swift path (a rollback escape hatch). A first-class design goal is that the app is
+**drivable and observable by an automated agent** over an IPC socket — see [IPC](ipc.md).
 
 ## Why a native app
 
@@ -146,8 +154,12 @@ newline-JSON socket at `~/Library/Caches/ShedDesktop/shed-desktop.sock` (mode `0
 a sibling `.lock` for single-instance). Both `shedctl` and the hermetic pytest harness speak
 this exact protocol — listing state, navigating panes, driving lifecycle/approvals, and
 capturing in-process PNG screenshots. This is the seam that lets every change be verified by
-driving the real app, not by asking a human to click. See [IPC](ipc.md) and
-[shedctl](cli.md).
+driving the real app, not by asking a human to click. The Tauri client (the shipped Linux
+client) speaks the same protocol over `$XDG_RUNTIME_DIR/shed-tauri.sock` (with a second launch
+handed off via an `app.activate` op), so **one** `tools/shedtest --target mac|tauri` harness
+drives both clients — Mac-only ops stay Mac-gated. Note the two `shedctl`s: the Swift
+`Sources/shedctl` bundled in the macOS `.app`, and the Rust `core/shedctl` shipped in the Linux
+`.deb` — same name, different platforms. See [IPC](ipc.md) and [shedctl](cli.md).
 
 ## Windows
 

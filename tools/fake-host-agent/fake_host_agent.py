@@ -34,10 +34,21 @@ class FakeHostAgent:
         self._hello_seen = threading.Event()
         self._thread: threading.Thread | None = None
         self._running = False
+        self.hello_count = 0
         # Which namespaces the agent delegates to shed-desktop (advertised in
         # hello_ack). Default to all three so the app shows every approval
         # prefs section. Set before the app connects to change it.
         self.gate_namespaces = ["ssh-agent", "aws-credentials", "docker-credentials"]
+        # CONTROL-token minting (token.get -> token.response). Modes:
+        #   "ok"     -> reply with a fresh deterministic token (fake-tok-N)
+        #   "error"  -> reply fail-closed (error set, no token)
+        #   "silent" -> never reply (exercises the client's request timeout)
+        #   "drop"   -> drop the connection instead of replying (F3/reconnect)
+        self.token_mode = "ok"
+        self.token_error = "mint failed"
+        self.token_expires_in_s: float | None = None  # None => no expires_at
+        self._token_seq = 0
+        self.token_requests: list[dict] = []
 
     # -- lifecycle --------------------------------------------------------
     def start(self) -> None:
@@ -54,6 +65,31 @@ class FakeHostAgent:
             try:
                 if s:
                     s.close()
+            except OSError:
+                pass
+
+    def drop_connection(self) -> None:
+        """Close the live connection but keep the listener up, so the client's
+        backoff-reconnect is re-accepted. Drives the fail-closed-on-disconnect
+        (F3) + reconnect scenarios. Use `hello_count`/`wait_hello_count` to
+        observe the client re-handshake.
+
+        `shutdown(SHUT_RDWR)` BEFORE `close()` is load-bearing: `_read_loop` is
+        blocked in `recv()` on this fd, and on Linux a bare `close()` from another
+        thread does NOT wake that recv or FIN the peer — so the client keeps a
+        "live" writer for its whole request-TTL and only notices the drop when it
+        next writes (a real disconnect the harness must model faithfully). shutdown
+        delivers the FIN synchronously, so the client's read sees EOF at once."""
+        with self._lock:
+            conn = self._conn
+            self._conn = None
+        if conn:
+            try:
+                conn.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                conn.close()
             except OSError:
                 pass
 
@@ -96,12 +132,42 @@ class FakeHostAgent:
                 "request_timeout_ms": 25000, "accepted": True,
             }
             self._send(conn, ack)
+            with self._lock:
+                self.hello_count += 1
             self._hello_seen.set()
         elif t == "approval_response":
             with self._lock:
                 self._responses[msg.get("request_id", "")] = msg
+        elif t == "token.get":
+            with self._lock:
+                self.token_requests.append(msg)
+            self._handle_token_get(conn, msg)
         elif t == "pong":
             pass
+
+    def _handle_token_get(self, conn: socket.socket, msg: dict) -> None:
+        mode = self.token_mode
+        if mode == "silent":
+            return  # no reply — the client's per-request timeout fires
+        if mode == "drop":
+            self.drop_connection()
+            return
+        resp = {
+            "v": 2, "type": "token.response", "id": str(uuid.uuid4()), "ts": _now_iso(),
+            "in_reply_to": msg.get("id", ""), "server": msg.get("server", ""),
+        }
+        if mode == "error":
+            resp["error"] = self.token_error  # fail closed: error set, no token
+        else:  # "ok"
+            with self._lock:
+                self._token_seq += 1
+                n = self._token_seq
+            resp["token"] = f"fake-tok-{n}"
+            if self.token_expires_in_s is not None:
+                resp["expires_at"] = (
+                    datetime.now(timezone.utc) + timedelta(seconds=self.token_expires_in_s)
+                ).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self._send(conn, resp)
 
     def _send(self, conn: socket.socket, obj: dict) -> None:
         try:
@@ -118,6 +184,27 @@ class FakeHostAgent:
     # -- test API ---------------------------------------------------------
     def wait_connected(self, timeout: float = 10.0) -> bool:
         return self._hello_seen.wait(timeout)
+
+    def wait_hello_count(self, n: int, timeout: float = 10.0) -> bool:
+        """Wait until at least `n` hello handshakes have been seen (>=2 proves a
+        reconnect after `drop_connection`)."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if self.hello_count >= n:
+                    return True
+            time.sleep(0.05)
+        return False
+
+    def wait_token_requests(self, n: int, timeout: float = 10.0) -> bool:
+        """Wait until at least `n` token.get requests have arrived."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            with self._lock:
+                if len(self.token_requests) >= n:
+                    return True
+            time.sleep(0.05)
+        return False
 
     def emit_request(self, namespace: str, op: str, shed: str, detail: str = "",
                      expires_in_s: float = 25.0, request_id: str | None = None,
