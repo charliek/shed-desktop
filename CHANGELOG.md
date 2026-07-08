@@ -2,6 +2,17 @@
 
 Notable changes to shed-desktop. Older releases (v0.0.1–v0.0.5) predate this file.
 
+## v0.0.14 — 2026-07-08
+
+### Changed
+- **Update feed moved to the shed monorepo.** `SUFeedURL` now points at
+  `https://charliek.github.io/shed/appcast.xml`. This is the final release from the
+  standalone `charliek/shed-desktop` repo — development has moved into
+  [`charliek/shed`](https://github.com/charliek/shed) (under `desktop/` + `crates/`),
+  and all later releases ship from there on shed's version line. Existing installs
+  take this one update through the old feed and are migrated to the new feed with no
+  reinstall. The old GitHub Pages feed keeps serving as a fallback.
+
 ## v0.0.13 — 2026-06-28
 
 ### Changed
