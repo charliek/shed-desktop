@@ -19,25 +19,24 @@ so the same logic backs every client instead of being re-implemented per languag
   `SHED_DESKTOP_RUST_CORE` (off by default), with dual-backend e2e parity. See
   `plans/phase-1-rust-core.md` and [Rust core](reference/rust-core.md).
 - **Phase 2 — prove it across platforms (shipped).** Made the Rust core the **default**
-  on macOS, got `shed-core` building/testing on **Linux**, and stood up a **GTK/Linux app**
-  on the same crate — mirroring `../roost`'s rust+gtk toolchain (gtk4-rs + libadwaita, a
-  pytest-over-IPC drivability harness under headless Xvfb, an nfpm `.deb`). The GTK app
-  links `shed-core` directly (no UniFFI — that's Swift-only). `shed-host-agent` stays a
+  on macOS, got `shed-core` building/testing on **Linux**, and stood up a first **GTK/Linux
+  app** on the same crate — mirroring `../roost`'s rust+gtk toolchain (a pytest-over-IPC
+  drivability harness, an nfpm `.deb`). That GTK client proved the architecture and has since
+  been **retired** in favor of the Tauri client (below). `shed-host-agent` stays a
   **separate** process on both platforms; it already runs on Linux, so nothing is bundled or
   supervised. See `plans/phase-2-rust-clients.md`.
 - **Phase 3 — close the backlog (shipped).** Before the next direction, the enhancements
   backlog Phase 2 accrued is closed out: the `shed-desktop` `.deb` now **ships** via
   `charliek/apt-charliek` (end users `apt install shed-desktop`), with a headless `shedctl`
   bundled alongside; the macOS and Linux functional suites are unified into one
-  `tools/shedtest --target mac|gtk` harness; GTK gained single-instance handoff (an
-  `app.activate` IPC op) and parallel multi-host fetches; and an adversarial coverage pass
-  hardened all three surfaces. See `plans/phase-3-enhancements.md`.
-- **A real cross-platform client (Tauri) — Phases A + B merged; C in progress.** A Tauri desktop client on the
+  `tools/shedtest --target mac|tauri` harness; and an adversarial coverage pass hardened all
+  surfaces. See `plans/phase-3-enhancements.md`.
+- **A real cross-platform client (Tauri) — the shipped Linux client.** A Tauri desktop client on the
   same core, built to **full Mac↔Linux feature parity** (except egress). Tauri's backend *is* Rust, so
   `shed-core` is a direct dependency and one web frontend covers desktop now (mobile later); it runs on
   macOS (WKWebView, a UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target). The
-  GTK MVP proved the architecture; this makes Linux a *real product* and, if it lands, **replaces the GTK
-  client** as the shipped Linux app. Panel-reviewed, one PR per phase:
+  earlier GTK MVP proved the architecture; the Tauri client makes Linux a *real product* and has now
+  **replaced the GTK client** as the shipped Linux `.deb`. Panel-reviewed, one PR per phase:
   - **Phase A — foundation + read/lifecycle/create surfaces (shipped, PR #27 → `feat/rust-core`).** The
     drivable IPC spine + React/Vite/Tailwind shell + WebKitGTK render gate; the shared `core/shed-app`
     (Backend) extracted from GTK; live **Sheds** (lifecycle + create-SSE + open-in-terminal), **System**
@@ -87,9 +86,8 @@ of key-holding Go, needs a Rust `shed/sdk` that doesn't exist yet, and would rev
   prompt fatigue. See [Credential approvals](reference/approvals.md).
 - **Auto-approve with constraints** — e.g. docker limited to a registry allowlist.
 - **Approvals on the Linux client — DONE (Tauri Phase B, merged).** The Mac approval spine was ported into
-  the shared Rust core (`shed-core`/`shed-app`), so the **Tauri** client shows + gates SSH approvals on
-  Linux (polkit) and macOS, with control-token minting. The **GTK** approval pane (roadmap M6) is still
-  deferred — the key-free spine is shared, so GTK just needs its pane. See `plans/tauri-phase-b.md`.
+  the shared Rust core (`shed-core`/`shed-app`), so the **Tauri** client (the shipped Linux client) shows +
+  gates SSH approvals on Linux (polkit) and macOS, with control-token minting. See `plans/tauri-phase-b.md`.
 
 ## Broader control surface
 
@@ -105,14 +103,15 @@ independently useful:
 ## Distribution
 
 - **DMG (macOS) + `.deb` (Linux).** The macOS app ships a Developer-ID-signed, notarized DMG
-  with an EdDSA-signed Sparkle appcast. The GTK/Linux client **ships** as the `shed-desktop`
-  nfpm `.deb` (built per-arch — amd64 + arm64 — on tag, with a headless `shedctl` bundled)
-  via `charliek/apt-charliek`, so end users `apt install shed-desktop`. One `git tag vX.Y.Z`
-  cuts both — each platform a thin native shell over the one Rust core. See `RELEASING.md`. The shipped
-  Linux `.deb` will **flip from the GTK client to the Tauri client** once Phase C's *flip-ready* bar
-  is green (updater, notarization, `.deb` repackaging, polkit policy — see `plans/tauri-phase-c.md`) —
-  a gated packaging transition (the `.deb` gains a WebKitGTK runtime dep; `plans/tauri-desktop.md`
-  Phase C).
+  with an EdDSA-signed Sparkle appcast. The Linux client **ships** as the `shed-desktop`
+  nfpm `.deb`, now built from the **Tauri** client (`tauri/src-tauri`, bin `shed-desktop-tauri`
+  → `/usr/bin/shed-desktop`, via `linux/scripts/build-deb.sh`) per-arch — amd64 + arm64 — on
+  tag, with a headless `shedctl` and the polkit action bundled, via `charliek/apt-charliek`,
+  so end users `apt install shed-desktop`. The `.deb` declares its WebKitGTK runtime deps
+  (`libwebkit2gtk-4.1-0`, `libgtk-3-0`, `libayatana-appindicator3-1`, `librsvg2-2`,
+  `libsoup-3.0-0`, recommends `polkitd`). One `git tag vX.Y.Z` cuts both — the macOS app a
+  thin Swift shell and the Linux app a Tauri/WebKitGTK shell, each over the one Rust core.
+  See `RELEASING.md`.
 
 ## Larger bets
 

@@ -23,20 +23,19 @@ batched "delete-the-Swift-path" cleanups live in `plans/phase-4-rust-core-only.m
 | Item | Value | Effort | Description |
 |---|---|---|---|
 | Release-bundle size gate in CI | Low | S | Today only `make m0-gates` enforces release size (pre-ship); fold a release-bundle size check into per-PR CI. |
-| Snapshot-cache the GTK test box | Low | S | Lower priority now that Mac-native GTK is the fast dev loop. |
 | Harden the flaky Swift-fallback e2e leg | Med | S | The `SHED_DESKTOP_RUST_CORE=0` leg occasionally flakes under CI load; resolves when that path is removed in Phase 4. |
 
-## GTK / Linux client
+## Tauri / Linux client
 
 | Item | Value | Effort | Description |
 |---|---|---|---|
-| Native-Linux test skill | Low | S | A shed-desktop analog of roost's `popos-test` (run the GTK suite directly on a Linux box, no shed). |
+| Native-Linux test skill | Low | S | A shed-desktop analog of roost's `popos-test` (run the Tauri suite directly on a Linux box, no shed). |
 
 ## Testing (P3.7 audit follow-ups)
 
 | Item | Value | Effort | Description |
 |---|---|---|---|
-| Oversized/malformed IPC frame test | Med | M | Target-divergent: mac 16 MiB / parse-error vs gtk 1 MiB / `bad_request`; needs raw-socket harness plumbing. |
+| Oversized/malformed IPC frame test | Med | M | Target-divergent: mac 16 MiB / parse-error vs the Linux client's 1 MiB / `bad_request`; needs raw-socket harness plumbing. |
 | `dashboard.dump` before first render → `[]` | Low | S | Racy — no deterministic pre-render signal to wait on. |
 | `single_instance` Io-branch + `XDG_RUNTIME_DIR`-unset fallback | Low | S | Hard to trigger a non-`WouldBlock` flock error deterministically. |
 | create stream does-not-401-retry assertion | Low | S | Pin the no-downgrade guarantee (create mints once, never retries on 401). |

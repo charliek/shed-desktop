@@ -2,13 +2,14 @@
 
 The shed-server protocol client — HTTP + SSE, control-token auth, TLS pinning,
 and the wire DTOs — lives in a shared Rust core under `core/`, so the same logic
-backs both the macOS app and the GTK/Linux client (`shed-gtk`) today (Flutter
-later) without being re-implemented per language. See `plans/phase-1-rust-core.md`
+backs both the macOS Swift app and the **Tauri cross-platform client** (the shipped
+Linux client) without being re-implemented per language. See `plans/phase-1-rust-core.md`
 and `plans/phase-2-rust-clients.md` for the plans + panel reviews.
 
 ## Layout
 
-A cargo workspace under `core/` (conventions mirror `../roost`):
+A cargo workspace under `core/` (conventions mirror `../roost`) — its members
+(`shed-core`, `shed-core-ffi`, `shed-app`, `shedctl`) are all default-members:
 
 - **`shed-core`** — a *pure* Rust lib (no UniFFI): wire DTOs + serde decoders
   (`models.rs`), the reqwest(rustls) client (`http.rs`), the SSE parser
@@ -16,30 +17,28 @@ A cargo workspace under `core/` (conventions mirror `../roost`):
   (`token.rs`), plus a `config` parser and a pull-based `create` orchestration
   store — and now **`rc.rs`** (pure Remote-Control: the pane classifier, the
   `shed-ext-rc` + non-interactive SSH argv builders, and the wire DTOs). The Linux
-  clients (`shed-gtk`, `shedctl`) link this crate directly (no UniFFI).
+  clients (the Tauri app, `shedctl`) link this crate directly (no UniFFI).
 - **`shed-core-ffi`** — a thin UniFFI wrapper (`crate-type = ["staticlib"]`)
   exposing a `ShedCore` object + records to Swift. `scripts/build-core.sh` builds
   it, runs `uniffi-bindgen`, and assembles a **static** `ShedCoreFFI.xcframework`
   linked into the app's Mach-O — no new dylib, so the release
   signing/notarization path is unaffected.
 - **`shed-app`** — the UI-free app-logic layer (`Backend`), a workspace
-  default-member; consumed by `shed-gtk` and (as a cross-workspace path dep) the
-  Tauri client. Holds the **`RcRunner` portability seam** (`rc.rs`, behind the
+  default-member; consumed by the Tauri client (as a cross-workspace path dep).
+  Holds the **`RcRunner` portability seam** (`rc.rs`, behind the
   non-default `rc = ["tokio/process"]` feature) — the trait where a future mobile
   in-process-SSH runner replaces the desktop subprocess runner, so one
   `RcService` serves every frontend.
-- **`shed-gtk`** — the GTK4/libadwaita **Linux client**. Its `[[bin]]` is renamed to
-  **`shed-desktop`** — the shipped Linux binary and the `.deb` package name (the crate keeps
-  the name `shed-gtk`; the socket/env stay `SHED_GTK_*`). A second launch hands off to the
-  running instance via an `app.activate` IPC op guarded by a single-instance flock. Excluded
-  from `default-members`, so the Mac build never touches GTK.
-- **`shedctl`** — a headless UDS/IPC client (no GTK dep) shipped in the `.deb` alongside
-  `shed-desktop`, mirroring the macOS Swift `shedctl`. It *is* in `default-members`, so `make
-  core-test`/`core-lint` cover it on the Mac.
-- **Tauri client** — *not* a `core/` workspace member, but a consumer:
-  `tauri/src-tauri` is its own standalone cargo workspace that takes `shed-core` +
-  `shed-app` as cross-workspace **path deps** (the cross-platform desktop client —
-  see `plans/tauri-phase-{a,b,c}.md`).
+- **`shedctl`** — a headless UDS/IPC client shipped in the `.deb` alongside the Tauri
+  `shed-desktop` binary, mirroring the macOS Swift `shedctl`. It *is* in `default-members`, so
+  `make core-test`/`core-lint` cover it on the Mac.
+- **Tauri client** — *not* a `core/` workspace member, but a consumer and the
+  **shipped Linux client**: `tauri/src-tauri` is its own standalone cargo workspace
+  that takes `shed-core` + `shed-app` as cross-workspace **path deps**. Its `[[bin]]`
+  is **`shed-desktop-tauri`**, installed to `/usr/bin/shed-desktop` in the `.deb`
+  (built via nfpm, `linux/scripts/build-deb.sh`). Runs on macOS (WKWebView, a
+  UI-comparison loop vs the Swift app) and Linux (WebKitGTK, the shipped target) —
+  see `plans/tauri-phase-{a,b,c}.md`.
 
 `make core` builds it; `make build` / `make bundle` / CI build it before any
 SwiftPM step (the `.binaryTarget` path must exist first). The generated artifacts
@@ -90,17 +89,17 @@ Rust changes need `cargo`/`rustup` (the workspace pins the channel in
 Phase 1 (this core) covers the read client, lifecycle, SSE create, TLS pinning,
 and the control-token FSM. Phase 2 (done) made it the macOS default (with a
 golden-JSON cross-backend byte-diff + a size/cold-launch budget), got `shed-core`
-building/testing on **Linux**, hoisted the create orchestration + a `config` parser
-into it, and stood up the **`shed-gtk`** GTK/Linux client on the same crate (see
-`plans/phase-2-rust-clients.md`). Phase 3 (done) shipped the `shed-desktop` `.deb` via
-`charliek/apt-charliek` (`apt install shed-desktop`) with a bundled `shedctl`, unified the
-macOS + Linux functional suites into one `tools/shedtest --target mac|gtk` harness (the
-earlier separate GTK harness retired), and hardened GTK (single-instance handoff, parallel
-multi-host fetches); the release pipeline is `create-release → mac + linux → apt-charliek
-dispatch` (see `RELEASING.md` and `plans/phase-3-enhancements.md`). Deferred to
-`plans/phase-4-rust-core-only.md`: retiring the Swift `URLSession` path + unifying config via
-the FFI. Still deferred: the GTK approval pane (M6) and absorbing/rewriting the credential
-broker in Rust (the final consolidation). A Tauri cross-platform client (`tauri/`) is now
-built on `shed-core` + `shed-app` — Phases A (read/lifecycle/create) + B (the approval spine)
-are merged; Phase C (tray, the Agents/RC pane, mac parity, hardening) is in progress on
-`tauri-phase-c`. See `plans/tauri-phase-{a,b,c}.md`.
+building/testing on **Linux**, and hoisted the create orchestration + a `config` parser
+into it. Phase 3 (done) first shipped a Linux `.deb` via `charliek/apt-charliek`
+(`apt install shed-desktop`) with a bundled `shedctl` and unified the macOS + Linux
+functional suites into one `tools/shedtest` harness; the release pipeline is
+`create-release → mac + linux → apt-charliek dispatch` (see `RELEASING.md`). The
+**Tauri cross-platform client** (`tauri/`), built on `shed-core` + `shed-app`, then
+took over as the **shipped Linux client** — the earlier GTK MVP has been retired and
+the `.deb` is now built from `tauri/src-tauri` (WebKitGTK). It carries lifecycle +
+create, the approval spine (polkit gate + zbus notifier on Linux, Touch-ID on macOS),
+the Agents/RC pane, tray/native-menu, and launch-at-login, driven by the
+`tools/shedtest --target mac|tauri` harness. Deferred to `plans/phase-4-rust-core-only.md`:
+retiring the Swift `URLSession` path + unifying config via the FFI. Still deferred:
+absorbing/rewriting the credential broker in Rust (the final consolidation). See
+`plans/tauri-phase-{a,b,c}.md`.

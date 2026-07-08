@@ -27,14 +27,16 @@ Core/UI split (see `docs/reference/architecture.md`):
 - `Sources/shedctl/` — CLI driver for the socket.
 - `core/` — the shared **Rust core** (a cargo workspace): `shed-core` (pure: HTTP/SSE,
   defensive decoders, control-token FSM, TLS pinning, the `config` parser, the `create`
-  store), `shed-core-ffi` (the UniFFI staticlib the Swift app links — the macOS **default**
-  backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), `shed-gtk` (the
-  GTK4/libadwaita **Linux client** on `shed-core`; its `[[bin]]` is the shipped **`shed-desktop`**
-  binary/package — the crate name stays `shed-gtk`; also runs on macOS via Homebrew GTK), and
-  `shedctl` (a headless UDS/IPC client on `shed-core`, no GTK dep — shipped in the `.deb`).
+  store, the approval spine), `shed-app` (the UI-free app-logic layer — the Backend, RC, and
+  timefmt), `shed-core-ffi` (the UniFFI staticlib the Swift app links — the macOS **default**
+  backend; `SHED_DESKTOP_RUST_CORE=0` forces the legacy Swift path), and `shedctl` (a headless
+  UDS/IPC client on `shed-core`, no GUI-toolkit dep — shipped in the Linux `.deb`, drives the
+  Tauri app's socket). The shipped **Linux client** is the **Tauri** app (`tauri/`, its OWN
+  standalone workspace — see below).
 - `tools/shedtest/` — ONE pytest functional harness + in-process mock shed-server, driving
-  BOTH UIs via `--target mac|gtk` (default `mac`): the mac-only suites gate on the target,
-  the shared suite (`test_shared.py`) + the gtk suite (`test_gtk.py`) run per target.
+  BOTH UIs via `--target mac|tauri` (default `mac`): the mac-only suites gate on the target,
+  the shared suite (`test_shared.py`) runs per target, and `test_tauri.py` is the Tauri-only
+  suite.
 
 The dashboard + menu are AppKit windows hosting SwiftUI (`NSHostingController`/`NSPopover`)
 so the screenshot op has a stable `NSWindow` and show/hide is deterministic.
@@ -56,24 +58,29 @@ The harness is hermetic: it launches the app with `SHED_DESKTOP_TEST_MODE=1` +
 shed-server is touched. `identify` is checked up front to confirm hermeticity. Use
 condition-waits (`wait_until`), never sleeps.
 
-### The GTK/Linux client (`shed-gtk`)
+### The Linux client (Tauri) + the `.deb`
 
-`shed-gtk` is a workspace member but NOT a `default-member`, so the commands above never
-build GTK. Building it is opt-in (`brew install gtk4 libadwaita` on macOS):
+The shipped **Linux** client is the **Tauri** app (`tauri/`, React/Vite/Tailwind on WebKitGTK,
+built on the shared `shed-core` + `shed-app`) — its own standalone cargo workspace, so its
+WebKitGTK/Tauri deps never enter `core`'s. The Linux `.deb` (`shed-desktop`) is built from the
+Tauri binary via nfpm (`linux/scripts/build-deb.sh`); `shedctl` ships alongside. The dedicated
+GTK client (`shed-gtk`) that used to ship the `.deb` has been retired — see
+`plans/tauri-linux-release.md`.
 
 ```bash
-make gtk-run             # build + launch shed-gtk natively (Mac via Homebrew GTK / Linux)
-make e2e-gtk             # hermetic GTK pytest (tools/shedtest --target gtk; needs a display)
+make tauri-run           # build + launch the Tauri client natively (Mac via Homebrew WebKitGTK / Linux)
+make e2e-tauri           # hermetic Tauri pytest (tools/shedtest --target tauri; needs a display)
+make tauri-build-linux   # the WebKitGTK render gate: --target tauri on ubuntu:24.04 / WebKitGTK 2.44 (Docker)
+make tauri-test-linux    # the Tauri crate's Linux-only approval-seam tests (polkit gate; Docker)
 make core-linux          # shed-core cargo test/clippy on Linux (Docker)
-make gtk-build-linux     # shed-gtk build + clippy + lib tests on Linux (Docker)
-make deb-validate        # build the .deb + install-validate in a clean ubuntu:24.04 container
+make deb-validate        # build the Tauri .deb + install-validate in a clean ubuntu:24.04 container
 ```
 
-Linux is the shipped target; the Mac GTK run is a dev / UI-comparison loop (users run the
-Swift app). `shed-gtk` speaks the same JSON IPC (`{id,op,params}`) over
-`$XDG_RUNTIME_DIR/shed-gtk/shed-gtk.sock` (a `/tmp/shed-gtk-<uid>` fallback); its hermeticity
-hooks are `SHED_GTK_TEST_MODE` / `SHED_GTK_MOCK_BASE_URL` / `SHED_GTK_SHED_CONFIG`. Its async
-bridge obeys the tokio↔glib panic-trap rules (`plans/phase-2-rust-clients.md` M2).
+The Tauri app speaks the same JSON IPC (`{id,op,params}`) over `$XDG_RUNTIME_DIR/shed-tauri.sock`
+(a `/tmp/shed-tauri-<uid>/` fallback); its hermeticity hooks are `SHED_TAURI_TEST_MODE` /
+`SHED_TAURI_MOCK_BASE_URL` / `SHED_TAURI_SHED_CONFIG`. **Run `make tauri-build-linux` (the render
+gate) for any shared/Linux change** — the mac WKWebView e2e alone can miss Linux-only breaks. On
+Linux the tray is a native menu (Tauri emits no Linux tray-click events → no popover; expected).
 
 ## Conventions
 
@@ -95,25 +102,27 @@ remote-control agent launcher; the **credential-approval gate** (a Unix socket t
 notifications, and a merged audit feed); the System disk-usage pane; preferences +
 launch-at-login; and Sparkle auto-update (DMG + EdDSA appcast — see `RELEASING.md`).
 
-The shed-server protocol layer is a shared **Rust core** (`shed-core`) — the macOS **default**
-backend (Phase 2) and the base for **`shed-gtk`**, a GTK4/libadwaita Linux client with the same
-lifecycle + create + IPC drivability (`dashboard.dump`/`screenshot`, single-instance handoff via
-`app.activate`), shipped as the **`shed-desktop`** `.deb` (with a headless `shedctl`) via
-`charliek/apt-charliek` — `apt install shed-desktop` (Phase 3; release pipeline
-`create-release → mac + linux → apt-charliek dispatch`, see `RELEASING.md`). See
-`plans/phase-2-rust-clients.md` + `plans/phase-3-enhancements.md` (the GTK approval pane, M6, is
-deferred; the "delete-the-Swift-path" cleanups live in `plans/phase-4-rust-core-only.md`).
+The shed-server protocol layer is a shared **Rust core** (`shed-core` + `shed-app`) — the macOS
+**default** backend and the base for the Tauri client. Both the Swift mac app and the Tauri client
+are Rust-core-backed.
 
-A newer **Tauri** cross-platform client (`tauri/`, React/Vite/Tailwind on the same `shed-core` +
-`shed-app`) is being built toward full Mac↔Linux parity, to eventually **replace both the Swift mac app
-and the GTK `.deb`**. **Phase A** (read/lifecycle/create, PR #27) + **Phase B** (the full credential-approval
-spine — host-agent client, coordinator, audit, minting, the Linux polkit gate + a tauri CI leg; PR #28) are
-**merged** into `feat/rust-core`. **Phase C** (menu-bar/tray, the Agents/RC pane, a macOS Touch-ID gate +
-notifier, spine hardening) is **in progress** on branch `tauri-phase-c` — see `plans/tauri-phase-c.md`
-(its top "Status" section is the pick-up point). The Tauri crate is its OWN cargo workspace
-(`tauri/src-tauri`); its gates are `make e2e-tauri` (mac), `make tauri-build-linux` + `make tauri-test-linux`
-(WebKitGTK render gate — **run it for any shared/Linux change**), guarded per-PR by the CI `tauri-linux` +
-`tauri-mac` legs.
+The **Tauri** cross-platform client (`tauri/`, React/Vite/Tailwind on `shed-core` + `shed-app`) is
+the shipped **Linux** client — the `shed-desktop` `.deb` (with a headless `shedctl`) via
+`charliek/apt-charliek` (`apt install shed-desktop`; release pipeline
+`create-release → mac + linux → apt-charliek dispatch`, see `RELEASING.md`). It has the full
+lifecycle + create + IPC drivability (`dashboard.dump`/`current_pane`/`screenshot`, single-instance
+handoff via `app.activate`), the credential-approval spine (Linux polkit gate + zbus notifier), the
+Agents/RC pane, the tray/native-menu, and launch-at-login. Phases A–C + the design-parity pass are
+merged into `feat/rust-core`; the Tauri crate is its OWN cargo workspace (`tauri/src-tauri`), gated
+by `make e2e-tauri` (mac) + `make tauri-build-linux` + `make tauri-test-linux` (WebKitGTK — **run
+the render gate for any shared/Linux change**) and the CI `tauri-linux` + `tauri-mac` legs.
+
+The dedicated GTK client (`shed-gtk`) that previously shipped the Linux `.deb` has been **retired**
+— the Tauri client replaced it (`plans/tauri-linux-release.md`). The Tauri client is also on track
+to **eventually replace the Swift mac app** once its macOS UX is refined; for now the Swift app
+stays the macOS artifact (DMG + Sparkle). Historical context:
+`plans/phase-2-rust-clients.md` / `plans/phase-3-enhancements.md` / `plans/tauri-phase-c.md`; the
+"delete-the-Swift-path" cleanups live in `plans/phase-4-rust-core-only.md`.
 
 Deferred directions (AWS/Docker gating, sessions/snapshots/images panes, notarization) live
 in `docs/roadmap.md`.

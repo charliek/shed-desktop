@@ -1,9 +1,13 @@
 # Releasing shed-desktop
 
 shed-desktop follows the release-workflows convention. `scripts/release/update-version.sh`
-bumps two manifests in lockstep — the top-level `VERSION` (the macOS marketing version) and
-the Rust workspace's `core/Cargo.toml` (regenerating `core/Cargo.lock`) — so one tag means
-one version across the DMG, the Sparkle appcast, and the Linux `.deb`.
+bumps every source-tree manifest in lockstep — the top-level `VERSION` (the macOS marketing
+version), the Rust workspace's `core/Cargo.toml` (regenerating `core/Cargo.lock`), and the
+**standalone Tauri workspace** (`tauri/src-tauri/Cargo.toml` + `tauri.conf.json`, regenerating
+`tauri/src-tauri/Cargo.lock` — the Linux `.deb` is built `--locked` from it, so a stale lock
+would break the build) — so one tag means one version across the DMG, the Sparkle appcast, and
+the Linux `.deb`. The `create-release` gate verifies `tag == VERSION == core/Cargo.toml ==
+tauri/src-tauri/Cargo.toml`.
 
 ## Auto-update (Sparkle)
 
@@ -38,11 +42,15 @@ jobs upload to it in parallel:
 
 - **macOS** builds + bundles, packages the DMG, EdDSA-signs it, and the bot pushes the
   Sparkle appcast to `main` (below).
-- **Linux** builds `shed-desktop_<ver>_<arch>.deb` on native `amd64` + `arm64` runners and,
+- **Linux** builds `shed-desktop_<ver>_<arch>.deb` from the **Tauri** client (React/WebKitGTK
+  on the shared `shed-core`; nfpm packaging with `shedctl` + the polkit action) on native
+  `amd64` + `arm64` runners, **install-validates it per arch** in a clean `ubuntu:24.04`, and,
   on a stable tag, dispatches `charliek/apt-charliek` to pull it into the apt index (a
   prerelease `vX.Y.Z-suffix` tag skips the dispatch — the `.deb` still uploads to the
   Release). End users then `apt install shed-desktop` (see the apt-charliek README for the
-  one-time repo setup).
+  one-time repo setup). Runtime deps: `libwebkit2gtk-4.1-0`, `libgtk-3-0`,
+  `libayatana-appindicator3-1`, `librsvg2-2`, `libsoup-3.0-0` (+ `polkitd` recommended for the
+  credential-approval gate).
 
 > **Backend:** the shipped macOS app runs on the **Rust core by default**. `bundle.sh` builds the
 > UniFFI `xcframework` and `SHED_DESKTOP_RUST_CORE` is left unset in the release build; the app
