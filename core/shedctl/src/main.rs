@@ -1,15 +1,16 @@
-//! shedctl — a headless command-line driver for the shed-desktop (shed-gtk) JSON
-//! IPC socket. The Linux sibling of the macOS `shedctl`: no GTK, no display —
-//! just a blocking Unix-socket client that speaks the newline-delimited
+//! shedctl — a headless command-line driver for the shed-desktop JSON IPC socket.
+//! The Linux sibling of the macOS `shedctl`: no GUI toolkit, no display — just a
+//! blocking Unix-socket client that speaks the newline-delimited
 //! `{id, op, params}` → `{id, ok, result}` / `{id, ok:false, error:{code,message}}`
-//! envelope the GTK app (and the pytest harness) use. Making the client drivable
-//! and observable over IPC is the North Star; this is the human/script front door
-//! to that socket. Shipped in the .deb next to `shed-desktop`, mirroring how roost
-//! ships `roostctl` alongside `roost`.
+//! envelope the shed-desktop app (and the pytest harness) use. Making the client
+//! drivable and observable over IPC is the North Star; this is the human/script
+//! front door to that socket. Shipped in the .deb next to `shed-desktop`, mirroring
+//! how roost ships `roostctl` alongside `roost`.
 //!
-//! Socket resolution mirrors shed-gtk's `env::default_socket_path` (duplicated,
-//! not depended on, to keep this crate GTK-free): `--socket` > `$SHED_GTK_SOCKET`
-//! > `$XDG_RUNTIME_DIR/shed-gtk/shed-gtk.sock` > `/tmp/shed-gtk-<uid>/shed-gtk.sock`.
+//! Socket resolution mirrors the Tauri app's `env::default_socket_path` (duplicated,
+//! not depended on, to keep this crate dependency-light): `--socket` >
+//! `$SHED_TAURI_SOCKET` > `$XDG_RUNTIME_DIR/shed-tauri.sock` >
+//! `/tmp/shed-tauri-<uid>/shed-tauri.sock`.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -177,23 +178,29 @@ fn parse_command(args: &[String]) -> Result<Plan, String> {
     }
 }
 
-/// `--socket` flag > `$SHED_GTK_SOCKET` > `default_socket_path()`.
+/// `--socket` flag > `$SHED_TAURI_SOCKET` > `default_socket_path()`.
 fn resolve_socket(flag: Option<String>) -> PathBuf {
-    flag.or_else(|| std::env::var("SHED_GTK_SOCKET").ok().filter(|v| !v.is_empty()))
+    flag.or_else(|| std::env::var("SHED_TAURI_SOCKET").ok().filter(|v| !v.is_empty()))
         .map(PathBuf::from)
         .unwrap_or_else(default_socket_path)
 }
 
-/// `$XDG_RUNTIME_DIR/shed-gtk/shed-gtk.sock`, falling back to
-/// `/tmp/shed-gtk-<uid>/shed-gtk.sock` when `XDG_RUNTIME_DIR` is unset — a
-/// duplicate of shed-gtk's `env::default_socket_path` (not a dependency, to keep
-/// shedctl GTK-free).
+/// `$XDG_RUNTIME_DIR/shed-tauri.sock`, falling back to
+/// `/tmp/shed-tauri-<uid>/shed-tauri.sock` when `XDG_RUNTIME_DIR` is unset —
+/// matching the Tauri app's `env::default_socket_path` (flat, no nested subdir; a
+/// duplicate, not a dependency, to keep shedctl dependency-light).
 fn default_socket_path() -> PathBuf {
-    let dir = match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(x) if !x.is_empty() => PathBuf::from(x).join("shed-gtk"),
-        _ => PathBuf::from(format!("/tmp/shed-gtk-{}", current_uid())),
+    socket_path_from(std::env::var_os("XDG_RUNTIME_DIR").as_deref(), current_uid())
+}
+
+/// Pure socket-path resolution (no env reads), so the flat `shed-tauri.sock`
+/// layout + the `/tmp` fallback are unit-testable.
+fn socket_path_from(xdg_runtime_dir: Option<&std::ffi::OsStr>, uid: u32) -> PathBuf {
+    let dir = match xdg_runtime_dir {
+        Some(x) if !x.is_empty() => PathBuf::from(x),
+        _ => PathBuf::from(format!("/tmp/shed-tauri-{uid}")),
     };
-    dir.join("shed-gtk.sock")
+    dir.join("shed-tauri.sock")
 }
 
 fn current_uid() -> u32 {
@@ -230,7 +237,7 @@ fn write_png(result: &Value, out: &Path) -> Result<(), String> {
 }
 
 const USAGE: &str = "\
-shedctl — drive the shed-desktop (shed-gtk) IPC socket
+shedctl — drive the shed-desktop IPC socket
 
 USAGE:
   shedctl [--socket PATH] <command>
@@ -244,7 +251,7 @@ COMMANDS:
                                        run a shed lifecycle action
   raw <op> [--param k=v ...]           call an arbitrary op (values parsed as JSON)
 
-Socket: --socket > $SHED_GTK_SOCKET > $XDG_RUNTIME_DIR/shed-gtk/shed-gtk.sock > /tmp/shed-gtk-<uid>/shed-gtk.sock";
+Socket: --socket > $SHED_TAURI_SOCKET > $XDG_RUNTIME_DIR/shed-tauri.sock > /tmp/shed-tauri-<uid>/shed-tauri.sock";
 
 fn fail_usage(reason: &str) -> ! {
     eprintln!("shedctl: {reason}\n\n{USAGE}");
@@ -298,6 +305,25 @@ mod tests {
 
     fn svec(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn socket_path_uses_flat_tauri_layout() {
+        use std::ffi::OsStr;
+        // XDG set → flat shed-tauri.sock directly under it (no nested subdir).
+        assert_eq!(
+            socket_path_from(Some(OsStr::new("/run/user/1000")), 1000),
+            PathBuf::from("/run/user/1000/shed-tauri.sock")
+        );
+        // XDG unset or empty → the /tmp/shed-tauri-<uid> fallback.
+        assert_eq!(
+            socket_path_from(None, 501),
+            PathBuf::from("/tmp/shed-tauri-501/shed-tauri.sock")
+        );
+        assert_eq!(
+            socket_path_from(Some(OsStr::new("")), 501),
+            PathBuf::from("/tmp/shed-tauri-501/shed-tauri.sock")
+        );
     }
 
     #[test]

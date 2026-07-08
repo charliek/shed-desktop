@@ -2,7 +2,7 @@
 Type=Application
 Name=Shed
 GenericName=Shed Dashboard
-Comment=GTK client for the shed toolchain
+Comment=Desktop client for the shed toolchain
 Exec=shed-desktop
 Icon=shed-desktop
 Terminal=false

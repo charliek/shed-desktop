@@ -202,7 +202,9 @@ jobs:
   deb:
     name: deb
     needs: changes
-    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.packaging == 'true' || needs.changes.outputs.ci == 'true' }}
+    # The shipped .deb now builds from the Tauri client, so a tauri/**-only change
+    # must rebuild + revalidate it (alongside core/packaging/linux changes).
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.packaging == 'true' || needs.changes.outputs.tauri == 'true' || needs.changes.outputs.ci == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -210,17 +212,27 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustc --version && cargo --version
-      - name: GTK dev libs + nfpm
+      - name: Tauri (WebKitGTK) build deps + nfpm
         run: |
-          sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-4-dev libadwaita-1-dev
+          sudo apt-get update && sudo apt-get install -y build-essential pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev libayatana-appindicator3-dev
           echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' | sudo tee /etc/apt/sources.list.d/goreleaser.list
           sudo apt-get update && sudo apt-get install -y nfpm
-      - name: Build the .deb
+      - name: Node (the Vite/React frontend bundle)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: tauri/ui/package-lock.json
+      - name: Frontend bundle (generate_context! needs tauri/ui/dist)
+        run: cd tauri/ui && npm ci && npm run build
+      - name: Build the Tauri .deb
         run: ./linux/scripts/build-deb.sh 0.0.1-ci
       - name: Install-validate in a clean container
         # apt-installs the .deb (resolving its runtime deps) in a fresh ubuntu:24.04
-        # and asserts the binary launches under Xvfb + answers identify. Build-in-CI
-        # only; apt-repo / release-asset wiring is deferred (see docs/enhancements.md).
+        # and asserts the binary launches under Xvfb + answers identify, the bundled
+        # shedctl drives it, and the polkit action is present. Build-in-CI only;
+        # apt-repo / release-asset wiring is the release.yml linux job.
         run: ./linux/scripts/validate-deb.sh "$(ls -t out/shed-desktop_*.deb | head -1)"
 
   tauri-linux:

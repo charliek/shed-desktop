@@ -82,17 +82,29 @@ gtk-build-linux:  ## Build + clippy shed-gtk on Linux in Docker (ubuntu:24.04 + 
 	            cargo clippy -p shed-gtk --all-targets --locked -- -D warnings && \
 	            cargo test -p shed-gtk --lib --locked'
 
-deb:  ## Build the shed-desktop .deb in Docker (ubuntu:24.04 + GTK + nfpm) → out/ (DEB_VERSION=x)
-	docker build -t shed-core-linux:latest - < Dockerfile.linux
+deb: tauri-ui-build  ## Build the shed-desktop Tauri .deb in Docker (ubuntu:24.04 + WebKitGTK + nfpm) → out/ (DEB_VERSION=x)
+	# Reuses the render image (WebKitGTK build deps) + installs nfpm. The frontend
+	# bundle (tauri/ui/dist) is built on the host first (tauri-ui-build); the source
+	# is copied into a writable /work (Tauri's build.rs writes gen/ next to Cargo.toml,
+	# so a read-only mount fails + would leave root-owned files in the repo). CARGO_TARGET_DIR
+	# gives build-deb.sh its /target/{tauri,core} split; the .deb is copied back to ./out.
+	docker build -t shed-tauri-linux:latest - < Dockerfile.tauri-linux
+	mkdir -p "$(CURDIR)/out"
 	docker run --rm \
-	  -v "$(CURDIR):/repo" \
-	  -v shed-core-linux-target:/target \
-	  -v shed-core-linux-cargo:/usr/local/cargo/registry \
+	  -v "$(CURDIR):/repo:ro" \
+	  -v "$(CURDIR)/out:/out" \
+	  -v shed-tauri-linux-cargo:/usr/local/cargo/registry \
+	  -v shed-tauri-linux-target:/target \
 	  -e CARGO_TARGET_DIR=/target \
-	  -w /repo shed-core-linux:latest \
-	  bash -lc 'echo "deb [trusted=yes] https://repo.goreleaser.com/apt/ /" > /etc/apt/sources.list.d/goreleaser.list && \
-	            apt-get update -qq && apt-get install -y -qq nfpm >/dev/null && \
-	            ./linux/scripts/build-deb.sh $(DEB_VERSION)'
+	  -w /repo shed-tauri-linux:latest \
+	  bash -lc 'set -e; \
+	    echo "deb [trusted=yes] https://repo.goreleaser.com/apt/ /" > /etc/apt/sources.list.d/goreleaser.list && \
+	    apt-get update -qq && apt-get install -y -qq nfpm >/dev/null && \
+	    mkdir -p /work && \
+	    tar -C /repo --exclude=tauri/src-tauri/target --exclude=tauri/ui/node_modules --exclude=core/target \
+	      -cf - core tauri linux packaging Resources pyproject.toml uv.lock | tar -C /work -xf - && \
+	    cd /work && ./linux/scripts/build-deb.sh $(DEB_VERSION) && \
+	    cp /work/out/*.deb /out/'
 
 deb-validate: deb  ## Build + install-validate the .deb in a clean ubuntu:24.04 container
 	./linux/scripts/validate-deb.sh $$(ls -t out/shed-desktop_*.deb | head -1)
