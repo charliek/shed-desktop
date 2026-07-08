@@ -1,5 +1,7 @@
 # Releasing shed-desktop
 
+> **Superseded** — after the monorepo import merges, this repo ships exactly **ONE** more release (the `SUFeedURL` repoint, planned v0.0.14). Do not cut any other releases here; desktop releases ship from [charliek/shed](https://github.com/charliek/shed).
+
 shed-desktop follows the release-workflows convention. `scripts/release/update-version.sh`
 bumps every source-tree manifest in lockstep — the top-level `VERSION` (the macOS marketing
 version), the Rust workspace's `core/Cargo.toml` (regenerating `core/Cargo.lock`), and the
